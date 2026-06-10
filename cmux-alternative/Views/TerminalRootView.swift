@@ -5,13 +5,19 @@ struct TerminalRootView: View {
     @SceneStorage("selectedSessionID") private var storedSelection: String?
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             SidebarView(store: store)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
-        } detail: {
+                .frame(width: 264)
+
+            Divider()
+                .overlay(Color.white.opacity(0.08))
+
             TerminalWorkspaceView(store: store)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .toolbarBackgroundVisibility(.automatic, for: .windowToolbar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(red: 0.035, green: 0.037, blue: 0.043))
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onAppear {
             restoreSelection()
         }

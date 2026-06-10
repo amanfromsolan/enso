@@ -42,7 +42,7 @@ final class PlaceholderTerminalView: NSView {
 
     private func setup() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        layer?.backgroundColor = NSColor(red: 0.018, green: 0.019, blue: 0.023, alpha: 1).cgColor
 
         stackView.orientation = .vertical
         stackView.alignment = .leading
@@ -50,12 +50,12 @@ final class PlaceholderTerminalView: NSView {
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
         promptLabel.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
-        promptLabel.textColor = .secondaryLabelColor
+        promptLabel.textColor = NSColor(white: 0.62, alpha: 1)
         promptLabel.lineBreakMode = .byTruncatingMiddle
         promptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         outputLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        outputLabel.textColor = .labelColor
+        outputLabel.textColor = NSColor(white: 0.86, alpha: 1)
         outputLabel.maximumNumberOfLines = 0
 
         stackView.addArrangedSubview(promptLabel)

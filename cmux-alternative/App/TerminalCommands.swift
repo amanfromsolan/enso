@@ -9,6 +9,11 @@ struct TerminalCommands: Commands {
                 store.createSession()
             }
             .keyboardShortcut("t", modifiers: .command)
+
+            Button("New Folder") {
+                store.createFolder()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
         }
 
         CommandMenu("Session") {

@@ -1,6 +1,22 @@
 import Foundation
 import SwiftUI
 
+struct TerminalFolder: Identifiable, Hashable {
+    let id: UUID
+    var title: String
+    var sessions: [TerminalSession]
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        sessions: [TerminalSession] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.sessions = sessions
+    }
+}
+
 struct TerminalSession: Identifiable, Hashable {
     enum Status: String, CaseIterable {
         case running = "Running"

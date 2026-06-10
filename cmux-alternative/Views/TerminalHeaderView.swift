@@ -57,7 +57,7 @@ struct TerminalHeaderView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .background(.regularMaterial)
+        .background(Color(red: 0.035, green: 0.037, blue: 0.044))
     }
 }
 
@@ -97,5 +97,5 @@ private struct StatusPill: View {
 }
 
 #Preview {
-    TerminalHeaderView(session: TerminalSessionStore.defaultSessions[0], onRename: {})
+    TerminalHeaderView(session: TerminalSessionStore.defaultFolders[0].sessions[0], onRename: {})
 }

@@ -15,6 +15,7 @@ struct cmux_alternativeApp: App {
         WindowGroup {
             ContentView(store: sessionStore)
                 .frame(minWidth: 920, minHeight: 560)
+                .preferredColorScheme(.dark)
         }
         .windowResizability(.contentSize)
         .commands {

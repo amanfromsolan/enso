@@ -18,10 +18,12 @@ struct TerminalWorkspaceView: View {
                     )
 
                     Divider()
+                        .overlay(Color.white.opacity(0.08))
 
                     GhosttyTerminalHostView(session: session)
                         .id(session.id)
                 }
+                .background(Color(red: 0.025, green: 0.027, blue: 0.032))
                 .sheet(isPresented: $isRenaming) {
                     RenameSessionSheet(
                         title: $draftTitle,
@@ -40,6 +42,8 @@ struct TerminalWorkspaceView: View {
                     systemImage: "terminal",
                     description: Text("Create a session to start a terminal workspace.")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(red: 0.025, green: 0.027, blue: 0.032))
             }
         }
         .toolbar {
