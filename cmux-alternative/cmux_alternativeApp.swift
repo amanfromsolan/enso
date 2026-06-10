@@ -9,9 +9,16 @@ import SwiftUI
 
 @main
 struct cmux_alternativeApp: App {
+    @StateObject private var sessionStore = TerminalSessionStore()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(store: sessionStore)
+                .frame(minWidth: 920, minHeight: 560)
+        }
+        .windowResizability(.contentSize)
+        .commands {
+            TerminalCommands(store: sessionStore)
         }
     }
 }
