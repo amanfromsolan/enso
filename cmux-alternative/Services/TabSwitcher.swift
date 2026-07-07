@@ -54,6 +54,10 @@ final class TabSwitcher: ObservableObject {
 
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
         if event.keyCode == 48, event.modifierFlags.contains(.control) { // tab
+            // Ctrl+Tab takes over from the command center; never show both.
+            if CommandCenter.shared.isOpen {
+                CommandCenter.shared.close()
+            }
             let backwards = event.modifierFlags.contains(.shift)
             if isActive {
                 advance(by: backwards ? -1 : 1)

@@ -53,13 +53,20 @@ struct TerminalRootView: View {
                         .onTapGesture { commandCenter.close() }
                         .ignoresSafeArea()
 
-                    CommandCenterView(center: commandCenter)
-                        .padding(.top, 90)
+                    // Mirror the root layout so the palette centers on the
+                    // terminal column, not the whole window.
+                    HStack(spacing: 0) {
+                        Color.clear
+                            .frame(width: 248)
+                            .allowsHitTesting(false)
+
+                        CommandCenterView(center: commandCenter)
+                            .padding(.top, 90)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
-                .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.12), value: commandCenter.isOpen)
         .onAppear {
             restoreSelection()
             switcher.attach(to: store)
