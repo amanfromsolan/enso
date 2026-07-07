@@ -339,7 +339,9 @@ final class CommandCenter: ObservableObject {
             title: "Check for Updates",
             context: "Command",
             verb: "Run"
-        ) {
+        ) { [weak store] in
+            // All update feedback lives in the sidebar card; surface it.
+            store?.isSidebarVisible = true
             UpdateController.shared.checkForUpdates()
         })
 

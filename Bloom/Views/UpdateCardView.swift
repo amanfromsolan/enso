@@ -39,32 +39,42 @@ private struct UpdateCardBody: View {
     @State private var closeHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                icon
+        // Icon left, text right, action button under the text: the sidebar is
+        // narrow, so nothing else may share the title's row (labels wrapped
+        // mid-word when title, button, and close all competed for one line).
+        HStack(alignment: .top, spacing: 8) {
+            icon
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white.opacity(0.45))
-                            .lineLimit(2)
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(2)
                 }
 
-                Spacer(minLength: 4)
-
-                trailing
+                if let fraction = progressFraction {
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.linear)
+                        .controlSize(.small)
+                        .tint(Color.accentColor)
+                        .padding(.top, 4)
+                } else if let action {
+                    CardActionButton(label: action.label, action: action.perform)
+                        .padding(.top, 5)
+                }
             }
 
-            if let fraction = progressFraction {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.linear)
-                    .controlSize(.small)
-                    .tint(Color.accentColor)
+            Spacer(minLength: 4)
+
+            if isDismissible {
+                closeButton
             }
         }
         .padding(.horizontal, 10)
@@ -116,10 +126,10 @@ private struct UpdateCardBody: View {
         switch phase {
         case .idle: ""
         case .checking: "Checking for updates…"
-        case .available: "Update available"
+        case .available(let version): "Bloom \(version) available"
         case .downloading: "Downloading update…"
         case .extracting: "Preparing update…"
-        case .readyToRestart: "Ready to install"
+        case .readyToRestart(let version): "Bloom \(version) ready"
         case .installing: "Installing…"
         case .upToDate: "You're up to date"
         case .failed: "Update failed"
@@ -128,8 +138,8 @@ private struct UpdateCardBody: View {
 
     private var subtitle: String? {
         switch phase {
-        case .available(let version), .readyToRestart(let version):
-            "Bloom \(version)"
+        case .readyToRestart:
+            "Restart to finish installing"
         case .failed(let message):
             message
         default:
@@ -145,28 +155,19 @@ private struct UpdateCardBody: View {
         }
     }
 
-    @ViewBuilder
-    private var trailing: some View {
+    private var action: (label: String, perform: () -> Void)? {
         switch phase {
-        case .available:
-            HStack(spacing: 6) {
-                CardActionButton(label: "Update", action: onInstall)
-                closeButton
-            }
-        case .readyToRestart:
-            HStack(spacing: 6) {
-                CardActionButton(label: "Restart", action: onRestart)
-                closeButton
-            }
-        case .failed:
-            HStack(spacing: 6) {
-                CardActionButton(label: "Retry", action: onRetry)
-                closeButton
-            }
-        case .upToDate:
-            closeButton
-        default:
-            EmptyView()
+        case .available: (label: "Update", perform: onInstall)
+        case .readyToRestart: (label: "Restart", perform: onRestart)
+        case .failed: (label: "Retry", perform: onRetry)
+        default: nil
+        }
+    }
+
+    private var isDismissible: Bool {
+        switch phase {
+        case .available, .readyToRestart, .failed, .upToDate: true
+        default: false
         }
     }
 
@@ -196,6 +197,7 @@ private struct CardActionButton: View {
             Text(label)
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.95))
+                .fixedSize()
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(

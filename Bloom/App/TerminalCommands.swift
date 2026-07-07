@@ -7,6 +7,8 @@ struct TerminalCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") {
+                // All update feedback lives in the sidebar card; surface it.
+                store.isSidebarVisible = true
                 UpdateController.shared.checkForUpdates()
             }
         }
