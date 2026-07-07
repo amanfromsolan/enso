@@ -76,16 +76,27 @@ final class CommandCenter: ObservableObject {
         }
     }
 
+    /// ⇧⌘P: opens straight into the ">" command filter.
+    func openCommandMode() {
+        if !isOpen {
+            open()
+        }
+        query = "> "
+        // Focusing the field selects its contents (so typing would erase
+        // the prefix); park the cursor at the end once focus settles.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard let editor = NSApp.keyWindow?.fieldEditor(false, for: nil) as? NSTextView else { return }
+            editor.selectedRange = NSRange(location: (editor.string as NSString).length, length: 0)
+        }
+    }
+
     func close() {
         guard isOpen else { return }
         isOpen = false
         mode = .search
         removeMonitorWhenDrained()
         // Hand the keyboard back to the visible terminal.
-        if let store, let selection = store.selection,
-           let surface = GhosttySurfaceManager.shared.existingView(for: selection) {
-            surface.window?.makeFirstResponder(surface)
-        }
+        GhosttySurfaceManager.shared.restoreFocus(to: store?.selection)
     }
 
     func execute(_ index: Int) {
@@ -223,7 +234,22 @@ final class CommandCenter: ObservableObject {
         }
 
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty {
+        if trimmed.hasPrefix(">") {
+            // VS Code-style command filter: "> " shows commands only.
+            let commandQuery = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+            let commands = commandItems(in: store)
+            if commandQuery.isEmpty {
+                items = commands
+            } else {
+                items = commands
+                    .compactMap { item -> (PaletteItem, Int)? in
+                        guard let score = Self.fuzzyScore(query: commandQuery, in: item.title) else { return nil }
+                        return (item, score)
+                    }
+                    .sorted { $0.1 > $1.1 }
+                    .map(\.0)
+            }
+        } else if trimmed.isEmpty {
             // Default sheet: New Tab first (Enter does the obvious thing),
             // then recent tabs everywhere, then spaces.
             items = [newTabItem(in: store)]
@@ -433,6 +459,16 @@ final class CommandCenter: ObservableObject {
             keepsOpen: true
         ) { [weak self] in
             self?.beginSpaceRename()
+        })
+
+        commands.append(PaletteItem(
+            id: "cmd-toggle-sidebar",
+            icon: .symbol("sidebar.left"),
+            title: store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+            context: "Command",
+            verb: "Run"
+        ) { [weak store] in
+            store?.isSidebarVisible.toggle()
         })
 
         commands.append(PaletteItem(

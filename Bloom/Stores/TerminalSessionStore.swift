@@ -23,6 +23,11 @@ final class TerminalSessionStore: ObservableObject {
     /// reshuffle recency; the switcher records its final pick on commit.
     var isCyclingSelection = false
 
+    /// Sidebar visibility (⌘B / titlebar button); remembered across launches.
+    @Published var isSidebarVisible: Bool = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(isSidebarVisible, forKey: "sidebarVisible") }
+    }
+
     private var expiryTimer: Timer?
     private let persistToDisk: Bool
 
@@ -319,6 +324,31 @@ final class TerminalSessionStore: ObservableObject {
 
     // MARK: - Renaming / status
 
+    /// Inline-rename requests from menu shortcuts; the sidebar page owning
+    /// the target picks it up and focuses the row's edit field.
+    enum RenameRequest: Equatable {
+        case session(TerminalSession.ID)
+        case folder(TerminalFolder.ID)
+    }
+
+    @Published var renameRequest: RenameRequest?
+
+    /// ⌘R: inline-rename the selected tab in the sidebar.
+    func requestRenameOfSelection() {
+        guard let selection else { return }
+        renameRequest = .session(selection)
+    }
+
+    /// ⇧⌘R: inline-rename the selected tab's folder, or the tab when loose.
+    func requestRenameOfSelectionContainer() {
+        guard let selection else { return }
+        let folder = spaces
+            .flatMap(\.pinnedFolders)
+            .first { $0.sessions.contains { $0.id == selection } }
+        renameRequest = folder.map { .folder($0.id) } ?? .session(selection)
+    }
+
+
     /// Manual rename; pins the title so shell and auto naming never touch it.
     func rename(_ session: TerminalSession, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -330,12 +360,15 @@ final class TerminalSessionStore: ObservableObject {
         save()
     }
 
-    /// Live title from shell integration; only lands while the tab still has
-    /// its default naming — an auto or user name always wins.
+    /// Live title from shell integration. The display title only lands while
+    /// the tab still has its default naming — an auto or user name always
+    /// wins — but process detection reads every event regardless, so the
+    /// sidebar badge stays live on named tabs too.
     func applyShellTitle(_ sessionID: TerminalSession.ID, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         update(sessionID) { item in
+            item.runningProcess = TabProcess.detect(after: item.runningProcess, title: trimmed)
             guard item.titleOrigin == .shell, item.title != trimmed else { return }
             item.title = trimmed
         }

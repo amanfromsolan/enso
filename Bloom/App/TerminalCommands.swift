@@ -14,6 +14,16 @@ struct TerminalCommands: Commands {
             .keyboardShortcut(",", modifiers: .command)
         }
 
+        // Drop the stock File > Close (⌘W closes the window); the shortcut
+        // belongs to Tab > Close Tab. ⌘S is repurposed as a second sidebar
+        // toggle alongside ⌘B.
+        CommandGroup(replacing: .saveItem) {
+            Button("Toggle Sidebar") {
+                store.isSidebarVisible.toggle()
+            }
+            .keyboardShortcut("s", modifiers: .command)
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("Command Center") {
                 CommandCenter.shared.toggle()
@@ -25,17 +35,30 @@ struct TerminalCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: .command)
 
+            Button("Command Palette") {
+                CommandCenter.shared.openCommandMode()
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+
             Divider()
 
             Button("New Tab") {
                 store.createSession()
             }
-            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .keyboardShortcut("n", modifiers: .command)
 
             Button("New Folder") {
                 store.createFolder()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+
+        // View menu.
+        CommandGroup(after: .toolbar) {
+            Button(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
+                store.isSidebarVisible.toggle()
+            }
+            .keyboardShortcut("b", modifiers: .command)
         }
 
         CommandMenu("Tab") {
@@ -47,13 +70,25 @@ struct TerminalCommands: Commands {
                     store.pin([selection], inSpace: store.activeSpaceID)
                 }
             }
-            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .keyboardShortcut("p", modifiers: [.command, .option])
             .disabled(store.selection == nil)
 
             Button("Close Tab") {
                 store.closeSelectedSession()
             }
             .keyboardShortcut("w", modifiers: .command)
+            .disabled(store.selection == nil)
+
+            Button("Rename Tab") {
+                store.requestRenameOfSelection()
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(store.selection == nil)
+
+            Button("Rename Folder") {
+                store.requestRenameOfSelectionContainer()
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(store.selection == nil)
 
             Divider()

@@ -11,6 +11,8 @@ struct TerminalWorkspaceView: View {
                 VStack(spacing: 0) {
                     TerminalHeaderView(
                         session: session,
+                        isSidebarVisible: store.isSidebarVisible,
+                        onToggleSidebar: { store.isSidebarVisible.toggle() },
                         onRename: {
                             draftTitle = session.title
                             isRenaming = true
@@ -20,7 +22,9 @@ struct TerminalWorkspaceView: View {
                     GhosttyTerminalHostView(session: session, store: store)
                 }
                 .background(GhosttyRuntime.shared.themeBackground)
-                .sheet(isPresented: $isRenaming) {
+                .sheet(isPresented: $isRenaming, onDismiss: {
+                    GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+                }) {
                     RenameSessionSheet(
                         title: $draftTitle,
                         onCancel: {

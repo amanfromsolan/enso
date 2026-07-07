@@ -1,28 +1,43 @@
 import SwiftUI
 
 /// Slim strip above the terminal that doubles as the window titlebar:
-/// blends into the terminal background, drags the window, double-click
-/// renames. Shows the tab name plus a live breadcrumb of the shell's cwd.
+/// blends into the terminal background, drags the window. Double-click on
+/// the title renames; double-click on empty strip zooms like a real
+/// titlebar. Shows the tab name plus a live breadcrumb of the shell's cwd.
 struct TerminalHeaderView: View {
     let session: TerminalSession
+    let isSidebarVisible: Bool
+    let onToggleSidebar: () -> Void
     let onRename: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Spacer(minLength: 0)
-
-            Circle()
-                .fill(session.accent.color.opacity(0.8))
-                .frame(width: 6, height: 6)
-
-            Text(session.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
-                .lineLimit(1)
-
-            breadcrumb
+            SidebarToggleButton(isSidebarVisible: isSidebarVisible, action: onToggleSidebar)
 
             Spacer(minLength: 0)
+
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(session.accent.color.opacity(0.8))
+                    .frame(width: 6, height: 6)
+
+                Text(session.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+
+                breadcrumb
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                onRename()
+            }
+
+            Spacer(minLength: 0)
+
+            // Balances the toggle button so the title stays centered.
+            Color.clear
+                .frame(width: 26, height: 22)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
@@ -30,7 +45,7 @@ struct TerminalHeaderView: View {
         .contentShape(Rectangle())
         .gesture(WindowDragGesture())
         .onTapGesture(count: 2) {
-            onRename()
+            NSApp.keyWindow?.performTitlebarDoubleClickAction()
         }
     }
 
@@ -62,6 +77,46 @@ struct TerminalHeaderView: View {
                     ))
                     .lineLimit(1)
             }
+        }
+    }
+}
+
+/// Sidebar toggle living at the leftmost of the terminal title strip;
+/// quiet until hovered.
+struct SidebarToggleButton: View {
+    let isSidebarVisible: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(isHovered ? 0.8 : 0.4))
+                .frame(width: 26, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color.white.opacity(isHovered ? 0.09 : 0))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(isSidebarVisible ? "Hide Sidebar (⌘B)" : "Show Sidebar (⌘B)")
+    }
+}
+
+extension NSWindow {
+    /// Applies the system "double-click a window's title bar to" preference
+    /// (zoom by default) to our custom titlebar strips.
+    func performTitlebarDoubleClickAction() {
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize":
+            performMiniaturize(nil)
+        case "None":
+            break
+        default:
+            performZoom(nil)
         }
     }
 }
@@ -103,6 +158,11 @@ struct PathTrail {
 }
 
 #Preview {
-    TerminalHeaderView(session: TerminalSessionStore.preview.sessions[0], onRename: {})
+    TerminalHeaderView(
+        session: TerminalSessionStore.preview.sessions[0],
+        isSidebarVisible: true,
+        onToggleSidebar: {},
+        onRename: {}
+    )
         .background(.black)
 }

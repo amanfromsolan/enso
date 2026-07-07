@@ -24,6 +24,19 @@ final class GhosttySurfaceManager {
         views[sessionID]
     }
 
+    /// Hands the keyboard back to a session's terminal after a modal or
+    /// inline rename steals first responder. Without this, Return keeps
+    /// routing to whatever default-action button SwiftUI last resolved
+    /// instead of reaching the shell. Deferred one runloop turn so SwiftUI
+    /// finishes tearing down the field or sheet that currently holds focus.
+    func restoreFocus(to sessionID: TerminalSession.ID?) {
+        guard let sessionID else { return }
+        DispatchQueue.main.async {
+            guard let surface = self.views[sessionID] else { return }
+            surface.window?.makeFirstResponder(surface)
+        }
+    }
+
     func closeSurface(for sessionID: TerminalSession.ID) {
         guard let view = views.removeValue(forKey: sessionID) else { return }
         view.removeFromSuperview()

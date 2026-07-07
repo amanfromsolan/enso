@@ -82,6 +82,13 @@ struct TerminalSession: Identifiable, Hashable, Codable {
     var status: Status
     var accent: SessionAccent
     var lastActivity: Date
+    /// Live foreground-process detection; session-only, resets to a plain
+    /// shell on relaunch, so it is not persisted.
+    var runningProcess: TabProcess?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, titleOrigin, workingDirectory, branch, status, accent, lastActivity
+    }
 
     init(
         id: UUID = UUID(),
@@ -114,6 +121,7 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         status = try container.decode(Status.self, forKey: .status)
         accent = try container.decode(SessionAccent.self, forKey: .accent)
         lastActivity = try container.decode(Date.self, forKey: .lastActivity)
+        runningProcess = nil
     }
 }
 
@@ -124,18 +132,20 @@ enum SessionAccent: String, CaseIterable, Hashable, Codable {
     case pink
     case violet
 
+    /// Jewel tones tuned for the dark frosted sidebar: matched saturation
+    /// and lightness so no dot shouts louder than the others.
     var color: Color {
         switch self {
         case .blue:
-            .blue
+            Color(hex: 0x6FA8FF)
         case .green:
-            .green
+            Color(hex: 0x5BD9A9)
         case .orange:
-            .orange
+            Color(hex: 0xFFB454)
         case .pink:
-            .pink
+            Color(hex: 0xFF7EB6)
         case .violet:
-            .purple
+            Color(hex: 0xB18CFF)
         }
     }
 

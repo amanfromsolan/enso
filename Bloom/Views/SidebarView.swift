@@ -10,8 +10,6 @@ struct SidebarView: View {
     @Binding var spaceEditor: SpaceEditorSheet.Mode?
 
     @State private var expandedFolders = Set<TerminalFolder.ID>()
-    @State private var folderBeingRenamed: TerminalFolder?
-    @State private var draftFolderTitle = ""
 
     /// Overscroll distance past the last space that triggers space creation.
     static let newSpaceThreshold: CGFloat = 45
@@ -30,14 +28,6 @@ struct SidebarView: View {
         }
         .onChange(of: store.spaces.flatMap { $0.pinnedFolders.map(\.id) }) { _, folderIDs in
             expandedFolders.formUnion(folderIDs)
-        }
-        .sheet(item: $folderBeingRenamed) { folder in
-            RenameFolderSheet(title: $draftFolderTitle) {
-                folderBeingRenamed = nil
-            } onSave: {
-                store.rename(folder, to: draftFolderTitle)
-                folderBeingRenamed = nil
-            }
         }
     }
 
@@ -72,10 +62,6 @@ struct SidebarView: View {
                     store: store,
                     space: space,
                     expandedFolders: $expandedFolders,
-                    onRenameFolder: { folder in
-                        draftFolderTitle = folder.title
-                        folderBeingRenamed = folder
-                    },
                     onEditSpace: { spaceEditor = .edit($0) }
                 )
                 .frame(width: width)
@@ -292,7 +278,6 @@ private struct SpacePage: View {
     @ObservedObject private var namer = TabAutoNamer.shared
     let space: SidebarSpace
     @Binding var expandedFolders: Set<TerminalFolder.ID>
-    let onRenameFolder: (TerminalFolder) -> Void
     let onEditSpace: (SidebarSpace) -> Void
 
     @State private var dropTargetID: TerminalSession.ID?
@@ -302,6 +287,9 @@ private struct SpacePage: View {
     @FocusState private var renameFieldFocused: Bool
 
     @State private var hoveredFolderID: TerminalFolder.ID?
+    @State private var renamingFolderID: TerminalFolder.ID?
+    @State private var draftFolderTitle = ""
+    @FocusState private var folderRenameFocused: Bool
     @State private var headerHovered = false
     @State private var headerMenuHovered = false
     @State private var newTabHovered = false
@@ -328,6 +316,33 @@ private struct SpacePage: View {
                     .onTapGesture { cancelRenames() }
             )
         }
+        .background(
+            RenameClickAway(
+                active: renamingSessionID != nil || renamingFolderID != nil || isRenamingSpace
+            ) {
+                commitActiveRename()
+            }
+        )
+        .onChange(of: folderRenameFocused) { _, focused in
+            if !focused, let id = renamingFolderID,
+               let folder = space.pinnedFolders.first(where: { $0.id == id }) {
+                commitFolderRename(folder)
+            }
+        }
+        .onChange(of: store.renameRequest) { _, request in
+            switch request {
+            case .session(let id):
+                guard let session = space.sessions.first(where: { $0.id == id }) else { return }
+                store.renameRequest = nil
+                beginRename(session)
+            case .folder(let id):
+                guard let folder = space.pinnedFolders.first(where: { $0.id == id }) else { return }
+                store.renameRequest = nil
+                beginFolderRename(folder)
+            case nil:
+                break
+            }
+        }
     }
 
     /// Row layout identity: animates structural changes (add/remove/reorder,
@@ -343,10 +358,33 @@ private struct SpacePage: View {
         return ids
     }
 
+    /// Click-away while renaming: keep the edit (matching focus-loss
+    /// behavior) and let the click do its normal job.
+    private func commitActiveRename() {
+        if isRenamingSpace {
+            commitSpaceRename()
+        }
+        if let id = renamingSessionID, let session = space.sessions.first(where: { $0.id == id }) {
+            commitRename(session)
+        }
+        if let id = renamingFolderID, let folder = space.pinnedFolders.first(where: { $0.id == id }) {
+            commitFolderRename(folder)
+        }
+    }
+
     /// Clicking empty sidebar space backs out of any in-progress rename.
     private func cancelRenames() {
+        guard isRenamingSpace || renamingSessionID != nil || renamingFolderID != nil else { return }
         isRenamingSpace = false
         renamingSessionID = nil
+        renamingFolderID = nil
+        restoreTerminalFocus()
+    }
+
+    /// Ending a rename leaves first responder parked nowhere, so Return
+    /// stops reaching the shell; hand the keyboard back to the terminal.
+    private func restoreTerminalFocus() {
+        GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
     }
 
     // MARK: - Space header
@@ -362,9 +400,13 @@ private struct SpacePage: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
                     .focused($spaceNameFocused)
-                    .onSubmit(commitSpaceRename)
+                    .onSubmit {
+                        commitSpaceRename()
+                        restoreTerminalFocus()
+                    }
                     .onExitCommand {
                         isRenamingSpace = false
+                        restoreTerminalFocus()
                     }
             } else {
                 Text(space.name)
@@ -455,7 +497,10 @@ private struct SpacePage: View {
             }
 
             ForEach(space.pinnedFolders) { folder in
+                // Folders read as tight clusters; breathing room between a
+                // folder and its neighbors keeps groups from blurring together.
                 folderSection(folder)
+                    .padding(.vertical, 5)
             }
         }
         .padding(.vertical, 4)
@@ -515,6 +560,7 @@ private struct SpacePage: View {
     private func folderSection(_ folder: TerminalFolder) -> some View {
         let isExpanded = expandedFolders.contains(folder.id)
         let isHovered = hoveredFolderID == folder.id
+        let isRenaming = renamingFolderID == folder.id
 
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
@@ -523,10 +569,24 @@ private struct SpacePage: View {
                     .frame(width: 14, height: 14)
                     .frame(width: 16)
 
-                Text(folder.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.82))
-                    .lineLimit(1)
+                if isRenaming {
+                    TextField("", text: $draftFolderTitle)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
+                        .focused($folderRenameFocused)
+                        .onSubmit {
+                            commitFolderRename(folder)
+                        }
+                        .onExitCommand {
+                            renamingFolderID = nil
+                        }
+                } else {
+                    Text(folder.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: 0)
 
@@ -552,15 +612,19 @@ private struct SpacePage: View {
                 }
             }
             .onTapGesture {
-                if isExpanded {
-                    expandedFolders.remove(folder.id)
+                guard renamingFolderID != folder.id else { return }
+                if NSApp.currentEvent?.clickCount == 2 {
+                    // Second click of a double-click: undo the first click's
+                    // expansion flip, then rename inline.
+                    toggleExpansion(folder)
+                    beginFolderRename(folder)
                 } else {
-                    expandedFolders.insert(folder.id)
+                    toggleExpansion(folder)
                 }
             }
             .contextMenu {
                 Button("Rename Folder", systemImage: "pencil") {
-                    onRenameFolder(folder)
+                    beginFolderRename(folder)
                 }
                 Button("Delete Folder", systemImage: "trash") {
                     store.deleteFolder(folder.id)
@@ -601,14 +665,25 @@ private struct SpacePage: View {
                 .opacity(dropTargetID == session.id ? 1 : 0)
 
             HStack(spacing: 8) {
-                if namer.namingSessions.contains(session.id) {
-                    AutoNamingIndicator()
-                        .frame(width: 7, height: 7)
-                } else {
-                    Circle()
-                        .fill(session.accent.color.opacity(isSelected ? 0.95 : 0.55))
-                        .frame(width: 7, height: 7)
+                // Uniform slot: spinner while naming, detected-process badge
+                // when something known is running, accent dot otherwise.
+                Group {
+                    if namer.namingSessions.contains(session.id) {
+                        AutoNamingIndicator()
+                            .frame(width: 7, height: 7)
+                    } else if let process = session.runningProcess {
+                        ProcessBadgeView(
+                            process: process,
+                            accent: session.accent.color,
+                            isSelected: isSelected
+                        )
+                    } else {
+                        Circle()
+                            .fill(session.accent.color.opacity(isSelected ? 0.95 : 0.55))
+                            .frame(width: 7, height: 7)
+                    }
                 }
+                .frame(width: 14, height: 14)
 
                 if isRenaming {
                     TextField("", text: $draftTitle)
@@ -618,9 +693,11 @@ private struct SpacePage: View {
                         .focused($renameFieldFocused)
                         .onSubmit {
                             commitRename(session)
+                            restoreTerminalFocus()
                         }
                         .onExitCommand {
                             renamingSessionID = nil
+                            restoreTerminalFocus()
                         }
                 } else {
                     Text(session.title)
@@ -703,6 +780,26 @@ private struct SpacePage: View {
         draftTitle = session.title
         renamingSessionID = session.id
         renameFieldFocused = true
+    }
+
+    private func toggleExpansion(_ folder: TerminalFolder) {
+        if expandedFolders.contains(folder.id) {
+            expandedFolders.remove(folder.id)
+        } else {
+            expandedFolders.insert(folder.id)
+        }
+    }
+
+    private func beginFolderRename(_ folder: TerminalFolder) {
+        draftFolderTitle = folder.title
+        renamingFolderID = folder.id
+        folderRenameFocused = true
+    }
+
+    private func commitFolderRename(_ folder: TerminalFolder) {
+        guard renamingFolderID == folder.id else { return }
+        renamingFolderID = nil
+        store.rename(folder, to: draftFolderTitle)
     }
 
     private func commitRename(_ session: TerminalSession) {
@@ -840,6 +937,30 @@ private struct HoverIconButton: View {
     }
 }
 
+/// Detected-process icon in the tab row's leading slot: brand logo for
+/// agents (in brand color), SF Symbol for known tools (in the tab accent).
+private struct ProcessBadgeView: View {
+    let process: TabProcess
+    let accent: Color
+    let isSelected: Bool
+
+    var body: some View {
+        switch process.badge {
+        case .asset(let name, let brand):
+            Image(name)
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(brand.opacity(isSelected ? 1 : 0.8))
+                .frame(width: 12, height: 12)
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(accent.opacity(isSelected ? 0.95 : 0.65))
+        }
+    }
+}
+
 /// Small spinner in the tab row's dot slot while the LLM is naming it.
 private struct AutoNamingIndicator: View {
     @State private var spinning = false
@@ -897,6 +1018,69 @@ private extension View {
             modifier(NameShimmer())
         } else {
             self
+        }
+    }
+}
+
+/// While a rename is active, watches for any mouse-down that doesn't land
+/// in the text editor and ends the rename before the click proceeds —
+/// clicking the terminal, another row, or anywhere else exits edit mode.
+private struct RenameClickAway: NSViewRepresentable {
+    var active: Bool
+    let onClickAway: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onClickAway = onClickAway
+        context.coordinator.setActive(active)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.setActive(false)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    final class Coordinator {
+        weak var view: NSView?
+        var onClickAway: () -> Void = {}
+        nonisolated(unsafe) private var monitor: Any?
+
+        func setActive(_ active: Bool) {
+            if active, monitor == nil {
+                monitor = NSEvent.addLocalMonitorForEvents(
+                    matching: [.leftMouseDown, .rightMouseDown]
+                ) { [weak self] event in
+                    self?.handle(event)
+                    return event
+                }
+            } else if !active, let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+
+        private func handle(_ event: NSEvent) {
+            guard let window = view?.window, event.window === window else { return }
+            let hit = window.contentView?.hitTest(event.locationInWindow)
+            // The active field editor is an NSTextView; anything else ends
+            // the rename. Async so the click still dispatches normally.
+            guard !(hit is NSTextView) else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.onClickAway()
+            }
+        }
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
         }
     }
 }
@@ -1320,34 +1504,6 @@ struct ModalSecondaryButtonStyle: ButtonStyle {
                 .onHover { hovering = $0 }
                 .animation(.snappy(duration: 0.12), value: configuration.isPressed)
         }
-    }
-}
-
-private struct RenameFolderSheet: View {
-    @Binding var title: String
-    let onCancel: () -> Void
-    let onSave: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Rename Folder")
-                .font(.headline)
-
-            TextField("Folder name", text: $title)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 320)
-
-            HStack(spacing: 8) {
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(ModalSecondaryButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                Button("Save", action: onSave)
-                    .buttonStyle(ModalPrimaryButtonStyle())
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(20)
     }
 }
 

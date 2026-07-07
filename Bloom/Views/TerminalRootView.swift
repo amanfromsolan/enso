@@ -6,20 +6,28 @@ struct TerminalRootView: View {
     @ObservedObject private var commandCenter = CommandCenter.shared
     @Environment(\.openWindow) private var openWindow
     @State private var spaceEditor: SpaceEditorSheet.Mode?
+    @State private var isPeeking = false
     @SceneStorage("selectedSessionID") private var storedSelection: String?
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                // Clear space for the traffic lights; drags the window.
-                Color.clear
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
-                    .gesture(WindowDragGesture())
+            if store.isSidebarVisible {
+                VStack(spacing: 0) {
+                    // Clear space for the traffic lights; drags the window,
+                    // double-click zooms like a real titlebar.
+                    Color.clear
+                        .frame(height: 40)
+                        .contentShape(Rectangle())
+                        .gesture(WindowDragGesture())
+                        .onTapGesture(count: 2) {
+                            NSApp.keyWindow?.performTitlebarDoubleClickAction()
+                        }
 
-                SidebarView(store: store, spaceEditor: $spaceEditor)
+                    SidebarView(store: store, spaceEditor: $spaceEditor)
+                }
+                .frame(width: 248)
+                .transition(.move(edge: .leading).combined(with: .opacity))
             }
-            .frame(width: 248)
 
             // Terminal floats as an inset card on the frosted window.
             TerminalWorkspaceView(store: store)
@@ -45,16 +53,47 @@ struct TerminalRootView: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.12), value: switcher.isShowingHUD)
-                .padding(EdgeInsets(top: 10, leading: 6, bottom: 10, trailing: 10))
+                .padding(EdgeInsets(
+                    top: 10,
+                    leading: store.isSidebarVisible ? 6 : 10,
+                    bottom: 10,
+                    trailing: 10
+                ))
         }
+        .animation(.spring(duration: 0.28, bounce: 0.12), value: store.isSidebarVisible)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(TrafficLightInset())
+        .background(TrafficLightInset(buttonsHidden: !(store.isSidebarVisible || isPeeking)))
         .background(
             SidebarMaterial()
                 .overlay(Color.black.opacity(0.38))
                 .ignoresSafeArea()
         )
         .ignoresSafeArea()
+        // Hidden sidebar: nearing the left side peeks it back in as a
+        // floating panel; it retracts once the pointer passes its edge.
+        .overlay(alignment: .leading) {
+            if !store.isSidebarVisible {
+                ZStack(alignment: .leading) {
+                    PeekMouseMonitor(isPeeking: isPeeking) { peek in
+                        withAnimation(.spring(duration: 0.24, bounce: peek ? 0.1 : 0)) {
+                            isPeeking = peek
+                        }
+                    }
+                    .frame(width: 0, height: 0)
+
+                    if isPeeking {
+                        peekSidebar
+                            .transition(.move(edge: .leading))
+                    }
+                }
+                .ignoresSafeArea()
+            }
+        }
+        .onChange(of: store.isSidebarVisible) { _, visible in
+            if visible {
+                isPeeking = false
+            }
+        }
         .overlay(alignment: .top) {
             if commandCenter.isOpen {
                 ZStack(alignment: .top) {
@@ -69,7 +108,7 @@ struct TerminalRootView: View {
                     // terminal column, not the whole window.
                     HStack(spacing: 0) {
                         Color.clear
-                            .frame(width: 248)
+                            .frame(width: store.isSidebarVisible ? 248 : 0)
                             .allowsHitTesting(false)
 
                         // A fixed-height slot the card top-aligns into: the
@@ -91,7 +130,7 @@ struct TerminalRootView: View {
                 ZStack {
                     Color.black.opacity(0.5)
                         .contentShape(Rectangle())
-                        .onTapGesture { spaceEditor = nil }
+                        .onTapGesture { dismissSpaceEditor() }
                         .ignoresSafeArea()
                         .transition(.asymmetric(
                             insertion: .opacity.animation(.easeOut(duration: 0.16)),
@@ -106,7 +145,7 @@ struct TerminalRootView: View {
                             store.updateSpace(space.id, name: name, icon: icon)
                         }
                     } onDismiss: {
-                        spaceEditor = nil
+                        dismissSpaceEditor()
                     }
                     // Pops in sharpening from a blur while scaling up;
                     // leaves with a near-instant fade.
@@ -135,6 +174,32 @@ struct TerminalRootView: View {
         }
     }
 
+    private func dismissSpaceEditor() {
+        spaceEditor = nil
+        GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+    }
+
+    /// The hidden sidebar shown as an overlay while the left edge is hovered.
+    private var peekSidebar: some View {
+        VStack(spacing: 0) {
+            // Breathing room under the floating traffic lights.
+            Color.clear.frame(height: 40)
+            SidebarView(store: store, spaceEditor: $spaceEditor)
+        }
+        .frame(width: 248)
+        .frame(maxHeight: .infinity)
+        .background(
+            SidebarMaterial()
+                .overlay(Color.black.opacity(0.55))
+        )
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 1)
+        }
+        .shadow(color: .black.opacity(0.45), radius: 30, x: 10)
+    }
+
     private func restoreSelection() {
         guard
             let storedSelection,
@@ -160,11 +225,94 @@ private struct ModalPopEffect: ViewModifier {
     }
 }
 
+/// Drives the peeked sidebar from the real pointer position: nearing the
+/// window's left side reveals it, passing the panel's right edge dismisses
+/// it. SwiftUI hover is unreliable over the terminal's NSView (it owns its
+/// own tracking areas), so a local monitor watches every move.
+private struct PeekMouseMonitor: NSViewRepresentable {
+    static let revealEdge: CGFloat = 56
+    static let dismissEdge: CGFloat = 252
+
+    var isPeeking: Bool
+    let setPeeking: (Bool) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.start(view: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.isPeeking = isPeeking
+        context.coordinator.setPeeking = setPeeking
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stop()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPeeking: isPeeking, setPeeking: setPeeking)
+    }
+
+    @MainActor
+    final class Coordinator {
+        var isPeeking: Bool
+        var setPeeking: (Bool) -> Void
+        private weak var view: NSView?
+        nonisolated(unsafe) private var monitor: Any?
+
+        init(isPeeking: Bool, setPeeking: @escaping (Bool) -> Void) {
+            self.isPeeking = isPeeking
+            self.setPeeking = setPeeking
+        }
+
+        func start(view: NSView) {
+            self.view = view
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.mouseMoved, .leftMouseDragged]
+            ) { [weak self] event in
+                self?.handle(event)
+                return event
+            }
+        }
+
+        private func handle(_ event: NSEvent) {
+            guard let window = view?.window, event.window === window else { return }
+            let x = event.locationInWindow.x
+            if isPeeking {
+                if x > PeekMouseMonitor.dismissEdge {
+                    setPeeking(false)
+                }
+            } else if x >= 0, x < PeekMouseMonitor.revealEdge {
+                setPeeking(true)
+            }
+        }
+
+        func stop() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
+        }
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+    }
+}
+
 /// Shifts the traffic lights away from the window corner (doubling the stock
-/// inset). AppKit resets their frames on titlebar layout, so the offset is
-/// reapplied after resizes and fullscreen transitions.
+/// inset) and hides them alongside the sidebar. AppKit resets button frames
+/// on titlebar layout, so the offset is reapplied after resizes and
+/// fullscreen transitions.
 private struct TrafficLightInset: NSViewRepresentable {
     static let extraOffset = CGPoint(x: 7, y: 6)
+
+    var buttonsHidden: Bool
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -174,7 +322,9 @@ private struct TrafficLightInset: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.setButtonsHidden(buttonsHidden)
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -182,34 +332,62 @@ private struct TrafficLightInset: NSViewRepresentable {
         private weak var window: NSWindow?
         private var defaultOrigins: [NSWindow.ButtonType: CGPoint] = [:]
         private var observers: [NSObjectProtocol] = []
+        private var buttonsHidden = false
 
         deinit {
             observers.forEach(NotificationCenter.default.removeObserver)
+        }
+
+        func setButtonsHidden(_ hidden: Bool) {
+            guard hidden != buttonsHidden else { return }
+            buttonsHidden = hidden
+            applyVisibility(animated: true)
+        }
+
+        /// Fades alpha only — flipping isHidden makes AppKit relayout the
+        /// titlebar and reset button frames mid-fade, which reads as the
+        /// lights travelling into place.
+        private func applyVisibility(animated: Bool) {
+            guard let window else { return }
+            let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+                .compactMap { window.standardWindowButton($0) }
+
+            if !buttonsHidden {
+                apply()
+            }
+            let target: CGFloat = buttonsHidden ? 0 : 1
+            if animated {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = self.buttonsHidden ? 0.15 : 0.2
+                    buttons.forEach { $0.animator().alphaValue = target }
+                }
+            } else {
+                buttons.forEach { $0.alphaValue = target }
+            }
+            // Invisible buttons must not swallow clicks over the terminal.
+            buttons.forEach { $0.isEnabled = !buttonsHidden }
         }
 
         func attach(to window: NSWindow?) {
             guard let window, self.window !== window else { return }
             self.window = window
 
-            let names: [Notification.Name] = [
-                NSWindow.didResizeNotification,
-                NSWindow.didExitFullScreenNotification,
-                NSWindow.didBecomeKeyNotification,
-            ]
-            for name in names {
-                observers.append(NotificationCenter.default.addObserver(
-                    forName: name, object: window, queue: .main
-                ) { [weak self] _ in
-                    self?.apply()
-                    // AppKit may relayout the titlebar after the notification.
-                    DispatchQueue.main.async { self?.apply() }
-                })
-            }
+            // AppKit resets button frames on titlebar relayouts that no
+            // specific notification covers (NSView.frame isn't reliably
+            // KVO-observable either). didUpdate fires after every window
+            // update cycle, so drift is corrected before it's ever visible;
+            // apply() is a cheap three-frame comparison.
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.didUpdateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                self?.apply()
+            })
             apply()
+            applyVisibility(animated: false)
         }
 
         private func apply() {
-            guard let window else { return }
+            guard let window, !window.styleMask.contains(.fullScreen) else { return }
             let offset = TrafficLightInset.extraOffset
             for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
                 guard let button = window.standardWindowButton(type),
@@ -219,7 +397,12 @@ private struct TrafficLightInset: NSViewRepresentable {
                 }
                 guard let base = defaultOrigins[type] else { continue }
                 let dy = superview.isFlipped ? offset.y : -offset.y
-                button.setFrameOrigin(CGPoint(x: base.x + offset.x, y: base.y + dy))
+                let target = CGPoint(x: base.x + offset.x, y: base.y + dy)
+                // Only correct drift — unconditional writes would ping-pong
+                // with the frame observation.
+                if button.frame.origin != target {
+                    button.setFrameOrigin(target)
+                }
             }
         }
     }
