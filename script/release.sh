@@ -40,6 +40,24 @@ xcodebuild -project Bloom.xcodeproj -scheme Bloom -configuration Release \
     CURRENT_PROJECT_VERSION="$BUILD_NUM" \
     build | grep -E "error|warning: Signing|BUILD" || true
 
+# Sparkle's nested helpers ship with upstream signatures; the notary service
+# requires every executable be signed by our Developer ID with a secure
+# timestamp. Re-sign inside-out (helpers -> framework -> app) so each outer
+# seal covers the fixed layer beneath it.
+echo "==> Re-signing Sparkle helpers for notarization"
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
+for HELPER in \
+    "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc" \
+    "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc" \
+    "$SPARKLE_FW/Versions/B/Autoupdate" \
+    "$SPARKLE_FW/Versions/B/Updater.app"; do
+    codesign --force --options runtime --timestamp \
+        --preserve-metadata=entitlements --sign "$IDENTITY" "$HELPER"
+done
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SPARKLE_FW"
+codesign --force --options runtime --timestamp \
+    --entitlements Bloom/Bloom.entitlements --sign "$IDENTITY" "$APP"
+
 codesign --verify --deep --strict "$APP"
 echo "==> Signed as: $(codesign -dvv "$APP" 2>&1 | grep '^Authority' | head -1)"
 
