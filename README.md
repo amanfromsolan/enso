@@ -55,3 +55,7 @@ cd ../.. && xcodebuild -project Bloom.xcodeproj -scheme Bloom build
 ## Credits
 
 Terminal emulation, PTY, and Metal rendering by [Ghostty](https://ghostty.org) — Bloom is UI and workflow on top of `libghostty`. Agent logos via [Simple Icons](https://simpleicons.org) and [LobeHub](https://icons.lobehub.com).
+
+## License
+
+Bloom is open source under the [GNU General Public License v3.0](LICENSE). Ghostty (MIT) and other bundled components retain their original licenses.
