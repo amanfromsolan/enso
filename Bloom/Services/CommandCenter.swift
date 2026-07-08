@@ -31,6 +31,9 @@ final class CommandCenter: ObservableObject {
         return true
     }
 
+    /// Test hook: whether the local key monitor is currently installed.
+    var isMonitorInstalled: Bool { monitor != nil }
+
     var inputPlaceholder: String {
         switch mode {
         case .search: "Search tabs, spaces, commands…"
@@ -71,8 +74,13 @@ final class CommandCenter: ObservableObject {
         rebuild()
         isOpen = true
 
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            self?.handleKey(event) ?? event
+        // The previous close's monitor may still be draining swallowed
+        // keyUps; reuse it. Installing a second would orphan the first,
+        // and orphaned monitors turn every Enter into "New Terminal".
+        if monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+                self?.handleKey(event) ?? event
+            }
         }
     }
 
@@ -155,15 +163,23 @@ final class CommandCenter: ObservableObject {
 
     // MARK: - Keyboard
 
-    private func handleKey(_ event: NSEvent) -> NSEvent? {
+    func handleKey(_ event: NSEvent) -> NSEvent? {
         if event.type == .keyUp {
             guard swallowedKeyCodes.remove(event.keyCode) != nil else { return event }
             removeMonitorWhenDrained()
             return nil
         }
+        // Closed palette: the monitor only lingers to drain swallowed
+        // keyUps; keyDowns belong to the terminal.
+        guard isOpen else { return event }
+        // Registered before the action runs: Enter/Esc close() the palette
+        // mid-handling, and close's drain check must count this key as
+        // pending or it tears the monitor down before the keyUp arrives.
+        swallowedKeyCodes.insert(event.keyCode)
         let result = handleKeyDown(event)
-        if result == nil {
-            swallowedKeyCodes.insert(event.keyCode)
+        if result != nil {
+            swallowedKeyCodes.remove(event.keyCode)
+            removeMonitorWhenDrained()
         }
         return result
     }

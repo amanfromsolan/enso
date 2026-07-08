@@ -211,17 +211,13 @@
 			sourceTree = "<group>";
 		};
 		070AC38B2FD810C50001BF12 /* BloomTests */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = "BloomTests";
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BloomTests;
 			sourceTree = "<group>";
 		};
 		070AC3952FD810C50001BF12 /* BloomUITests */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = "BloomUITests";
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BloomUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -260,6 +256,9 @@
 			dependencies = (
 				070AC38A2FD810C50001BF12 /* PBXTargetDependency */,
 			);
+			fileSystemSynchronizedGroups = (
+				070AC38B2FD810C50001BF12 /* BloomTests */,
+			);
 			name = "BloomTests";
 			packageProductDependencies = (
 			);
@@ -279,6 +278,9 @@
 			);
 			dependencies = (
 				070AC3942FD810C50001BF12 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				070AC3952FD810C50001BF12 /* BloomUITests */,
 			);
 			name = "BloomUITests";
 			packageProductDependencies = (
