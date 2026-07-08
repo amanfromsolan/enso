@@ -43,6 +43,9 @@ final class CommandCenter: ObservableObject {
     }
 
     private weak var store: TerminalSessionStore?
+    /// Injected by CommandCenterView: opening the custom settings Window
+    /// scene needs SwiftUI's environment openWindow action.
+    var openWindow: OpenWindowAction?
     // Freed from deinit, which is nonisolated under strict concurrency.
     nonisolated(unsafe) private var monitor: Any?
     /// KeyDowns we swallowed whose keyUp hasn't arrived yet. The monitor
@@ -528,8 +531,8 @@ final class CommandCenter: ObservableObject {
             title: "Settings",
             context: "Command",
             verb: "Run"
-        ) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        ) { [weak self] in
+            self?.openWindow?(id: SettingsPanel.windowID)
         })
 
         return commands
@@ -587,6 +590,7 @@ struct PaletteItem: Identifiable {
 struct CommandCenterView: View {
     @ObservedObject var center: CommandCenter
     @FocusState private var searchFocused: Bool
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -654,6 +658,7 @@ struct CommandCenterView: View {
                 .shadow(color: .black.opacity(0.65), radius: 70, y: 30)
         )
         .onAppear {
+            center.openWindow = openWindow
             // A beat later so focus wins over the terminal NSView, which is
             // first responder when the palette opens.
             DispatchQueue.main.async {
