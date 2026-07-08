@@ -107,7 +107,13 @@ python3 script/release_notes.py "$NOTES_MD" > "$APPCAST_DIR/Enso-$VERSION.html"
 # installs follow GitHub's repo redirect to this repo's latest release, and
 # an asset named appcast.xml would offer them Enso updates they can't
 # install (bundle id mismatch). The old name 404s for them instead.
-mv "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/enso-appcast.xml"
+# generate_appcast names its output after the SUFeedURL filename baked into
+# the app, so the rename is usually already done; the mv covers Sparkle
+# versions that write the default appcast.xml.
+if [[ -f "$APPCAST_DIR/appcast.xml" ]]; then
+    mv "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/enso-appcast.xml"
+fi
+[[ -f "$APPCAST_DIR/enso-appcast.xml" ]] || { echo "error: no appcast generated" >&2; exit 1; }
 
 echo "==> Publishing GitHub release v$VERSION"
 gh release create "v$VERSION" \
