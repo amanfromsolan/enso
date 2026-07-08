@@ -82,9 +82,9 @@ struct TerminalRootView: View {
                 ))
         }
         // Pinning while peeked commits instantly: the panel is already on
-        // screen, and animating the terminal's resize makes its Metal
-        // surface flash a stale frame. Toggles without a peek (⌘B) keep
-        // the spring.
+        // screen, and animating the handoff flashes the sidebar untinted
+        // for a frame (the frosted NSVisualEffectView composites ahead of
+        // its SwiftUI tint). Toggles without a peek (⌘B) keep the spring.
         .animation(
             isPeeking ? nil : .spring(duration: 0.28, bounce: 0.12),
             value: store.isSidebarVisible
