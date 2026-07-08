@@ -775,7 +775,8 @@ private struct SpacePage: View {
                 .frame(maxWidth: .infinity)
                 // Swallows (nearly) the whole inter-folder gap; anything
                 // that slips past it hits the zone, which shows nothing.
-                .frame(height: 12)
+                // Collapsed folders sit tighter.
+                .frame(height: isExpanded ? 12 : 6)
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
                     defer { clearDropFeedback() }
