@@ -156,7 +156,7 @@ private struct UpdateCardBody: View {
         case .available: "New update available"
         case .downloading: "Downloading update…"
         case .extracting: "Preparing update…"
-        case .readyToRestart(let version): "Bloom \(version) ready"
+        case .readyToRestart(let version): "Enso \(version) ready"
         case .installing: "Installing…"
         case .upToDate: "You're up to date"
         case .failed: "Update failed"

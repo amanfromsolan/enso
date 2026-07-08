@@ -3,14 +3,16 @@
 <plist version="1.0">
 <dict>
 	<!-- Merged with the generated Info.plist; declares the Finder
-	     Services entry (right-click a folder → New Bloom Terminal Here).
+	     Services entry (right-click a folder → New Enso Terminal Here).
 	     Mirrors Ghostty's declaration — Finder reliably surfaces the
 	     NSSendTypes/NSFilenamesPboardType form. -->
-	<!-- Sparkle: appcast.xml is uploaded as an asset on each GitHub release;
-	     "latest" always serves the newest one. Checks are automatic, installs
-	     are user-driven from the sidebar update card. -->
+	<!-- Sparkle: enso-appcast.xml is uploaded as an asset on each GitHub
+	     release; "latest" always serves the newest one. Checks are automatic,
+	     installs are user-driven from the sidebar update card. The name is
+	     deliberately not appcast.xml so pre-rename Bloom installs, whose feed
+	     redirects into this repo, never see updates they can't install. -->
 	<key>SUFeedURL</key>
-	<string>https://github.com/amanfromsolan/bloom/releases/latest/download/appcast.xml</string>
+	<string>https://github.com/amanfromsolan/enso/releases/latest/download/enso-appcast.xml</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUPublicEDKey</key>
@@ -18,14 +20,14 @@
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>A program running in Bloom (such as voice dictation) would like to use your microphone.</string>
+	<string>A program running in Enso (such as voice dictation) would like to use your microphone.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
-				<string>New Bloom Terminal Here</string>
+				<string>New Enso Terminal Here</string>
 			</dict>
 			<key>NSMessage</key>
 			<string>newTerminalHere</string>

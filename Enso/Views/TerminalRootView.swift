@@ -232,10 +232,10 @@ struct TerminalRootView: View {
             switcher.attach(to: store)
             commandCenter.attach(to: store)
             #if DEBUG
-            // Design scaffold, opt-in: BLOOM_WHATS_NEW=1 fakes a found
+            // Design scaffold, opt-in: ENSO_WHATS_NEW=1 fakes a found
             // update (sidebar card); =sheet also opens the What's New
             // sheet. Unset, dev launches stay clean.
-            if ProcessInfo.processInfo.environment["BLOOM_WHATS_NEW"] != nil {
+            if ProcessInfo.processInfo.environment["ENSO_WHATS_NEW"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                     UpdateController.shared.debugSimulateUpdateFound()
                 }
@@ -435,7 +435,7 @@ private struct TrafficLightInset: NSViewRepresentable {
             // Empty unified toolbar: AppKit gives the titlebar its taller
             // metrics and vertically centers the traffic lights in it — the
             // standard technique for lowered lights without frame-fighting.
-            let toolbar = NSToolbar(identifier: "BloomTitlebar")
+            let toolbar = NSToolbar(identifier: "EnsoTitlebar")
             toolbar.showsBaselineSeparator = false
             window.toolbar = toolbar
             window.toolbarStyle = .unified

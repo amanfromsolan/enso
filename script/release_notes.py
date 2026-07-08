@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Converts RELEASE_NOTES/<version>.md into the XHTML fragment Sparkle
-embeds in the appcast (and Bloom's What's New sheet parses back).
+embeds in the appcast (and Enso's What's New sheet parses back).
 
 The markdown is a deliberately strict subset — the gate that guarantees
 the in-app parser only ever sees well-formed <h2>/<ul><li> XHTML:

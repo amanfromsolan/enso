@@ -1,13 +1,13 @@
 //
-//  BloomUITests.swift
-//  BloomUITests
+//  EnsoUITests.swift
+//  EnsoUITests
 //
 //  Created by aman on 09/06/26.
 //
 
 import XCTest
 
-final class BloomUITests: XCTestCase {
+final class EnsoUITests: XCTestCase {
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.

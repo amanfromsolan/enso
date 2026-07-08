@@ -43,7 +43,7 @@ struct WhatsNewSheet: View {
                 .frame(width: 40, height: 40)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("What's New in Bloom")
+                    Text("What's New in Enso")
                         .font(.system(size: 15, weight: .semibold))
 
                     Text("Version \(content.version) is ready to install.")
@@ -195,7 +195,7 @@ extension WhatsNewSheet.Content {
         sections: [
             .init(title: "New", items: [
                 "Release notes now show up right here when an update is ready — no more guessing what changed.",
-                "Right-click a folder in Finder → New Bloom Terminal Here."
+                "Right-click a folder in Finder → New Enso Terminal Here."
             ]),
             .init(title: "Improved", items: [
                 "The sidebar update card keeps its layout in narrow sidebars instead of wrapping.",

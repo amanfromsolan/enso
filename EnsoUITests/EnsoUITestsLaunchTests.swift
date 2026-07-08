@@ -1,13 +1,13 @@
 //
-//  BloomUITestsLaunchTests.swift
-//  BloomUITests
+//  EnsoUITestsLaunchTests.swift
+//  EnsoUITests
 //
 //  Created by aman on 09/06/26.
 //
 
 import XCTest
 
-final class BloomUITestsLaunchTests: XCTestCase {
+final class EnsoUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

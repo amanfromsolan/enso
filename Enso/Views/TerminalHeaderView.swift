@@ -82,8 +82,8 @@ struct TerminalHeaderView: View {
 }
 
 #if DEBUG
-/// Marks a "Bloom Nightly" window so it's never mistaken for the installed
-/// Bloom while dogfooding. Debug builds only.
+/// Marks a "Enso Nightly" window so it's never mistaken for the installed
+/// Enso while dogfooding. Debug builds only.
 private struct DevBadge: View {
     var body: some View {
         Text("NIGHTLY")

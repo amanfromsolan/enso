@@ -1,13 +1,13 @@
 //
-//  BloomApp.swift
-//  Bloom
+//  EnsoApp.swift
+//  Enso
 //
 //  Created by aman on 09/06/26.
 //
 
 import SwiftUI
 
-/// Finder Services entry point: right-click a folder → "New Bloom Terminal
+/// Finder Services entry point: right-click a folder → "New Enso Terminal
 /// Here" opens a tab at that directory (declared in Info.plist NSServices).
 @MainActor
 final class ServiceProvider: NSObject {
@@ -61,7 +61,7 @@ final class ServiceProvider: NSObject {
 }
 
 @main
-struct BloomApp: App {
+struct EnsoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var sessionStore = TerminalSessionStore()
 

@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Builds, signs, notarizes, and packages Bloom into a shareable DMG, then
+# Builds, signs, notarizes, and packages Enso into a shareable DMG, then
 # generates a Sparkle appcast and publishes everything as a GitHub release.
 #
 # One-time setup:
-#   xcrun notarytool store-credentials bloom-notary \
+#   xcrun notarytool store-credentials enso-notary \
 #       --apple-id <apple-id-email> --team-id HFXABN57R2
 #   Sparkle EdDSA private key lives in the login keychain ("Private key for
 #   signing Sparkle updates"); generate_appcast reads it automatically.
@@ -16,11 +16,11 @@ cd "$(dirname "$0")/.."
 
 VERSION="${1:?usage: script/release.sh <version> [--skip-notarize]}"
 IDENTITY="Developer ID Application: Aman Chaudhary (HFXABN57R2)"
-PROFILE="bloom-notary"
-REPO="amanfromsolan/bloom"
+PROFILE="enso-notary"
+REPO="amanfromsolan/enso"
 BUILD_DIR="build/release"
-APP="$BUILD_DIR/Build/Products/Release/Bloom.app"
-DMG="$HOME/Downloads/Bloom-$VERSION.dmg"
+APP="$BUILD_DIR/Build/Products/Release/Enso.app"
+DMG="$HOME/Downloads/Enso-$VERSION.dmg"
 
 # Release notes are mandatory and validated before the (slow) build:
 # RELEASE_NOTES/<version>.md in the strict '## Section' / '- item' subset.
@@ -39,7 +39,7 @@ IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
 BUILD_NUM=$((MAJOR * 10000 + MINOR * 100 + PATCH))
 
 echo "==> Building Release v$VERSION (build $BUILD_NUM) with hardened runtime"
-xcodebuild -project Bloom.xcodeproj -scheme Bloom -configuration Release \
+xcodebuild -project Enso.xcodeproj -scheme Enso -configuration Release \
     -derivedDataPath "$BUILD_DIR" \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="$IDENTITY" \
@@ -67,18 +67,18 @@ for HELPER in \
 done
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SPARKLE_FW"
 codesign --force --options runtime --timestamp \
-    --entitlements Bloom/Bloom.entitlements --sign "$IDENTITY" "$APP"
+    --entitlements Enso/Enso.entitlements --sign "$IDENTITY" "$APP"
 
 codesign --verify --deep --strict "$APP"
 echo "==> Signed as: $(codesign -dvv "$APP" 2>&1 | grep '^Authority' | head -1)"
 
 echo "==> Packaging DMG"
-STAGE="$(mktemp -d)/Bloom"
+STAGE="$(mktemp -d)/Enso"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "Bloom" -srcfolder "$STAGE" -ov -format UDZO "$DMG" > /dev/null
+hdiutil create -volname "Enso" -srcfolder "$STAGE" -ov -format UDZO "$DMG" > /dev/null
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
 if [[ "${2:-}" == "--skip-notarize" ]]; then
@@ -98,17 +98,23 @@ APPCAST_DIR="$(mktemp -d)"
 cp "$DMG" "$APPCAST_DIR/"
 # generate_appcast embeds an HTML file named like the archive as that
 # item's release notes (<description> in the appcast).
-python3 script/release_notes.py "$NOTES_MD" > "$APPCAST_DIR/Bloom-$VERSION.html"
+python3 script/release_notes.py "$NOTES_MD" > "$APPCAST_DIR/Enso-$VERSION.html"
 "$SPARKLE_BIN/generate_appcast" "$APPCAST_DIR" \
     --download-url-prefix "https://github.com/$REPO/releases/download/v$VERSION/" \
     --maximum-deltas 0
 
+# The asset is named enso-appcast.xml, not appcast.xml: pre-rename Bloom
+# installs follow GitHub's repo redirect to this repo's latest release, and
+# an asset named appcast.xml would offer them Enso updates they can't
+# install (bundle id mismatch). The old name 404s for them instead.
+mv "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/enso-appcast.xml"
+
 echo "==> Publishing GitHub release v$VERSION"
 gh release create "v$VERSION" \
     "$DMG" \
-    "$APPCAST_DIR/appcast.xml" \
+    "$APPCAST_DIR/enso-appcast.xml" \
     --repo "$REPO" \
-    --title "Bloom v$VERSION" \
+    --title "Enso v$VERSION" \
     --notes-file "$NOTES_MD"
 
 echo "==> Done: https://github.com/$REPO/releases/tag/v$VERSION"

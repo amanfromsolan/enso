@@ -1,6 +1,6 @@
 import AppKit
 import Testing
-@testable import Bloom
+@testable import Enso
 
 /// Regression tests for the leaked-key-monitor bug: executing a palette item
 /// with Enter poisoned `swallowedKeyCodes`, which kept the monitor installed

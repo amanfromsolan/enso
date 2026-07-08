@@ -108,7 +108,7 @@ struct SettingsPanelView: View {
 
     private var appVersionLine: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
-        return "Bloom \(version)"
+        return "Enso \(version)"
     }
 
     // MARK: - Content

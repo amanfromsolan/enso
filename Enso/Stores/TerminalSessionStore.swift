@@ -636,13 +636,21 @@ final class TerminalSessionStore: ObservableObject {
 
     private static var stateURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let base = appSupport.appendingPathComponent("Bloom", isDirectory: true)
+        let base = appSupport.appendingPathComponent("Enso", isDirectory: true)
 
-        // One-time migration from the app's pre-rename identity.
-        let legacy = appSupport.appendingPathComponent("cmux-alternative", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: base.path),
-           FileManager.default.fileExists(atPath: legacy.path) {
-            try? FileManager.default.moveItem(at: legacy, to: base)
+        // One-time migration from a prior app identity, most recent first:
+        // "Bloom" was the name before the Enso rename; "cmux-alternative"
+        // was the identity before that. The app support folder is keyed on
+        // this literal name, not the bundle id, so the rename would otherwise
+        // orphan a user's saved sessions.
+        if !FileManager.default.fileExists(atPath: base.path) {
+            for legacyName in ["Bloom", "cmux-alternative"] {
+                let legacy = appSupport.appendingPathComponent(legacyName, isDirectory: true)
+                if FileManager.default.fileExists(atPath: legacy.path) {
+                    try? FileManager.default.moveItem(at: legacy, to: base)
+                    break
+                }
+            }
         }
 
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -684,7 +692,7 @@ extension TerminalSessionStore {
                     icon: .symbol("hammer.fill"),
                     pinnedFolders: [
                         TerminalFolder(
-                            title: "bloom",
+                            title: "enso",
                             sessions: [
                                 TerminalSession(title: "main", workingDirectory: "~", accent: .blue),
                                 TerminalSession(title: "agent", workingDirectory: "~", accent: .green)

@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A100000A2FD810C30001BF12 /* BloomApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000092FD810C30001BF12 /* BloomApp.swift */; };
+		A100000A2FD810C30001BF12 /* EnsoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000092FD810C30001BF12 /* EnsoApp.swift */; };
 		A100000C2FD810C30001BF12 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000B2FD810C30001BF12 /* ContentView.swift */; };
 		A100000E2FD810C30001BF12 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A100000D2FD810C30001BF12 /* Assets.xcassets */; };
 		A10000102FD810C30001BF12 /* TerminalCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000012FD810C30001BF12 /* TerminalCommands.swift */; };
@@ -43,21 +43,21 @@
 			containerPortal = 070AC3732FD810C30001BF12 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 070AC37A2FD810C30001BF12;
-			remoteInfo = Bloom;
+			remoteInfo = Enso;
 		};
 		070AC3932FD810C50001BF12 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 070AC3732FD810C30001BF12 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 070AC37A2FD810C30001BF12;
-			remoteInfo = Bloom;
+			remoteInfo = Enso;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		070AC37B2FD810C30001BF12 /* Bloom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bloom.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		070AC3882FD810C50001BF12 /* BloomTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BloomTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		070AC3922FD810C50001BF12 /* BloomUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BloomUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		070AC37B2FD810C30001BF12 /* Enso.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Enso.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		070AC3882FD810C50001BF12 /* EnsoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EnsoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		070AC3922FD810C50001BF12 /* EnsoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EnsoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000012FD810C30001BF12 /* TerminalCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalCommands.swift; sourceTree = "<group>"; };
 		A10000022FD810C30001BF12 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
 		A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyTerminalHostView.swift; sourceTree = "<group>"; };
@@ -66,7 +66,7 @@
 		A10000062FD810C30001BF12 /* TerminalHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHeaderView.swift; sourceTree = "<group>"; };
 		A10000072FD810C30001BF12 /* TerminalRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRootView.swift; sourceTree = "<group>"; };
 		A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWorkspaceView.swift; sourceTree = "<group>"; };
-		A10000092FD810C30001BF12 /* BloomApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloomApp.swift; sourceTree = "<group>"; };
+		A10000092FD810C30001BF12 /* EnsoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnsoApp.swift; sourceTree = "<group>"; };
 		A100000B2FD810C30001BF12 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A100000D2FD810C30001BF12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A10000332FD810C30001BF12 /* GhosttyRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyRuntime.swift; sourceTree = "<group>"; };
@@ -88,14 +88,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		070AC38B2FD810C50001BF12 /* BloomTests */ = {
+		070AC38B2FD810C50001BF12 /* EnsoTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BloomTests;
+			path = EnsoTests;
 			sourceTree = "<group>";
 		};
-		070AC3952FD810C50001BF12 /* BloomUITests */ = {
+		070AC3952FD810C50001BF12 /* EnsoUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BloomUITests;
+			path = EnsoUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -131,9 +131,9 @@
 			isa = PBXGroup;
 			children = (
 				A10000372FD810C30001BF12 /* GhosttyKit.xcframework */,
-				070AC37D2FD810C30001BF12 /* Bloom */,
-				070AC38B2FD810C50001BF12 /* BloomTests */,
-				070AC3952FD810C50001BF12 /* BloomUITests */,
+				070AC37D2FD810C30001BF12 /* Enso */,
+				070AC38B2FD810C50001BF12 /* EnsoTests */,
+				070AC3952FD810C50001BF12 /* EnsoUITests */,
 				070AC37C2FD810C30001BF12 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -141,14 +141,14 @@
 		070AC37C2FD810C30001BF12 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				070AC37B2FD810C30001BF12 /* Bloom.app */,
-				070AC3882FD810C50001BF12 /* BloomTests.xctest */,
-				070AC3922FD810C50001BF12 /* BloomUITests.xctest */,
+				070AC37B2FD810C30001BF12 /* Enso.app */,
+				070AC3882FD810C50001BF12 /* EnsoTests.xctest */,
+				070AC3922FD810C50001BF12 /* EnsoUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		070AC37D2FD810C30001BF12 /* Bloom */ = {
+		070AC37D2FD810C30001BF12 /* Enso */ = {
 			isa = PBXGroup;
 			children = (
 				A10000202FD810C30001BF12 /* App */,
@@ -161,9 +161,9 @@
 				A1GRES0022FD810C30001BF12 /* terminfo */,
 				A1GRES0042FD810C30001BF12 /* ghostty */,
 				A100000B2FD810C30001BF12 /* ContentView.swift */,
-				A10000092FD810C30001BF12 /* BloomApp.swift */,
+				A10000092FD810C30001BF12 /* EnsoApp.swift */,
 			);
-			path = Bloom;
+			path = Enso;
 			sourceTree = "<group>";
 		};
 		A10000202FD810C30001BF12 /* App */ = {
@@ -232,9 +232,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		070AC37A2FD810C30001BF12 /* Bloom */ = {
+		070AC37A2FD810C30001BF12 /* Enso */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 070AC39C2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "Bloom" */;
+			buildConfigurationList = 070AC39C2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "Enso" */;
 			buildPhases = (
 				070AC3772FD810C30001BF12 /* Sources */,
 				070AC3782FD810C30001BF12 /* Frameworks */,
@@ -244,17 +244,17 @@
 			);
 			dependencies = (
 			);
-			name = Bloom;
+			name = Enso;
 			packageProductDependencies = (
 				A1SPKLPRD12FD810C30001BF12 /* Sparkle */,
 			);
-			productName = Bloom;
-			productReference = 070AC37B2FD810C30001BF12 /* Bloom.app */;
+			productName = Enso;
+			productReference = 070AC37B2FD810C30001BF12 /* Enso.app */;
 			productType = "com.apple.product-type.application";
 		};
-		070AC3872FD810C50001BF12 /* BloomTests */ = {
+		070AC3872FD810C50001BF12 /* EnsoTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 070AC39F2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "BloomTests" */;
+			buildConfigurationList = 070AC39F2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "EnsoTests" */;
 			buildPhases = (
 				070AC3842FD810C50001BF12 /* Sources */,
 				070AC3852FD810C50001BF12 /* Frameworks */,
@@ -266,18 +266,18 @@
 				070AC38A2FD810C50001BF12 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				070AC38B2FD810C50001BF12 /* BloomTests */,
+				070AC38B2FD810C50001BF12 /* EnsoTests */,
 			);
-			name = BloomTests;
+			name = EnsoTests;
 			packageProductDependencies = (
 			);
-			productName = BloomTests;
-			productReference = 070AC3882FD810C50001BF12 /* BloomTests.xctest */;
+			productName = EnsoTests;
+			productReference = 070AC3882FD810C50001BF12 /* EnsoTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		070AC3912FD810C50001BF12 /* BloomUITests */ = {
+		070AC3912FD810C50001BF12 /* EnsoUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 070AC3A22FD810C50001BF12 /* Build configuration list for PBXNativeTarget "BloomUITests" */;
+			buildConfigurationList = 070AC3A22FD810C50001BF12 /* Build configuration list for PBXNativeTarget "EnsoUITests" */;
 			buildPhases = (
 				070AC38E2FD810C50001BF12 /* Sources */,
 				070AC38F2FD810C50001BF12 /* Frameworks */,
@@ -289,13 +289,13 @@
 				070AC3942FD810C50001BF12 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				070AC3952FD810C50001BF12 /* BloomUITests */,
+				070AC3952FD810C50001BF12 /* EnsoUITests */,
 			);
-			name = BloomUITests;
+			name = EnsoUITests;
 			packageProductDependencies = (
 			);
-			productName = BloomUITests;
-			productReference = 070AC3922FD810C50001BF12 /* BloomUITests.xctest */;
+			productName = EnsoUITests;
+			productReference = 070AC3922FD810C50001BF12 /* EnsoUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -321,7 +321,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 070AC3762FD810C30001BF12 /* Build configuration list for PBXProject "Bloom" */;
+			buildConfigurationList = 070AC3762FD810C30001BF12 /* Build configuration list for PBXProject "Enso" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -338,9 +338,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				070AC37A2FD810C30001BF12 /* Bloom */,
-				070AC3872FD810C50001BF12 /* BloomTests */,
-				070AC3912FD810C50001BF12 /* BloomUITests */,
+				070AC37A2FD810C30001BF12 /* Enso */,
+				070AC3872FD810C50001BF12 /* EnsoTests */,
+				070AC3912FD810C50001BF12 /* EnsoUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -377,7 +377,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A100000A2FD810C30001BF12 /* BloomApp.swift in Sources */,
+				A100000A2FD810C30001BF12 /* EnsoApp.swift in Sources */,
 				A100000C2FD810C30001BF12 /* ContentView.swift in Sources */,
 				A10000102FD810C30001BF12 /* TerminalCommands.swift in Sources */,
 				A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */,
@@ -422,12 +422,12 @@
 /* Begin PBXTargetDependency section */
 		070AC38A2FD810C50001BF12 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 070AC37A2FD810C30001BF12 /* Bloom */;
+			target = 070AC37A2FD810C30001BF12 /* Enso */;
 			targetProxy = 070AC3892FD810C50001BF12 /* PBXContainerItemProxy */;
 		};
 		070AC3942FD810C50001BF12 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 070AC37A2FD810C30001BF12 /* Bloom */;
+			target = 070AC37A2FD810C30001BF12 /* Enso */;
 			targetProxy = 070AC3932FD810C50001BF12 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -561,7 +561,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = Bloom/Bloom.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Enso/Enso.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = HFXABN57R2;
@@ -570,8 +570,8 @@
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Bloom/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Bloom Nightly";
+				INFOPLIST_FILE = Enso/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Enso Nightly";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -582,8 +582,9 @@
 					"-framework",
 					Carbon,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloom.debug;
-				PRODUCT_NAME = "Bloom Nightly";
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.enso.debug;
+				PRODUCT_MODULE_NAME = Enso;
+				PRODUCT_NAME = "Enso Nightly";
 				REGISTER_APP_GROUPS = YES;
 				SDK_STAT_CACHE_ENABLE = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -604,7 +605,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = Bloom/Bloom.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Enso/Enso.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = HFXABN57R2;
@@ -613,7 +614,7 @@
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Bloom/Info.plist;
+				INFOPLIST_FILE = Enso/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -624,8 +625,9 @@
 					"-framework",
 					Carbon,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloom;
-				PRODUCT_NAME = Bloom;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.enso;
+				PRODUCT_MODULE_NAME = Enso;
+				PRODUCT_NAME = Enso;
 				REGISTER_APP_GROUPS = YES;
 				SDK_STAT_CACHE_ENABLE = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -651,7 +653,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.ensoTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDK_STAT_CACHE_ENABLE = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -660,7 +662,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bloom.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Bloom";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Enso.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Enso";
 			};
 			name = Debug;
 		};
@@ -674,7 +676,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.ensoTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDK_STAT_CACHE_ENABLE = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -683,7 +685,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bloom.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Bloom";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Enso.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Enso";
 			};
 			name = Release;
 		};
@@ -695,7 +697,7 @@
 				DEVELOPMENT_TEAM = HFXABN57R2;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.ensoUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDK_STAT_CACHE_ENABLE = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -704,7 +706,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = Bloom;
+				TEST_TARGET_NAME = Enso;
 			};
 			name = Debug;
 		};
@@ -716,7 +718,7 @@
 				DEVELOPMENT_TEAM = HFXABN57R2;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.ensoUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDK_STAT_CACHE_ENABLE = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -725,14 +727,14 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = Bloom;
+				TEST_TARGET_NAME = Enso;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		070AC3762FD810C30001BF12 /* Build configuration list for PBXProject "Bloom" */ = {
+		070AC3762FD810C30001BF12 /* Build configuration list for PBXProject "Enso" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				070AC39A2FD810C50001BF12 /* Debug */,
@@ -741,7 +743,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		070AC39C2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "Bloom" */ = {
+		070AC39C2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "Enso" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				070AC39D2FD810C50001BF12 /* Debug */,
@@ -750,7 +752,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		070AC39F2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "BloomTests" */ = {
+		070AC39F2FD810C50001BF12 /* Build configuration list for PBXNativeTarget "EnsoTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				070AC3A02FD810C50001BF12 /* Debug */,
@@ -759,7 +761,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		070AC3A22FD810C50001BF12 /* Build configuration list for PBXNativeTarget "BloomUITests" */ = {
+		070AC3A22FD810C50001BF12 /* Build configuration list for PBXNativeTarget "EnsoUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				070AC3A32FD810C50001BF12 /* Debug */,

@@ -2,7 +2,7 @@ import AppKit
 import Combine
 @preconcurrency import Sparkle
 
-/// Drives Sparkle updates with Bloom's own UI instead of Sparkle's dialogs.
+/// Drives Sparkle updates with Enso's own UI instead of Sparkle's dialogs.
 ///
 /// Scheduled checks run in the background (SUEnableAutomaticChecks); when an
 /// update exists the sidebar shows ``UpdateCardView`` and every step —
@@ -49,8 +49,8 @@ final class UpdateController: NSObject, ObservableObject {
         guard updater == nil else { return }
         #if DEBUG
         // Day-to-day dev runs never hit the public appcast; opt in with
-        // BLOOM_SPARKLE=1 to exercise the real update flow from Xcode.
-        guard ProcessInfo.processInfo.environment["BLOOM_SPARKLE"] == "1" else { return }
+        // ENSO_SPARKLE=1 to exercise the real update flow from Xcode.
+        guard ProcessInfo.processInfo.environment["ENSO_SPARKLE"] == "1" else { return }
         #endif
         let updater = SPUUpdater(
             hostBundle: .main,
@@ -123,9 +123,9 @@ final class UpdateController: NSObject, ObservableObject {
         pendingVersion = "0.5.0"
         releaseNotes = ReleaseNotesParser.parse(html: Self.debugNotesHTML, version: pendingVersion)
         phase = .available(version: pendingVersion)
-        // BLOOM_WHATS_NEW=sheet lands straight in the sheet (design
+        // ENSO_WHATS_NEW=sheet lands straight in the sheet (design
         // iteration without reaching for the card's button).
-        if ProcessInfo.processInfo.environment["BLOOM_WHATS_NEW"] == "sheet" {
+        if ProcessInfo.processInfo.environment["ENSO_WHATS_NEW"] == "sheet" {
             isShowingWhatsNew = true
         }
     }
@@ -135,7 +135,7 @@ final class UpdateController: NSObject, ObservableObject {
     <h2>New</h2>
     <ul>
     <li>Release notes now show up right in the app when an update is ready — no more guessing what changed.</li>
-    <li>Right-click a folder in Finder → New Bloom Terminal Here.</li>
+    <li>Right-click a folder in Finder → New Enso Terminal Here.</li>
     </ul>
     <h2>Improved</h2>
     <ul>

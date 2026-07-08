@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds and launches the Debug build ("Bloom Nightly", bundle id
-# com.amanchaudhary.bloom.debug) alongside the installed release Bloom.
+# Builds and launches the Debug build ("Enso Nightly", bundle id
+# com.amanchaudhary.enso.debug) alongside the installed release Enso.
 # Everything here is scoped to the DerivedData copy by full executable
-# path — never by process name, which the installed Bloom shares.
+# path — never by process name, which the installed Enso shares.
 
 MODE="${1:-run}"
-# Debug PRODUCT_NAME is "Bloom Nightly" so the Dock and app menu carry the
-# nightly name; the Xcode target and scheme are still "Bloom".
-APP_NAME="Bloom Nightly"
-PROJECT="Bloom.xcodeproj"
-SCHEME="Bloom"
+# Debug PRODUCT_NAME is "Enso Nightly" so the Dock and app menu carry the
+# nightly name; the Xcode target and scheme are still "Enso".
+APP_NAME="Enso Nightly"
+PROJECT="Enso.xcodeproj"
+SCHEME="Enso"
 CONFIGURATION="Debug"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$ROOT_DIR/build/DerivedData"

@@ -4,7 +4,7 @@ One file per release: `RELEASE_NOTES/<version>.md` (e.g. `0.5.0.md`).
 `script/release.sh` refuses to build without a valid one. The same file
 becomes, verbatim:
 
-1. the Sparkle appcast release notes → Bloom's in-app **What's New** sheet
+1. the Sparkle appcast release notes → Enso's in-app **What's New** sheet
 2. the GitHub release body
 
 ## Format (strict — validated by `script/release_notes.py`)
@@ -37,7 +37,7 @@ any that are empty. Unicode is fine — em dashes, arrows, quotes.
 
 ## Voice — write for the user, not the diff
 
-- Say what changed *for the person using Bloom*, not what changed in the
+- Say what changed *for the person using Enso*, not what changed in the
   code. "Command palette no longer spawns a stray terminal when you
   press Enter" — not "Fix NSEvent monitor leak in CommandCenter".
 - Name things the way the UI names them (the sidebar, the command
@@ -54,6 +54,6 @@ any that are empty. Unicode is fine — em dashes, arrows, quotes.
 python3 script/release_notes.py RELEASE_NOTES/<version>.md   # validate + preview HTML
 ```
 
-To see it in the real UI: run the dev build with `BLOOM_WHATS_NEW=sheet`
+To see it in the real UI: run the dev build with `ENSO_WHATS_NEW=sheet`
 (the What's New sheet opens with canned content; for your actual draft,
 paste its HTML into `UpdateController.debugNotesHTML`).

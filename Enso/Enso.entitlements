@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
 	<!-- Hardened runtime denies microphone access outright without this;
-	     needed so CLI tools running in Bloom (e.g. voice dictation) can
-	     trigger the mic permission prompt, attributed to Bloom. -->
+	     needed so CLI tools running in Enso (e.g. voice dictation) can
+	     trigger the mic permission prompt, attributed to Enso. -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 </dict>

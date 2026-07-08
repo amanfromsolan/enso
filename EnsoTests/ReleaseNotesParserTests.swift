@@ -1,5 +1,5 @@
 import Testing
-@testable import Bloom
+@testable import Enso
 
 /// The What's New sheet must survive whatever the appcast hands it: the
 /// canonical h2/li subset our pipeline emits, but also hand-edited HTML,

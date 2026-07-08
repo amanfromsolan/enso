@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// ⌘Q safety net. Quitting Bloom kills every live terminal, so the first
+/// ⌘Q safety net. Quitting Enso kills every live terminal, so the first
 /// quit request (⌘Q, app menu, or Dock) arms a short window and surfaces a
 /// HUD instead of terminating; a second request inside the window quits for
 /// real. Any other keypress, a click, or the timeout stands the guard down.
@@ -55,7 +55,7 @@ final class QuitGuard: ObservableObject {
         guard let store, !store.sessions.isEmpty else { return true }
         // No visible window means no HUD to explain a blocked quit — and it
         // covers logout/shutdown after windows close, where cancelling would
-        // make macOS report that Bloom interrupted shutdown.
+        // make macOS report that Enso interrupted shutdown.
         guard NSApp.windows.contains(where: \.isVisible) else { return true }
 
         if isShowingHUD {
@@ -85,7 +85,7 @@ final class QuitGuard: ObservableObject {
     }
 }
 
-/// AppKit lifecycle hook for BloomApp; SwiftUI has no native quit intercept.
+/// AppKit lifecycle hook for EnsoApp; SwiftUI has no native quit intercept.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -102,7 +102,7 @@ struct QuitConfirmationHUD: View {
             KeycapGlyph(label: "⌘Q")
                 .padding(.bottom, 20)
 
-            Text("Quit Bloom?")
+            Text("Quit Enso?")
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.95))
                 .padding(.bottom, 8)
