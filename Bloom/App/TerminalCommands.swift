@@ -51,7 +51,7 @@ struct TerminalCommands: Commands {
             Divider()
 
             Button("New Terminal") {
-                store.createSession()
+                store.createSessionInheritingWorkingDirectory()
             }
             .keyboardShortcut("n", modifiers: .command)
 

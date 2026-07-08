@@ -155,6 +155,12 @@ final class TerminalSessionStore: ObservableObject {
 
     // MARK: - Creation
 
+    /// ⌘N and the command center default: new terminals continue in the
+    /// selected tab's working directory rather than resetting to home.
+    func createSessionInheritingWorkingDirectory() {
+        createSession(workingDirectory: selectedSession?.workingDirectory)
+    }
+
     func createSession(inSpace spaceID: SidebarSpace.ID? = nil, workingDirectory: String? = nil) {
         let targetID = spaceID ?? activeSpaceID
         let session = Self.makeSession(workingDirectory: workingDirectory, accentIndex: sessions.count)
@@ -372,12 +378,25 @@ final class TerminalSessionStore: ObservableObject {
     func applyShellTitle(_ sessionID: TerminalSession.ID, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let display = Self.displayTitle(fromShellTitle: trimmed)
         update(sessionID) { item in
+            // Process detection reads the raw title; only the display collapses.
             item.runningProcess = TabProcess.detect(after: item.runningProcess, title: trimmed)
-            guard item.titleOrigin == .shell, item.title != trimmed else { return }
-            item.title = trimmed
+            guard item.titleOrigin == .shell, item.title != display else { return }
+            item.title = display
         }
         save()
+    }
+
+    /// Shells commonly report the cwd as the title — sometimes pre-shortened
+    /// by ghostty to "…/a/b/c" — which makes tab names span the whole path.
+    /// Collapse path-like titles to just the deepest folder name.
+    private static func displayTitle(fromShellTitle title: String) -> String {
+        guard title.hasPrefix("/") || title.hasPrefix("~") || title.hasPrefix("…") else { return title }
+        let expanded = (title as NSString).expandingTildeInPath
+        guard expanded != NSHomeDirectory(), expanded != "/" else { return "Terminal" }
+        let folder = (expanded as NSString).lastPathComponent
+        return folder.isEmpty || folder == "…" ? title : folder
     }
 
     /// One-shot LLM name; lands only on tabs the user hasn't renamed and

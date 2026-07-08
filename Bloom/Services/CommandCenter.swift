@@ -268,7 +268,7 @@ final class CommandCenter: ObservableObject {
         } else if trimmed.isEmpty {
             // Default sheet: New Tab first (Enter does the obvious thing),
             // then recent tabs everywhere, then spaces.
-            items = [newTabItem(in: store)]
+            items = newTabItems(in: store)
                 + tabItems(in: store).prefix(6)
                 + spaceItems(in: store)
         } else {
@@ -314,20 +314,43 @@ final class CommandCenter: ObservableObject {
         }
     }
 
-    private func newTabItem(in store: TerminalSessionStore) -> PaletteItem {
-        PaletteItem(
+    private func newTabItems(in store: TerminalSessionStore) -> [PaletteItem] {
+        var items: [PaletteItem] = []
+        // "In <folder>" first so Enter on the empty sheet continues where you are.
+        if let current = store.selectedSession {
+            let cwd = current.workingDirectory
+            items.append(PaletteItem(
+                id: "cmd-new-tab-cwd",
+                icon: .symbol("plus"),
+                title: "New Terminal in Current Folder",
+                context: Self.folderName(for: cwd),
+                verb: "Open"
+            ) { [weak store] in
+                store?.createSession(workingDirectory: cwd)
+            })
+        }
+        items.append(PaletteItem(
             id: "cmd-new-tab",
             icon: .symbol("plus"),
             title: "New Terminal",
             context: "Command",
             verb: "Open"
         ) { [weak store] in
-            store?.createSession()
-        }
+            store?.createSession(workingDirectory: NSHomeDirectory())
+        })
+        return items
+    }
+
+    /// The full path never fits the narrow context column, so show just the
+    /// deepest folder name.
+    private static func folderName(for path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        guard expanded != NSHomeDirectory(), expanded != "/" else { return "~" }
+        return (expanded as NSString).lastPathComponent
     }
 
     private func commandItems(in store: TerminalSessionStore) -> [PaletteItem] {
-        var commands = [newTabItem(in: store)]
+        var commands = newTabItems(in: store)
 
         commands.append(PaletteItem(
             id: "cmd-new-folder",
