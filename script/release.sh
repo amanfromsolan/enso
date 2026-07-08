@@ -22,6 +22,17 @@ BUILD_DIR="build/release"
 APP="$BUILD_DIR/Build/Products/Release/Bloom.app"
 DMG="$HOME/Downloads/Bloom-$VERSION.dmg"
 
+# Release notes are mandatory and validated before the (slow) build:
+# RELEASE_NOTES/<version>.md in the strict '## Section' / '- item' subset.
+# They end up embedded in the appcast (What's New sheet) and as the GitHub
+# release body.
+NOTES_MD="RELEASE_NOTES/$VERSION.md"
+if [[ ! -f "$NOTES_MD" ]]; then
+    echo "error: $NOTES_MD missing — write the release notes first" >&2
+    exit 1
+fi
+python3 script/release_notes.py "$NOTES_MD" > /dev/null
+
 # Sparkle compares CFBundleVersion, so it must increase monotonically with
 # each release: 0.4.0 -> 400, 1.2.3 -> 10203.
 IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
@@ -85,6 +96,9 @@ echo "==> Generating Sparkle appcast"
 SPARKLE_BIN="$BUILD_DIR/SourcePackages/artifacts/sparkle/Sparkle/bin"
 APPCAST_DIR="$(mktemp -d)"
 cp "$DMG" "$APPCAST_DIR/"
+# generate_appcast embeds an HTML file named like the archive as that
+# item's release notes (<description> in the appcast).
+python3 script/release_notes.py "$NOTES_MD" > "$APPCAST_DIR/Bloom-$VERSION.html"
 "$SPARKLE_BIN/generate_appcast" "$APPCAST_DIR" \
     --download-url-prefix "https://github.com/$REPO/releases/download/v$VERSION/" \
     --maximum-deltas 0
@@ -95,6 +109,6 @@ gh release create "v$VERSION" \
     "$APPCAST_DIR/appcast.xml" \
     --repo "$REPO" \
     --title "Bloom v$VERSION" \
-    --generate-notes
+    --notes-file "$NOTES_MD"
 
 echo "==> Done: https://github.com/$REPO/releases/tag/v$VERSION"

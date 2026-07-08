@@ -35,9 +35,14 @@ struct TerminalHeaderView: View {
 
             Spacer(minLength: 0)
 
+            #if DEBUG
+            DevBadge()
+                .frame(height: 22)
+            #else
             // Balances the toggle button so the title stays centered.
             Color.clear
                 .frame(width: 26, height: 22)
+            #endif
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
@@ -80,6 +85,23 @@ struct TerminalHeaderView: View {
         }
     }
 }
+
+#if DEBUG
+/// Marks a "Bloom Dev" window so it's never mistaken for the installed
+/// Bloom while dogfooding. Debug builds only.
+private struct DevBadge: View {
+    var body: some View {
+        Text("DEV")
+            .font(.system(size: 9, weight: .bold))
+            .tracking(0.8)
+            .foregroundStyle(Color.yellow.opacity(0.85))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color.yellow.opacity(0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.yellow.opacity(0.3), lineWidth: 1))
+    }
+}
+#endif
 
 /// Sidebar toggle living at the leftmost of the terminal title strip;
 /// quiet until hovered.

@@ -12,7 +12,10 @@ struct UpdateCardView: View {
             if controller.phase != .idle {
                 UpdateCardBody(
                     phase: controller.phase,
+                    currentVersion: controller.currentVersion,
+                    hasReleaseNotes: controller.releaseNotes != nil,
                     onInstall: { controller.installNow() },
+                    onWhatsNew: { controller.showWhatsNew() },
                     onRestart: { controller.restartNow() },
                     onRetry: { controller.checkForUpdates() },
                     onDismiss: { controller.dismiss() }
@@ -31,7 +34,10 @@ struct UpdateCardView: View {
 
 private struct UpdateCardBody: View {
     let phase: UpdateController.Phase
+    let currentVersion: String
+    let hasReleaseNotes: Bool
     let onInstall: () -> Void
+    let onWhatsNew: () -> Void
     let onRestart: () -> Void
     let onRetry: () -> Void
     let onDismiss: () -> Void
@@ -50,9 +56,20 @@ private struct UpdateCardBody: View {
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    .fixedSize()
+                    // Stay clear of the overlaid close button.
+                    .padding(.trailing, isDismissible ? 14 : 0)
 
-                if let subtitle {
+                if case .available(let version) = phase {
+                    // current → new, the new version slightly brighter.
+                    (
+                        Text(currentVersion).foregroundStyle(.white.opacity(0.45))
+                            + Text("  →  ").foregroundStyle(.white.opacity(0.25))
+                            + Text(version).foregroundStyle(.white.opacity(0.65))
+                    )
+                    .font(.system(size: 10, design: .monospaced))
+                    .lineLimit(1)
+                } else if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 10))
                         .foregroundStyle(.white.opacity(0.45))
@@ -66,16 +83,18 @@ private struct UpdateCardBody: View {
                         .tint(Color.accentColor)
                         .padding(.top, 4)
                 } else if let action {
-                    CardActionButton(label: action.label, action: action.perform)
-                        .padding(.top, 5)
+                    HStack(spacing: 6) {
+                        CardActionButton(label: action.label, action: action.perform)
+
+                        if showsWhatsNew {
+                            CardQuietButton(label: "What's New", action: onWhatsNew)
+                        }
+                    }
+                    .padding(.top, 5)
                 }
             }
 
-            Spacer(minLength: 4)
-
-            if isDismissible {
-                closeButton
-            }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -87,6 +106,14 @@ private struct UpdateCardBody: View {
                         .strokeBorder(Color.white.opacity(0.07))
                 )
         )
+        // Close floats on the card's corner instead of costing the title
+        // row a whole column of width.
+        .overlay(alignment: .topTrailing) {
+            if isDismissible {
+                closeButton
+                    .padding(6)
+            }
+        }
         .padding(.horizontal, 10)
         .padding(.bottom, 4)
     }
@@ -104,7 +131,7 @@ private struct UpdateCardBody: View {
         case .available, .downloading, .extracting:
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color.accentColor.opacity(0.9))
+                .foregroundStyle(.white.opacity(0.5))
         case .readyToRestart:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 14, weight: .medium))
@@ -126,7 +153,7 @@ private struct UpdateCardBody: View {
         switch phase {
         case .idle: ""
         case .checking: "Checking for updates…"
-        case .available(let version): "Bloom \(version) available"
+        case .available: "New update available"
         case .downloading: "Downloading update…"
         case .extracting: "Preparing update…"
         case .readyToRestart(let version): "Bloom \(version) ready"
@@ -164,6 +191,11 @@ private struct UpdateCardBody: View {
         }
     }
 
+    private var showsWhatsNew: Bool {
+        if case .available = phase { return hasReleaseNotes }
+        return false
+    }
+
     private var isDismissible: Bool {
         switch phase {
         case .available, .readyToRestart, .failed, .upToDate: true
@@ -183,6 +215,32 @@ private struct UpdateCardBody: View {
         .buttonStyle(.plain)
         .onHover { closeHovered = $0 }
         .help("Dismiss")
+    }
+}
+
+/// Quiet sibling of CardActionButton for the secondary affordance
+/// ("What's New"): same geometry, whisper of a fill.
+private struct CardQuietButton: View {
+    let label: String
+    let action: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white.opacity(hovered ? 0.9 : 0.7))
+                .fixedSize()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(Color.white.opacity(hovered ? 0.14 : 0.08))
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
     }
 }
 
@@ -227,7 +285,10 @@ private struct CardActionButton: View {
         ) { phase in
             UpdateCardBody(
                 phase: phase,
+                currentVersion: "0.4.3",
+                hasReleaseNotes: true,
                 onInstall: {},
+                onWhatsNew: {},
                 onRestart: {},
                 onRetry: {},
                 onDismiss: {}

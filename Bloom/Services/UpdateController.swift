@@ -28,6 +28,11 @@ final class UpdateController: NSObject, ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
 
+    /// Parsed release notes for the pending update (nil when the appcast
+    /// had none worth showing); drives the card's "What's New" button.
+    @Published private(set) var releaseNotes: WhatsNewSheet.Content?
+    @Published var isShowingWhatsNew = false
+
     let currentVersion =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
 
@@ -70,8 +75,27 @@ final class UpdateController: NSObject, ObservableObject {
     // MARK: - Card actions
 
     func installNow() {
+        isShowingWhatsNew = false
         updateChoice?(.install)
         updateChoice = nil
+    }
+
+    func showWhatsNew() {
+        guard releaseNotes != nil else { return }
+        isShowingWhatsNew = true
+    }
+
+    func closeWhatsNew() {
+        isShowingWhatsNew = false
+    }
+
+    /// Sparkle remembers the skipped version itself (SUSkippedVersion), so
+    /// background checks stay quiet about it and surface the next one.
+    func skipThisVersion() {
+        isShowingWhatsNew = false
+        updateChoice?(.skip)
+        updateChoice = nil
+        phase = .idle
     }
 
     func restartNow() {
@@ -82,12 +106,49 @@ final class UpdateController: NSObject, ObservableObject {
 
     func dismiss() {
         autoDismiss?.cancel()
+        isShowingWhatsNew = false
         updateChoice?(.dismiss)
         updateChoice = nil
         restartChoice?(.dismiss)
         restartChoice = nil
         phase = .idle
     }
+
+    #if DEBUG
+    /// Design scaffold: fakes a found update (with notes run through the
+    /// real parser) so the sidebar card and What's New sheet can be
+    /// exercised in dev builds, where Sparkle is off. The Update button
+    /// no-ops — there's no pending Sparkle reply to consume.
+    func debugSimulateUpdateFound() {
+        pendingVersion = "0.5.0"
+        releaseNotes = ReleaseNotesParser.parse(html: Self.debugNotesHTML, version: pendingVersion)
+        phase = .available(version: pendingVersion)
+        // BLOOM_WHATS_NEW=1 lands straight in the sheet (design iteration
+        // without reaching for the card's button).
+        if ProcessInfo.processInfo.environment["BLOOM_WHATS_NEW"] == "1" {
+            isShowingWhatsNew = true
+        }
+    }
+
+    /// What script/release_notes.py emits for RELEASE_NOTES/0.5.0.md.
+    private static let debugNotesHTML = """
+    <h2>New</h2>
+    <ul>
+    <li>Release notes now show up right in the app when an update is ready — no more guessing what changed.</li>
+    <li>Right-click a folder in Finder → New Bloom Terminal Here.</li>
+    </ul>
+    <h2>Improved</h2>
+    <ul>
+    <li>The sidebar update card keeps its layout in narrow sidebars instead of wrapping.</li>
+    <li>Quit confirmation is bigger and easier to read.</li>
+    </ul>
+    <h2>Fixed</h2>
+    <ul>
+    <li>Command palette no longer spawns a stray terminal when you press Enter.</li>
+    <li>Fixed a crash at launch when the updater framework failed to load.</li>
+    </ul>
+    """
+    #endif
 
     private func flashUpToDate() {
         phase = .upToDate
@@ -122,6 +183,10 @@ extension UpdateController: @preconcurrency SPUUserDriver {
         reply: @escaping @Sendable (SPUUserUpdateChoice) -> Void
     ) {
         pendingVersion = appcastItem.displayVersionString
+        releaseNotes = ReleaseNotesParser.parse(
+            html: appcastItem.itemDescription ?? "",
+            version: pendingVersion
+        )
         updateChoice = reply
         phase = .available(version: pendingVersion)
     }

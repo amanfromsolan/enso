@@ -10,19 +10,11 @@
 		A100000A2FD810C30001BF12 /* BloomApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000092FD810C30001BF12 /* BloomApp.swift */; };
 		A100000C2FD810C30001BF12 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000B2FD810C30001BF12 /* ContentView.swift */; };
 		A100000E2FD810C30001BF12 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A100000D2FD810C30001BF12 /* Assets.xcassets */; };
-		A1GRES0012FD810C30001BF12 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0022FD810C30001BF12 /* terminfo */; };
-		A1GRES0032FD810C30001BF12 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0042FD810C30001BF12 /* ghostty */; };
 		A10000102FD810C30001BF12 /* TerminalCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000012FD810C30001BF12 /* TerminalCommands.swift */; };
-		A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1QUITG022FD810C30001BF12 /* QuitGuard.swift */; };
 		A10000112FD810C30001BF12 /* TerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000022FD810C30001BF12 /* TerminalSession.swift */; };
-		A1TABPRC012FD810C30001BF12 /* TabProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TABPRC022FD810C30001BF12 /* TabProcess.swift */; };
 		A10000122FD810C30001BF12 /* GhosttyTerminalHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */; };
-		A1TABSW012FD810C30001BF12 /* TabSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */; };
-		A1AUTONM012FD810C30001BF12 /* TabAutoNamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */; };
-		A1CMDCTR012FD810C30001BF12 /* CommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */; };
 		A10000132FD810C30001BF12 /* TerminalSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000042FD810C30001BF12 /* TerminalSessionStore.swift */; };
 		A10000142FD810C30001BF12 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000052FD810C30001BF12 /* SidebarView.swift */; };
-		A1SETPNL012FD810C30001BF12 /* SettingsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */; };
 		A10000152FD810C30001BF12 /* TerminalHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000062FD810C30001BF12 /* TerminalHeaderView.swift */; };
 		A10000162FD810C30001BF12 /* TerminalRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000072FD810C30001BF12 /* TerminalRootView.swift */; };
 		A10000172FD810C30001BF12 /* TerminalWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */; };
@@ -30,9 +22,19 @@
 		A10000312FD810C30001BF12 /* GhosttySurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000342FD810C30001BF12 /* GhosttySurfaceView.swift */; };
 		A10000322FD810C30001BF12 /* GhosttySurfaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000352FD810C30001BF12 /* GhosttySurfaceManager.swift */; };
 		A10000362FD810C30001BF12 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000372FD810C30001BF12 /* GhosttyKit.xcframework */; };
-		A1UPDCTL012FD810C30001BF12 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */; };
-		A1UPDCRD012FD810C30001BF12 /* UpdateCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */; };
+		A1AUTONM012FD810C30001BF12 /* TabAutoNamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */; };
+		A1CMDCTR012FD810C30001BF12 /* CommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */; };
+		A1GRES0012FD810C30001BF12 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0022FD810C30001BF12 /* terminfo */; };
+		A1GRES0032FD810C30001BF12 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0042FD810C30001BF12 /* ghostty */; };
+		A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1QUITG022FD810C30001BF12 /* QuitGuard.swift */; };
+		A1RELNTP012FD810C30001BF12 /* ReleaseNotesParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */; };
+		A1SETPNL012FD810C30001BF12 /* SettingsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */; };
 		A1SPKLBLD12FD810C30001BF12 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1SPKLPRD12FD810C30001BF12 /* Sparkle */; };
+		A1TABPRC012FD810C30001BF12 /* TabProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TABPRC022FD810C30001BF12 /* TabProcess.swift */; };
+		A1TABSW012FD810C30001BF12 /* TabSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */; };
+		A1UPDCRD012FD810C30001BF12 /* UpdateCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */; };
+		A1UPDCTL012FD810C30001BF12 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */; };
+		A1WHTNEW012FD810C30001BF12 /* WhatsNewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,47 +43,62 @@
 			containerPortal = 070AC3732FD810C30001BF12 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 070AC37A2FD810C30001BF12;
-			remoteInfo = "Bloom";
+			remoteInfo = Bloom;
 		};
 		070AC3932FD810C50001BF12 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 070AC3732FD810C30001BF12 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 070AC37A2FD810C30001BF12;
-			remoteInfo = "Bloom";
+			remoteInfo = Bloom;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		070AC37B2FD810C30001BF12 /* Bloom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bloom.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		070AC3882FD810C50001BF12 /* BloomTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BloomTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		070AC3922FD810C50001BF12 /* BloomUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BloomUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000012FD810C30001BF12 /* TerminalCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalCommands.swift; sourceTree = "<group>"; };
-		A1QUITG022FD810C30001BF12 /* QuitGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuitGuard.swift; sourceTree = "<group>"; };
 		A10000022FD810C30001BF12 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
-		A1TABPRC022FD810C30001BF12 /* TabProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabProcess.swift; sourceTree = "<group>"; };
 		A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyTerminalHostView.swift; sourceTree = "<group>"; };
-		A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitcher.swift; sourceTree = "<group>"; };
-		A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabAutoNamer.swift; sourceTree = "<group>"; };
-		A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenter.swift; sourceTree = "<group>"; };
 		A10000042FD810C30001BF12 /* TerminalSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStore.swift; sourceTree = "<group>"; };
 		A10000052FD810C30001BF12 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
-		A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateController.swift; sourceTree = "<group>"; };
-		A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCardView.swift; sourceTree = "<group>"; };
-		A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelView.swift; sourceTree = "<group>"; };
 		A10000062FD810C30001BF12 /* TerminalHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHeaderView.swift; sourceTree = "<group>"; };
 		A10000072FD810C30001BF12 /* TerminalRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRootView.swift; sourceTree = "<group>"; };
 		A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWorkspaceView.swift; sourceTree = "<group>"; };
 		A10000092FD810C30001BF12 /* BloomApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloomApp.swift; sourceTree = "<group>"; };
 		A100000B2FD810C30001BF12 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A100000D2FD810C30001BF12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A1GRES0022FD810C30001BF12 /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = "<group>"; };
-		A1GRES0042FD810C30001BF12 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = "<group>"; };
 		A10000332FD810C30001BF12 /* GhosttyRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyRuntime.swift; sourceTree = "<group>"; };
 		A10000342FD810C30001BF12 /* GhosttySurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttySurfaceView.swift; sourceTree = "<group>"; };
 		A10000352FD810C30001BF12 /* GhosttySurfaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttySurfaceManager.swift; sourceTree = "<group>"; };
 		A10000372FD810C30001BF12 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
-		070AC37B2FD810C30001BF12 /* Bloom.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Bloom.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		070AC3882FD810C50001BF12 /* BloomTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BloomTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		070AC3922FD810C50001BF12 /* BloomUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BloomUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabAutoNamer.swift; sourceTree = "<group>"; };
+		A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenter.swift; sourceTree = "<group>"; };
+		A1GRES0022FD810C30001BF12 /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = "<group>"; };
+		A1GRES0042FD810C30001BF12 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = "<group>"; };
+		A1QUITG022FD810C30001BF12 /* QuitGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuitGuard.swift; sourceTree = "<group>"; };
+		A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesParser.swift; sourceTree = "<group>"; };
+		A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelView.swift; sourceTree = "<group>"; };
+		A1TABPRC022FD810C30001BF12 /* TabProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabProcess.swift; sourceTree = "<group>"; };
+		A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitcher.swift; sourceTree = "<group>"; };
+		A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCardView.swift; sourceTree = "<group>"; };
+		A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateController.swift; sourceTree = "<group>"; };
+		A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		070AC38B2FD810C50001BF12 /* BloomTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BloomTests;
+			sourceTree = "<group>";
+		};
+		070AC3952FD810C50001BF12 /* BloomUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BloomUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		070AC3782FD810C30001BF12 /* Frameworks */ = {
@@ -110,67 +127,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A10000202FD810C30001BF12 /* App */ = {
-			isa = PBXGroup;
-			children = (
-				A10000012FD810C30001BF12 /* TerminalCommands.swift */,
-				A1QUITG022FD810C30001BF12 /* QuitGuard.swift */,
-			);
-			path = App;
-			sourceTree = "<group>";
-		};
-		A10000382FD810C30001BF12 /* Ghostty */ = {
-			isa = PBXGroup;
-			children = (
-				A10000332FD810C30001BF12 /* GhosttyRuntime.swift */,
-				A10000342FD810C30001BF12 /* GhosttySurfaceView.swift */,
-				A10000352FD810C30001BF12 /* GhosttySurfaceManager.swift */,
-			);
-			path = Ghostty;
-			sourceTree = "<group>";
-		};
-		A10000212FD810C30001BF12 /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				A10000022FD810C30001BF12 /* TerminalSession.swift */,
-				A1TABPRC022FD810C30001BF12 /* TabProcess.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
-		A10000222FD810C30001BF12 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */,
-				A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */,
-				A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */,
-				A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */,
-				A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */,
-			);
-			path = Services;
-			sourceTree = "<group>";
-		};
-		A10000232FD810C30001BF12 /* Stores */ = {
-			isa = PBXGroup;
-			children = (
-				A10000042FD810C30001BF12 /* TerminalSessionStore.swift */,
-			);
-			path = Stores;
-			sourceTree = "<group>";
-		};
-		A10000242FD810C30001BF12 /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */,
-				A10000052FD810C30001BF12 /* SidebarView.swift */,
-				A10000062FD810C30001BF12 /* TerminalHeaderView.swift */,
-				A10000072FD810C30001BF12 /* TerminalRootView.swift */,
-				A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */,
-				A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */,
-			);
-			path = Views;
-			sourceTree = "<group>";
-		};
 		070AC3722FD810C30001BF12 = {
 			isa = PBXGroup;
 			children = (
@@ -207,17 +163,70 @@
 				A100000B2FD810C30001BF12 /* ContentView.swift */,
 				A10000092FD810C30001BF12 /* BloomApp.swift */,
 			);
-			path = "Bloom";
+			path = Bloom;
 			sourceTree = "<group>";
 		};
-		070AC38B2FD810C50001BF12 /* BloomTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BloomTests;
+		A10000202FD810C30001BF12 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A10000012FD810C30001BF12 /* TerminalCommands.swift */,
+				A1QUITG022FD810C30001BF12 /* QuitGuard.swift */,
+			);
+			path = App;
 			sourceTree = "<group>";
 		};
-		070AC3952FD810C50001BF12 /* BloomUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BloomUITests;
+		A10000212FD810C30001BF12 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A10000022FD810C30001BF12 /* TerminalSession.swift */,
+				A1TABPRC022FD810C30001BF12 /* TabProcess.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A10000222FD810C30001BF12 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */,
+				A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */,
+				A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */,
+				A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */,
+				A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */,
+				A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A10000232FD810C30001BF12 /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				A10000042FD810C30001BF12 /* TerminalSessionStore.swift */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+		A10000242FD810C30001BF12 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */,
+				A10000052FD810C30001BF12 /* SidebarView.swift */,
+				A10000062FD810C30001BF12 /* TerminalHeaderView.swift */,
+				A10000072FD810C30001BF12 /* TerminalRootView.swift */,
+				A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */,
+				A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */,
+				A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A10000382FD810C30001BF12 /* Ghostty */ = {
+			isa = PBXGroup;
+			children = (
+				A10000332FD810C30001BF12 /* GhosttyRuntime.swift */,
+				A10000342FD810C30001BF12 /* GhosttySurfaceView.swift */,
+				A10000352FD810C30001BF12 /* GhosttySurfaceManager.swift */,
+			);
+			path = Ghostty;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -235,11 +244,11 @@
 			);
 			dependencies = (
 			);
-			name = "Bloom";
+			name = Bloom;
 			packageProductDependencies = (
 				A1SPKLPRD12FD810C30001BF12 /* Sparkle */,
 			);
-			productName = "Bloom";
+			productName = Bloom;
 			productReference = 070AC37B2FD810C30001BF12 /* Bloom.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -259,10 +268,10 @@
 			fileSystemSynchronizedGroups = (
 				070AC38B2FD810C50001BF12 /* BloomTests */,
 			);
-			name = "BloomTests";
+			name = BloomTests;
 			packageProductDependencies = (
 			);
-			productName = "BloomTests";
+			productName = BloomTests;
 			productReference = 070AC3882FD810C50001BF12 /* BloomTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
@@ -282,10 +291,10 @@
 			fileSystemSynchronizedGroups = (
 				070AC3952FD810C50001BF12 /* BloomUITests */,
 			);
-			name = "BloomUITests";
+			name = BloomUITests;
 			packageProductDependencies = (
 			);
-			productName = "BloomUITests";
+			productName = BloomUITests;
 			productReference = 070AC3922FD810C50001BF12 /* BloomUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
@@ -321,11 +330,11 @@
 			);
 			mainGroup = 070AC3722FD810C30001BF12;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
-			productRefGroup = 070AC37C2FD810C30001BF12 /* Products */;
 			packageReferences = (
 				A1SPKLREF12FD810C30001BF12 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 070AC37C2FD810C30001BF12 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -388,7 +397,9 @@
 				A10000162FD810C30001BF12 /* TerminalRootView.swift in Sources */,
 				A10000172FD810C30001BF12 /* TerminalWorkspaceView.swift in Sources */,
 				A1UPDCTL012FD810C30001BF12 /* UpdateController.swift in Sources */,
+				A1RELNTP012FD810C30001BF12 /* ReleaseNotesParser.swift in Sources */,
 				A1UPDCRD012FD810C30001BF12 /* UpdateCardView.swift in Sources */,
+				A1WHTNEW012FD810C30001BF12 /* WhatsNewSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -560,6 +571,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Bloom/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Bloom Dev";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -570,11 +582,11 @@
 					"-framework",
 					Carbon,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloom;
+				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloom.debug;
 				PRODUCT_NAME = Bloom;
 				REGISTER_APP_GROUPS = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SDK_STAT_CACHE_ENABLE = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -615,8 +627,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloom;
 				PRODUCT_NAME = Bloom;
 				REGISTER_APP_GROUPS = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SDK_STAT_CACHE_ENABLE = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -641,8 +653,8 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SDK_STAT_CACHE_ENABLE = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -664,8 +676,8 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SDK_STAT_CACHE_ENABLE = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -685,14 +697,14 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SDK_STAT_CACHE_ENABLE = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = "Bloom";
+				TEST_TARGET_NAME = Bloom;
 			};
 			name = Debug;
 		};
@@ -706,14 +718,14 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.amanchaudhary.bloomUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SDK_STAT_CACHE_ENABLE = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = "Bloom";
+				TEST_TARGET_NAME = Bloom;
 			};
 			name = Release;
 		};

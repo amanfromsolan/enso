@@ -5,6 +5,7 @@ struct TerminalRootView: View {
     @StateObject private var switcher = TabSwitcher()
     @ObservedObject private var commandCenter = CommandCenter.shared
     @ObservedObject private var quitGuard = QuitGuard.shared
+    @ObservedObject private var updateController = UpdateController.shared
     @Environment(\.openWindow) private var openWindow
     @State private var spaceEditor: SpaceEditorSheet.Mode?
     @State private var isPeeking = false
@@ -174,10 +175,53 @@ struct TerminalRootView: View {
                 }
             }
         }
+        // What's New: same owned-modal treatment as the space editor.
+        // Update Now / Skip This Version reply to Sparkle through the
+        // controller; close just tucks the sheet away, card stays.
+        .overlay {
+            if updateController.isShowingWhatsNew, let notes = updateController.releaseNotes {
+                ZStack {
+                    Color.black.opacity(0.5)
+                        .contentShape(Rectangle())
+                        .onTapGesture { dismissWhatsNew() }
+                        .ignoresSafeArea()
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(.easeOut(duration: 0.16)),
+                            removal: .opacity.animation(.easeOut(duration: 0.07))
+                        ))
+
+                    WhatsNewSheet(content: notes) {
+                        updateController.installNow()
+                        restoreTerminalFocus()
+                    } onSkip: {
+                        updateController.skipThisVersion()
+                        restoreTerminalFocus()
+                    } onDismiss: {
+                        dismissWhatsNew()
+                    }
+                    .transition(.asymmetric(
+                        insertion: .modifier(
+                            active: ModalPopEffect(progress: 0),
+                            identity: ModalPopEffect(progress: 1)
+                        )
+                        .animation(.spring(duration: 0.18, bounce: 0.24)),
+                        removal: .opacity.animation(.easeOut(duration: 0.07))
+                    ))
+                }
+            }
+        }
         .onAppear {
             restoreSelection()
             switcher.attach(to: store)
             commandCenter.attach(to: store)
+            #if DEBUG
+            // Design scaffold: fake a found update shortly after launch so
+            // the sidebar card (with What's New) and the sheet behind it
+            // can be judged in the running app, where Sparkle is off.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                UpdateController.shared.debugSimulateUpdateFound()
+            }
+            #endif
             // Screenshot/UI-test hook: sandboxed runners can't send ⌘,.
             if ProcessInfo.processInfo.environment["CMUX_OPEN_SETTINGS"] == "1" {
                 openWindow(id: SettingsPanel.windowID)
@@ -190,6 +234,15 @@ struct TerminalRootView: View {
 
     private func dismissSpaceEditor() {
         spaceEditor = nil
+        GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+    }
+
+    private func dismissWhatsNew() {
+        updateController.closeWhatsNew()
+        restoreTerminalFocus()
+    }
+
+    private func restoreTerminalFocus() {
         GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
     }
 
