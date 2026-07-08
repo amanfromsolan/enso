@@ -20,6 +20,7 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
     init(workingDirectory: String) {
         // Non-zero initial frame so the renderer never sees empty bounds.
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        registerForDraggedTypes(Array(Self.dropTypes))
         createSurface(workingDirectory: workingDirectory)
     }
 
@@ -375,6 +376,62 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         let pos = convert(event.locationInWindow, from: nil)
         // ghostty expects top-left origin.
         ghostty_surface_mouse_pos(surface, pos.x, bounds.height - pos.y, Self.ghosttyMods(event.modifierFlags))
+    }
+
+    // MARK: - Drag and drop
+
+    /// Types we accept on drop: files and URLs become escaped paths typed
+    /// into the terminal, plain strings are inserted as-is.
+    private static let dropTypes: Set<NSPasteboard.PasteboardType> = [
+        .string,
+        .fileURL,
+        .URL,
+    ]
+
+    /// Shell-sensitive characters escaped with a backslash so dropped paths
+    /// survive being typed into a live prompt (matches upstream Ghostty).
+    private static let shellEscapeCharacters = "\\ ()[]{}<>\"'`!#$&;|*?\t"
+
+    private static func shellEscape(_ str: String) -> String {
+        var result = str
+        for char in shellEscapeCharacters {
+            result = result.replacingOccurrences(of: String(char), with: "\\\(char)")
+        }
+        return result
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard let types = sender.draggingPasteboard.types,
+              !Set(types).isDisjoint(with: Self.dropTypes)
+        else { return [] }
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+
+        let content: String?
+        if let url = pasteboard.string(forType: .URL) {
+            // URLs first, escaped as-is.
+            content = Self.shellEscape(url)
+        } else if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
+                  !urls.isEmpty {
+            // File URLs next: escaped individually, joined by spaces.
+            content = urls
+                .map { Self.shellEscape($0.path) }
+                .joined(separator: " ")
+        } else if let string = pasteboard.string(forType: .string) {
+            // Plain strings are not escaped; they may be a command to run.
+            content = string
+        } else {
+            content = nil
+        }
+
+        guard let content else { return false }
+        DispatchQueue.main.async {
+            self.insertText(content, replacementRange: NSRange(location: 0, length: 0))
+        }
+        return true
     }
 
     // MARK: - NSTextInputClient
