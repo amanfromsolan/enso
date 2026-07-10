@@ -231,9 +231,53 @@ final class GhosttyRuntime {
             }
             return true
 
+        case GHOSTTY_ACTION_MOUSE_SHAPE:
+            // Cursor feedback: ghostty swaps to the pointer over a ⌘-hovered
+            // link and back to the I-beam otherwise. Per-surface, so route it
+            // through the view like SET_TITLE/PWD.
+            guard target.tag == GHOSTTY_TARGET_SURFACE,
+                  let surface = target.target.surface,
+                  let userdata = ghostty_surface_userdata(surface)
+            else { return false }
+            let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+            let shape = action.action.mouse_shape
+            Task { @MainActor in
+                view.setCursorShape(shape)
+            }
+            return true
+
+        case GHOSTTY_ACTION_OPEN_URL:
+            // ⌘-clicking a link asks the app to open it in the default handler.
+            return openURL(action.action.open_url)
+
         default:
             NSLog("GhosttyRuntime: unhandled action tag=%d", action.tag.rawValue)
             return false
         }
+    }
+
+    /// Opens a URL libghostty surfaced from a ⌘-click on a terminal link.
+    /// The payload is length-delimited (not null-terminated). Scheme-less
+    /// strings are treated as file paths so local paths open in the right
+    /// app instead of failing as malformed URLs.
+    nonisolated private static func openURL(_ payload: ghostty_action_open_url_s) -> Bool {
+        guard let urlPtr = payload.url, payload.len > 0 else { return false }
+        let string = String(
+            data: Data(bytes: urlPtr, count: Int(payload.len)),
+            encoding: .utf8
+        ) ?? ""
+        guard !string.isEmpty else { return false }
+
+        let url: URL
+        if let candidate = URL(string: string), candidate.scheme != nil {
+            url = candidate
+        } else {
+            url = URL(filePath: NSString(string: string).standardizingPath)
+        }
+
+        Task { @MainActor in
+            NSWorkspace.shared.open(url)
+        }
+        return true
     }
 }

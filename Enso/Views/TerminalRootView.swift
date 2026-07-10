@@ -4,7 +4,6 @@ struct TerminalRootView: View {
     @ObservedObject var store: TerminalSessionStore
     @StateObject private var switcher = TabSwitcher()
     @ObservedObject private var commandCenter = CommandCenter.shared
-    @ObservedObject private var quitGuard = QuitGuard.shared
     @ObservedObject private var updateController = UpdateController.shared
     @Environment(\.openWindow) private var openWindow
     @State private var spaceEditor: SpaceEditorSheet.Mode?
@@ -15,17 +14,20 @@ struct TerminalRootView: View {
         HStack(spacing: 0) {
             if store.isSidebarVisible {
                 VStack(spacing: 0) {
-                    // Clear space for the traffic lights; drags the window,
-                    // double-click zooms like a real titlebar.
-                    Color.clear
-                        .frame(height: 40)
-                        .contentShape(Rectangle())
-                        .gesture(WindowDragGesture())
-                        .onTapGesture(count: 2) {
-                            NSApp.keyWindow?.performTitlebarDoubleClickAction()
-                        }
+                    // Clear space for the traffic lights.
+                    Color.clear.frame(height: 40)
 
                     SidebarView(store: store, spaceEditor: $spaceEditor)
+                }
+                // Drags the window, double-click zooms like a real titlebar.
+                // Handled in AppKit (see WindowDragHandle) because SwiftUI's
+                // WindowDragGesture starves a paired double-click tap. An
+                // overlay, not a stacked sibling: macOS 26 floats a scroll-
+                // edge pocket (NSScrollPocket) over the sidebar's top that
+                // out-z-orders anything earlier in the stack and ate these
+                // clicks; the overlay sits above it.
+                .overlay(alignment: .top) {
+                    WindowDragHandle().frame(height: 40)
                 }
                 .frame(width: 248)
                 // Pinned from a peek, the panel is already on screen, so it
@@ -61,25 +63,22 @@ struct TerminalRootView: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.12), value: switcher.isShowingHUD)
-                .overlay {
-                    if quitGuard.isShowingHUD {
-                        ZStack {
-                            Color.black.opacity(0.35)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .allowsHitTesting(false)
-
-                            QuitConfirmationHUD(quitGuard: quitGuard)
-                        }
-                        .transition(.opacity)
-                    }
-                }
-                .animation(.easeOut(duration: 0.12), value: quitGuard.isShowingHUD)
                 .padding(EdgeInsets(
                     top: 10,
                     leading: store.isSidebarVisible ? 6 : 10,
                     bottom: 10,
                     trailing: 10
                 ))
+                // The gutter above the card reads as titlebar to the eye but
+                // belonged to no view, so double-clicks there silently died.
+                // An overlay, like the sidebar's: in the window's top band
+                // SwiftUI only routes clicks to AppKit handles hosted above
+                // the content, never to ones parked behind it. It ends where
+                // the card begins, so the card's own handle and the title
+                // cluster keep their clicks.
+                .overlay(alignment: .top) {
+                    WindowDragHandle().frame(height: 10)
+                }
         }
         // Pinning while peeked commits instantly: the panel is already on
         // screen, and animating the handoff flashes the sidebar untinted

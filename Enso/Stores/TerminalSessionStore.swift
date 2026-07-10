@@ -175,6 +175,58 @@ final class TerminalSessionStore: ObservableObject {
         save()
     }
 
+    /// Palette "New Terminal in Current Folder": inherits the given working
+    /// directory (the selected tab's cwd) and lands beside the selection —
+    /// inside the same folder when the selected tab is filed under one,
+    /// otherwise immediately after it in its container (loose pinned or
+    /// ephemeral). Falls back to a loose append when nothing is selected.
+    func createSession(besideSelectionWithWorkingDirectory workingDirectory: String?) {
+        guard let selectedID = selection else {
+            createSession(workingDirectory: workingDirectory)
+            return
+        }
+        let session = Self.makeSession(workingDirectory: workingDirectory, accentIndex: sessions.count)
+
+        for spaceIndex in spaces.indices {
+            var inserted = false
+            var revealFolderID: TerminalFolder.ID?
+
+            if let index = spaces[spaceIndex].pinnedSessions.firstIndex(where: { $0.id == selectedID }) {
+                spaces[spaceIndex].pinnedSessions.insert(session, at: index + 1)
+                inserted = true
+            } else {
+                for folderIndex in spaces[spaceIndex].pinnedFolders.indices {
+                    if let index = spaces[spaceIndex].pinnedFolders[folderIndex].sessions.firstIndex(where: { $0.id == selectedID }) {
+                        spaces[spaceIndex].pinnedFolders[folderIndex].sessions.insert(session, at: index + 1)
+                        revealFolderID = spaces[spaceIndex].pinnedFolders[folderIndex].id
+                        inserted = true
+                        break
+                    }
+                }
+                if !inserted, let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == selectedID }) {
+                    spaces[spaceIndex].ephemeralSessions.insert(session, at: index + 1)
+                    inserted = true
+                }
+            }
+
+            guard inserted else { continue }
+            if spaces[spaceIndex].id != activeSpaceID {
+                setActiveSpace(spaces[spaceIndex].id)
+            }
+            // Reveal the new tab even if its folder was collapsed.
+            if let revealFolderID {
+                collapsedFolderIDs.remove(revealFolderID)
+            }
+            selection = session.id
+            multiSelection = [session.id]
+            save()
+            return
+        }
+
+        // Selection vanished mid-flight; don't drop the new tab.
+        createSession(workingDirectory: workingDirectory)
+    }
+
     /// New terminal inside a folder, continuing in the working directory of
     /// the folder's most recently active tab (home for an empty folder).
     func createSession(inFolder folderID: TerminalFolder.ID) {

@@ -1,51 +1,21 @@
 import AppKit
-import Combine
-import SwiftUI
 
-/// ⌘Q safety net. Quitting Enso kills every live terminal, so the first
-/// quit request (⌘Q, app menu, or Dock) arms a short window and surfaces a
-/// HUD instead of terminating; a second request inside the window quits for
-/// real. Any other keypress, a click, or the timeout stands the guard down.
+/// ⌘Q safety net. Quitting Enso kills every live terminal, so a quit
+/// request (⌘Q, app menu, or Dock) with sessions still running surfaces a
+/// native confirmation alert instead of terminating outright — the user has
+/// to say so. The alert runs modally, so consentsToTerminate blocks on the
+/// answer and there is no async quit state to track: NSApp.terminate calls
+/// applicationShouldTerminate on the same thread, and runModal doesn't
+/// re-enter it.
 @MainActor
-final class QuitGuard: ObservableObject {
+final class QuitGuard {
     static let shared = QuitGuard()
 
-    @Published private(set) var isShowingHUD = false
-    /// Frozen when the guard arms so the HUD copy doesn't shift mid-display.
-    @Published private(set) var sessionCount = 0
-
     private weak var store: TerminalSessionStore?
-    private var expiry: DispatchWorkItem?
-    // Freed from deinit, which is nonisolated under strict concurrency.
-    nonisolated(unsafe) private var monitor: Any?
 
+    /// Held only so cancelling can restore focus to the live selection.
     func attach(store: TerminalSessionStore) {
         self.store = store
-        guard monitor == nil else { return }
-
-        // While armed, any interaction that isn't the quit chord means the
-        // user kept working — dismiss rather than leave a live tripwire.
-        monitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown, .leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            guard let self, self.isShowingHUD else { return event }
-            if event.type == .keyDown,
-               event.modifierFlags.contains(.command),
-               event.charactersIgnoringModifiers?.lowercased() == "q" {
-                return event // the re-quit lands via applicationShouldTerminate
-            }
-            self.disarm()
-            if event.type == .keyDown, event.keyCode == 53 { // esc
-                return nil // esc only dismisses; keep it out of the terminal
-            }
-            return event
-        }
-    }
-
-    deinit {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
-        }
     }
 
     /// Called from applicationShouldTerminate for every quit path.
@@ -53,35 +23,77 @@ final class QuitGuard: ObservableObject {
     func consentsToTerminate() -> Bool {
         // Nothing to lose, nothing to confirm.
         guard let store, !store.sessions.isEmpty else { return true }
-        // No visible window means no HUD to explain a blocked quit — and it
+        // No visible window means no place to anchor a confirmation — and it
         // covers logout/shutdown after windows close, where cancelling would
         // make macOS report that Enso interrupted shutdown.
         guard NSApp.windows.contains(where: \.isVisible) else { return true }
 
-        if isShowingHUD {
-            disarm()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Quit Enso?"
+        alert.informativeText = store.sessions.count == 1
+            ? "This will end your terminal session and anything running in it."
+            : "This will end all \(store.sessions.count) terminal sessions and anything running in them."
+
+        // Quit stays the first button so it keeps Return and the default
+        // styling — assigning it another key equivalent would replace both.
+        let quit = alert.addButton(withTitle: "Quit")
+        // Cancel is second, so it inherits Esc automatically.
+        alert.addButton(withTitle: "Cancel")
+
+        // Center the alert over the app window, not the screen. The modal
+        // session re-centers the panel when it orders it front, so an origin
+        // set here alone can be overridden — but the main queue is drained by
+        // the modal run loop (NSModalPanelRunLoopMode is a common mode), so
+        // an async block re-asserting the origin runs right after the panel
+        // shows, after that centering. Setting it up front too keeps the
+        // panel from visibly jumping on the first frame.
+        if let host = NSApp.keyWindow
+            ?? NSApp.mainWindow
+            ?? NSApp.windows.first(where: \.isVisible) {
+            // The panel's frame is only meaningful once the alert has laid
+            // out its content; layout() forces that before measuring.
+            alert.layout()
+            let size = alert.window.frame.size
+            var origin = NSPoint(
+                x: host.frame.midX - size.width / 2,
+                y: host.frame.midY - size.height / 2
+            )
+            // Keep the dialog on the host's screen when the window hangs
+            // near or off an edge.
+            if let screen = (host.screen ?? NSScreen.main)?.visibleFrame {
+                origin.x = min(max(origin.x, screen.minX), screen.maxX - size.width)
+                origin.y = min(max(origin.y, screen.minY), screen.maxY - size.height)
+            }
+            alert.window.setFrameOrigin(origin)
+            DispatchQueue.main.async { [window = alert.window] in
+                window.setFrameOrigin(origin)
+            }
+        }
+
+        // ⌘Q again should confirm, but the alert has no button bound to it,
+        // so a monitor scoped to the modal session clicks Quit for the chord
+        // (performClick ends runModal with that button's code). Everything
+        // else passes through untouched — the modal loop already handles
+        // Return and Esc.
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            let isQuitChord = event.modifierFlags.contains(.command)
+                && event.charactersIgnoringModifiers?.lowercased() == "q"
+            guard isQuitChord else { return event }
+            quit.performClick(nil)
+            return nil
+        }
+        let response = alert.runModal()
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+
+        if response == .alertFirstButtonReturn {
             return true
         }
-        arm(count: store.sessions.count)
+        // Cancelled: hand focus back to the terminal the alert covered.
+        GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
         return false
-    }
-
-    private func arm(count: Int) {
-        sessionCount = count
-        isShowingHUD = true
-
-        expiry?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.disarm()
-        }
-        expiry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.75, execute: work)
-    }
-
-    private func disarm() {
-        expiry?.cancel()
-        expiry = nil
-        isShowingHUD = false
     }
 }
 
@@ -90,75 +102,5 @@ final class QuitGuard: ObservableObject {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         QuitGuard.shared.consentsToTerminate() ? .terminateNow : .terminateCancel
-    }
-}
-
-/// The frosted confirmation shown over the terminal on the first ⌘Q.
-struct QuitConfirmationHUD: View {
-    @ObservedObject var quitGuard: QuitGuard
-
-    var body: some View {
-        VStack(spacing: 0) {
-            KeycapGlyph(label: "⌘Q")
-                .padding(.bottom, 20)
-
-            Text("Quit Enso?")
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.95))
-                .padding(.bottom, 8)
-
-            Text(subtitle)
-                .font(.system(size: 14))
-                .foregroundStyle(.white.opacity(0.6))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 18)
-
-            Text("Press ⌘Q again to quit")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.4))
-        }
-        .padding(.horizontal, 36)
-        .padding(.vertical, 30)
-        .frame(width: 380)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.black.opacity(0.22))
-                )
-                // Tight hard shadow for definition + wide diffused one for depth.
-                .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
-                .shadow(color: .black.opacity(0.65), radius: 70, y: 30)
-        )
-    }
-
-    private var subtitle: String {
-        quitGuard.sessionCount == 1
-            ? "This will end your terminal session and anything running in it."
-            : "This will end all \(quitGuard.sessionCount) terminal sessions and anything running in them."
-    }
-}
-
-/// A rendered keyboard key: the icon doubles as the instruction.
-private struct KeycapGlyph: View {
-    let label: String
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 21, weight: .medium, design: .rounded))
-            .foregroundStyle(.white.opacity(0.85))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.35), radius: 0, y: 1.5)
-            )
     }
 }

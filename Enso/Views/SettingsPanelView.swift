@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Holds the settings window's nav selection so it survives close/reopen.
 /// The window itself is a `Window` scene; open it via
@@ -243,24 +244,42 @@ private struct AppearanceSettings: View {
         SettingsGroup("Terminal theme") {
             SettingsRow(
                 "Follows your Ghostty config",
-                caption: "Fonts, colors, and theme come from Ghostty's config files. Changes apply on relaunch."
+                caption: "Fonts, colors, and theme come from Ghostty's config file. Changes apply on relaunch."
             ) {
-                Button("Reveal config") {
-                    revealGhosttyConfig()
+                Button("Edit config") {
+                    editGhosttyConfig()
                 }
                 .controlSize(.small)
             }
         }
     }
 
-    private func revealGhosttyConfig() {
+    private func editGhosttyConfig() {
         let fm = FileManager.default
-        let xdg = fm.homeDirectoryForCurrentUser
+        let xdgDir = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/ghostty", isDirectory: true)
-        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let appSupportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("com.mitchellh.ghostty", isDirectory: true)
-        let target = fm.fileExists(atPath: xdg.path) ? xdg : appSupport
-        NSWorkspace.shared.activateFileViewerSelecting([target])
+        let configDir = fm.fileExists(atPath: xdgDir.path) ? xdgDir : appSupportDir
+        let configFile = configDir.appendingPathComponent("config", isDirectory: false)
+
+        // Ghostty may not have run yet, so the file (and even its directory) can be
+        // missing. Create it empty rather than dead-ending the button.
+        if !fm.fileExists(atPath: configFile.path) {
+            try? fm.createDirectory(at: configDir, withIntermediateDirectories: true)
+            fm.createFile(atPath: configFile.path, contents: nil)
+        }
+
+        // The config file has no extension, so a plain `open(configFile)` would
+        // hand it to whatever app has claimed extensionless files. Resolve the
+        // user's actual default text editor instead.
+        if let editor = NSWorkspace.shared.urlForApplication(toOpen: UTType.plainText) {
+            NSWorkspace.shared.open(
+                [configFile], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration()
+            )
+        } else {
+            NSWorkspace.shared.open(configFile)
+        }
     }
 }
 

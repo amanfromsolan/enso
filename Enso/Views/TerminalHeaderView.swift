@@ -42,11 +42,13 @@ struct TerminalHeaderView: View {
                 .padding(.trailing, 12)
         }
         #endif
-        .contentShape(Rectangle())
-        .gesture(WindowDragGesture())
-        .onTapGesture(count: 2) {
-            NSApp.keyWindow?.performTitlebarDoubleClickAction()
-        }
+        // Drag + double-click-zoom handled in AppKit, not SwiftUI: a
+        // WindowDragGesture claims the mouse-down to start dragging, so a
+        // paired .onTapGesture(count: 2) never recognizes and zoom silently
+        // did nothing. WindowDragHandle reads the raw clickCount instead.
+        // Sits behind the title cluster, whose own double-click (rename)
+        // keeps taking precedence.
+        .background(WindowDragHandle())
     }
 
     // MARK: - Breadcrumb
@@ -120,6 +122,40 @@ struct SidebarToggleButton: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .help(isSidebarVisible ? "Hide Sidebar (⌘B)" : "Show Sidebar (⌘B)")
+    }
+}
+
+/// AppKit shim that makes our custom titlebar strips behave like a real one:
+/// single-click drags the window, double-click runs the system titlebar
+/// action (zoom by default). We handle the raw mouseDown ourselves because
+/// SwiftUI's WindowDragGesture eats the mouse-down to begin its own drag,
+/// which starves any paired double-click tap. This is the same drag/double-
+/// click split Ghostty uses for its titlebar (WindowDragView). Drop it behind
+/// content — the title cluster's own rename gesture still wins over it.
+struct WindowDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        // We start the drag ourselves via performDrag, so AppKit must not
+        // also move the window — that would swallow the mouseDown before we
+        // can read its clickCount and tell a drag from a double-click.
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        // Let an inactive window be dragged/zoomed on the first click, the
+        // way a stock titlebar does.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            // clickCount == 1 on the first press of a double-click too:
+            // performDrag returns immediately if the mouse doesn't move, so
+            // the release still lands as the second click and zooms.
+            if event.clickCount >= 2 {
+                window?.performTitlebarDoubleClickAction()
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
     }
 }
 

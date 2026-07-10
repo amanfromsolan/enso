@@ -329,7 +329,7 @@ final class CommandCenter: ObservableObject {
                 context: Self.folderName(for: cwd),
                 verb: "Open"
             ) { [weak store] in
-                store?.createSession(workingDirectory: cwd)
+                store?.createSession(besideSelectionWithWorkingDirectory: cwd)
             })
         }
         items.append(PaletteItem(
