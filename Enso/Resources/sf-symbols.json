@@ -1,0 +1,1844 @@
+[
+  {
+    "symbol": "circle.fill",
+    "keywords": [
+      "dot",
+      "default",
+      "circle",
+      "point"
+    ]
+  },
+  {
+    "symbol": "circle",
+    "keywords": [
+      "circle",
+      "ring",
+      "outline",
+      "o"
+    ]
+  },
+  {
+    "symbol": "square.fill",
+    "keywords": [
+      "square",
+      "box",
+      "block",
+      "shape"
+    ]
+  },
+  {
+    "symbol": "triangle.fill",
+    "keywords": [
+      "triangle",
+      "shape",
+      "delta",
+      "play"
+    ]
+  },
+  {
+    "symbol": "diamond.fill",
+    "keywords": [
+      "diamond",
+      "rhombus",
+      "shape",
+      "gem"
+    ]
+  },
+  {
+    "symbol": "hexagon.fill",
+    "keywords": [
+      "hexagon",
+      "shape",
+      "hex",
+      "six"
+    ]
+  },
+  {
+    "symbol": "star.fill",
+    "keywords": [
+      "star",
+      "favorite",
+      "rating",
+      "featured"
+    ]
+  },
+  {
+    "symbol": "star",
+    "keywords": [
+      "star",
+      "favorite",
+      "outline",
+      "bookmark"
+    ]
+  },
+  {
+    "symbol": "sparkles",
+    "keywords": [
+      "sparkles",
+      "shine",
+      "magic",
+      "new",
+      "ai"
+    ]
+  },
+  {
+    "symbol": "terminal",
+    "keywords": [
+      "terminal",
+      "shell",
+      "console",
+      "command",
+      "cli"
+    ]
+  },
+  {
+    "symbol": "terminal.fill",
+    "keywords": [
+      "terminal",
+      "shell",
+      "console",
+      "command",
+      "cli"
+    ]
+  },
+  {
+    "symbol": "chevron.left.forwardslash.chevron.right",
+    "keywords": [
+      "code",
+      "html",
+      "developer",
+      "syntax",
+      "tags"
+    ]
+  },
+  {
+    "symbol": "curlybraces",
+    "keywords": [
+      "code",
+      "braces",
+      "json",
+      "developer",
+      "config"
+    ]
+  },
+  {
+    "symbol": "curlybraces.square.fill",
+    "keywords": [
+      "code",
+      "braces",
+      "json",
+      "developer",
+      "snippet"
+    ]
+  },
+  {
+    "symbol": "number",
+    "keywords": [
+      "hash",
+      "number",
+      "pound",
+      "channel",
+      "tag"
+    ]
+  },
+  {
+    "symbol": "command",
+    "keywords": [
+      "command",
+      "cmd",
+      "key",
+      "mac",
+      "shortcut"
+    ]
+  },
+  {
+    "symbol": "option",
+    "keywords": [
+      "option",
+      "alt",
+      "key",
+      "modifier",
+      "shortcut"
+    ]
+  },
+  {
+    "symbol": "keyboard",
+    "keywords": [
+      "keyboard",
+      "type",
+      "input",
+      "keys",
+      "typing"
+    ]
+  },
+  {
+    "symbol": "doc.text.fill",
+    "keywords": [
+      "document",
+      "file",
+      "code",
+      "source",
+      "text"
+    ]
+  },
+  {
+    "symbol": "doc.plaintext.fill",
+    "keywords": [
+      "document",
+      "plaintext",
+      "readme",
+      "file",
+      "notes"
+    ]
+  },
+  {
+    "symbol": "arrow.triangle.branch",
+    "keywords": [
+      "git",
+      "branch",
+      "fork",
+      "version",
+      "vcs"
+    ]
+  },
+  {
+    "symbol": "arrow.triangle.pull",
+    "keywords": [
+      "git",
+      "pull",
+      "request",
+      "pr",
+      "merge"
+    ]
+  },
+  {
+    "symbol": "arrow.triangle.merge",
+    "keywords": [
+      "git",
+      "merge",
+      "combine",
+      "branch",
+      "join"
+    ]
+  },
+  {
+    "symbol": "shippingbox.fill",
+    "keywords": [
+      "package",
+      "box",
+      "dependency",
+      "npm",
+      "shipping"
+    ]
+  },
+  {
+    "symbol": "shippingbox",
+    "keywords": [
+      "package",
+      "box",
+      "dependency",
+      "module",
+      "shipping"
+    ]
+  },
+  {
+    "symbol": "cube.fill",
+    "keywords": [
+      "cube",
+      "package",
+      "module",
+      "3d",
+      "container"
+    ]
+  },
+  {
+    "symbol": "cube.transparent.fill",
+    "keywords": [
+      "cube",
+      "container",
+      "docker",
+      "3d",
+      "wireframe"
+    ]
+  },
+  {
+    "symbol": "server.rack",
+    "keywords": [
+      "server",
+      "rack",
+      "host",
+      "backend",
+      "datacenter"
+    ]
+  },
+  {
+    "symbol": "cpu",
+    "keywords": [
+      "cpu",
+      "chip",
+      "processor",
+      "compute",
+      "core"
+    ]
+  },
+  {
+    "symbol": "memorychip",
+    "keywords": [
+      "memory",
+      "ram",
+      "chip",
+      "hardware",
+      "silicon"
+    ]
+  },
+  {
+    "symbol": "externaldrive.fill",
+    "keywords": [
+      "drive",
+      "disk",
+      "storage",
+      "volume",
+      "backup"
+    ]
+  },
+  {
+    "symbol": "cloud.fill",
+    "keywords": [
+      "cloud",
+      "hosting",
+      "server",
+      "aws",
+      "remote"
+    ]
+  },
+  {
+    "symbol": "icloud.fill",
+    "keywords": [
+      "cloud",
+      "sync",
+      "icloud",
+      "storage",
+      "backup"
+    ]
+  },
+  {
+    "symbol": "network",
+    "keywords": [
+      "network",
+      "graph",
+      "nodes",
+      "mesh",
+      "topology"
+    ]
+  },
+  {
+    "symbol": "wifi",
+    "keywords": [
+      "wifi",
+      "wireless",
+      "network",
+      "signal",
+      "connection"
+    ]
+  },
+  {
+    "symbol": "antenna.radiowaves.left.and.right",
+    "keywords": [
+      "antenna",
+      "signal",
+      "broadcast",
+      "network",
+      "radio"
+    ]
+  },
+  {
+    "symbol": "point.3.connected.trianglepath.dotted",
+    "keywords": [
+      "network",
+      "nodes",
+      "graph",
+      "mesh",
+      "connections"
+    ]
+  },
+  {
+    "symbol": "powerplug.fill",
+    "keywords": [
+      "power",
+      "plug",
+      "connect",
+      "energy",
+      "adapter"
+    ]
+  },
+  {
+    "symbol": "cylinder.fill",
+    "keywords": [
+      "database",
+      "db",
+      "storage",
+      "sql",
+      "data"
+    ]
+  },
+  {
+    "symbol": "tablecells.fill",
+    "keywords": [
+      "table",
+      "grid",
+      "spreadsheet",
+      "data",
+      "rows"
+    ]
+  },
+  {
+    "symbol": "globe",
+    "keywords": [
+      "web",
+      "internet",
+      "world",
+      "globe",
+      "browser"
+    ]
+  },
+  {
+    "symbol": "globe.americas.fill",
+    "keywords": [
+      "web",
+      "world",
+      "americas",
+      "global",
+      "earth"
+    ]
+  },
+  {
+    "symbol": "safari.fill",
+    "keywords": [
+      "browser",
+      "safari",
+      "web",
+      "internet",
+      "compass"
+    ]
+  },
+  {
+    "symbol": "link",
+    "keywords": [
+      "link",
+      "url",
+      "chain",
+      "hyperlink",
+      "connect"
+    ]
+  },
+  {
+    "symbol": "macwindow",
+    "keywords": [
+      "window",
+      "app",
+      "browser",
+      "desktop",
+      "mac"
+    ]
+  },
+  {
+    "symbol": "doc",
+    "keywords": [
+      "document",
+      "file",
+      "page",
+      "paper",
+      "doc"
+    ]
+  },
+  {
+    "symbol": "doc.fill",
+    "keywords": [
+      "document",
+      "file",
+      "page",
+      "paper",
+      "doc"
+    ]
+  },
+  {
+    "symbol": "doc.on.doc.fill",
+    "keywords": [
+      "copy",
+      "documents",
+      "files",
+      "duplicate",
+      "stack"
+    ]
+  },
+  {
+    "symbol": "folder",
+    "keywords": [
+      "folder",
+      "directory",
+      "project",
+      "files",
+      "dir"
+    ]
+  },
+  {
+    "symbol": "folder.fill",
+    "keywords": [
+      "folder",
+      "directory",
+      "project",
+      "files",
+      "dir"
+    ]
+  },
+  {
+    "symbol": "folder.badge.plus",
+    "keywords": [
+      "folder",
+      "new",
+      "add",
+      "create",
+      "directory"
+    ]
+  },
+  {
+    "symbol": "tray.fill",
+    "keywords": [
+      "tray",
+      "inbox",
+      "queue",
+      "stack",
+      "collect"
+    ]
+  },
+  {
+    "symbol": "tray.full.fill",
+    "keywords": [
+      "tray",
+      "inbox",
+      "full",
+      "queue",
+      "backlog"
+    ]
+  },
+  {
+    "symbol": "archivebox.fill",
+    "keywords": [
+      "archive",
+      "box",
+      "storage",
+      "backup",
+      "old"
+    ]
+  },
+  {
+    "symbol": "book.fill",
+    "keywords": [
+      "book",
+      "docs",
+      "read",
+      "manual",
+      "guide"
+    ]
+  },
+  {
+    "symbol": "bookmark.fill",
+    "keywords": [
+      "bookmark",
+      "save",
+      "mark",
+      "favorite",
+      "tag"
+    ]
+  },
+  {
+    "symbol": "bookmark",
+    "keywords": [
+      "bookmark",
+      "save",
+      "mark",
+      "outline",
+      "read later"
+    ]
+  },
+  {
+    "symbol": "newspaper.fill",
+    "keywords": [
+      "news",
+      "paper",
+      "feed",
+      "blog",
+      "article"
+    ]
+  },
+  {
+    "symbol": "note.text",
+    "keywords": [
+      "note",
+      "notes",
+      "memo",
+      "text",
+      "jot"
+    ]
+  },
+  {
+    "symbol": "bubble.left.fill",
+    "keywords": [
+      "chat",
+      "message",
+      "comment",
+      "talk",
+      "bubble"
+    ]
+  },
+  {
+    "symbol": "bubble.left.and.bubble.right.fill",
+    "keywords": [
+      "chat",
+      "conversation",
+      "discuss",
+      "messages",
+      "talk"
+    ]
+  },
+  {
+    "symbol": "message.fill",
+    "keywords": [
+      "message",
+      "chat",
+      "sms",
+      "text",
+      "dm"
+    ]
+  },
+  {
+    "symbol": "phone.fill",
+    "keywords": [
+      "phone",
+      "call",
+      "dial",
+      "contact",
+      "voice"
+    ]
+  },
+  {
+    "symbol": "video.fill",
+    "keywords": [
+      "video",
+      "call",
+      "meeting",
+      "camera",
+      "record"
+    ]
+  },
+  {
+    "symbol": "envelope.fill",
+    "keywords": [
+      "mail",
+      "email",
+      "message",
+      "inbox",
+      "letter"
+    ]
+  },
+  {
+    "symbol": "envelope.open.fill",
+    "keywords": [
+      "mail",
+      "email",
+      "opened",
+      "read",
+      "letter"
+    ]
+  },
+  {
+    "symbol": "paperplane.fill",
+    "keywords": [
+      "send",
+      "message",
+      "share",
+      "submit",
+      "plane"
+    ]
+  },
+  {
+    "symbol": "calendar",
+    "keywords": [
+      "calendar",
+      "date",
+      "schedule",
+      "event",
+      "day"
+    ]
+  },
+  {
+    "symbol": "calendar.badge.clock",
+    "keywords": [
+      "calendar",
+      "schedule",
+      "reminder",
+      "deadline",
+      "event"
+    ]
+  },
+  {
+    "symbol": "clock.fill",
+    "keywords": [
+      "clock",
+      "time",
+      "hour",
+      "schedule",
+      "watch"
+    ]
+  },
+  {
+    "symbol": "alarm.fill",
+    "keywords": [
+      "alarm",
+      "clock",
+      "reminder",
+      "wake",
+      "time"
+    ]
+  },
+  {
+    "symbol": "timer",
+    "keywords": [
+      "timer",
+      "stopwatch",
+      "countdown",
+      "time",
+      "clock"
+    ]
+  },
+  {
+    "symbol": "hourglass",
+    "keywords": [
+      "hourglass",
+      "wait",
+      "loading",
+      "time",
+      "pending"
+    ]
+  },
+  {
+    "symbol": "stopwatch.fill",
+    "keywords": [
+      "stopwatch",
+      "timer",
+      "time",
+      "speed",
+      "race"
+    ]
+  },
+  {
+    "symbol": "music.note",
+    "keywords": [
+      "music",
+      "note",
+      "song",
+      "audio",
+      "sound"
+    ]
+  },
+  {
+    "symbol": "music.note.list",
+    "keywords": [
+      "playlist",
+      "music",
+      "songs",
+      "queue",
+      "list"
+    ]
+  },
+  {
+    "symbol": "headphones",
+    "keywords": [
+      "headphones",
+      "audio",
+      "listen",
+      "music",
+      "sound"
+    ]
+  },
+  {
+    "symbol": "mic.fill",
+    "keywords": [
+      "mic",
+      "microphone",
+      "record",
+      "audio",
+      "podcast"
+    ]
+  },
+  {
+    "symbol": "speaker.wave.2.fill",
+    "keywords": [
+      "speaker",
+      "volume",
+      "sound",
+      "audio",
+      "loud"
+    ]
+  },
+  {
+    "symbol": "play.fill",
+    "keywords": [
+      "play",
+      "start",
+      "media",
+      "run",
+      "go"
+    ]
+  },
+  {
+    "symbol": "photo.fill",
+    "keywords": [
+      "photo",
+      "image",
+      "picture",
+      "gallery",
+      "media"
+    ]
+  },
+  {
+    "symbol": "camera.fill",
+    "keywords": [
+      "camera",
+      "photo",
+      "capture",
+      "picture",
+      "snapshot"
+    ]
+  },
+  {
+    "symbol": "house.fill",
+    "keywords": [
+      "home",
+      "house",
+      "main",
+      "dashboard",
+      "personal"
+    ]
+  },
+  {
+    "symbol": "house",
+    "keywords": [
+      "home",
+      "house",
+      "main",
+      "dashboard",
+      "outline"
+    ]
+  },
+  {
+    "symbol": "building.2.fill",
+    "keywords": [
+      "building",
+      "office",
+      "company",
+      "work",
+      "city"
+    ]
+  },
+  {
+    "symbol": "building.columns.fill",
+    "keywords": [
+      "bank",
+      "institution",
+      "government",
+      "columns",
+      "museum"
+    ]
+  },
+  {
+    "symbol": "briefcase.fill",
+    "keywords": [
+      "work",
+      "job",
+      "business",
+      "briefcase",
+      "office"
+    ]
+  },
+  {
+    "symbol": "briefcase",
+    "keywords": [
+      "work",
+      "job",
+      "business",
+      "briefcase",
+      "outline"
+    ]
+  },
+  {
+    "symbol": "bag.fill",
+    "keywords": [
+      "bag",
+      "shopping",
+      "buy",
+      "store",
+      "purchase"
+    ]
+  },
+  {
+    "symbol": "graduationcap.fill",
+    "keywords": [
+      "school",
+      "education",
+      "learn",
+      "graduate",
+      "study"
+    ]
+  },
+  {
+    "symbol": "storefront.fill",
+    "keywords": [
+      "store",
+      "shop",
+      "retail",
+      "business",
+      "market"
+    ]
+  },
+  {
+    "symbol": "person.fill",
+    "keywords": [
+      "person",
+      "user",
+      "profile",
+      "account",
+      "me"
+    ]
+  },
+  {
+    "symbol": "person.2.fill",
+    "keywords": [
+      "people",
+      "team",
+      "group",
+      "users",
+      "pair"
+    ]
+  },
+  {
+    "symbol": "person.3.fill",
+    "keywords": [
+      "team",
+      "group",
+      "people",
+      "crowd",
+      "org"
+    ]
+  },
+  {
+    "symbol": "person.crop.circle.fill",
+    "keywords": [
+      "profile",
+      "avatar",
+      "account",
+      "user",
+      "me"
+    ]
+  },
+  {
+    "symbol": "figure.walk",
+    "keywords": [
+      "walk",
+      "person",
+      "move",
+      "activity",
+      "step"
+    ]
+  },
+  {
+    "symbol": "hand.wave.fill",
+    "keywords": [
+      "wave",
+      "hello",
+      "greeting",
+      "hi",
+      "welcome"
+    ]
+  },
+  {
+    "symbol": "flag.fill",
+    "keywords": [
+      "flag",
+      "mark",
+      "milestone",
+      "report",
+      "goal"
+    ]
+  },
+  {
+    "symbol": "flag",
+    "keywords": [
+      "flag",
+      "mark",
+      "milestone",
+      "outline",
+      "report"
+    ]
+  },
+  {
+    "symbol": "flag.checkered",
+    "keywords": [
+      "finish",
+      "race",
+      "flag",
+      "goal",
+      "done"
+    ]
+  },
+  {
+    "symbol": "pin.fill",
+    "keywords": [
+      "pin",
+      "mark",
+      "location",
+      "stick",
+      "note"
+    ]
+  },
+  {
+    "symbol": "mappin",
+    "keywords": [
+      "pin",
+      "location",
+      "map",
+      "place",
+      "marker"
+    ]
+  },
+  {
+    "symbol": "mappin.and.ellipse",
+    "keywords": [
+      "location",
+      "map",
+      "place",
+      "pin",
+      "here"
+    ]
+  },
+  {
+    "symbol": "map.fill",
+    "keywords": [
+      "map",
+      "location",
+      "navigation",
+      "place",
+      "route"
+    ]
+  },
+  {
+    "symbol": "location.fill",
+    "keywords": [
+      "location",
+      "gps",
+      "place",
+      "here",
+      "position"
+    ]
+  },
+  {
+    "symbol": "target",
+    "keywords": [
+      "target",
+      "goal",
+      "aim",
+      "focus",
+      "objective"
+    ]
+  },
+  {
+    "symbol": "airplane",
+    "keywords": [
+      "airplane",
+      "flight",
+      "travel",
+      "plane",
+      "trip"
+    ]
+  },
+  {
+    "symbol": "car.fill",
+    "keywords": [
+      "car",
+      "drive",
+      "vehicle",
+      "auto",
+      "transport"
+    ]
+  },
+  {
+    "symbol": "bus.fill",
+    "keywords": [
+      "bus",
+      "transit",
+      "transport",
+      "commute",
+      "vehicle"
+    ]
+  },
+  {
+    "symbol": "tram.fill",
+    "keywords": [
+      "tram",
+      "train",
+      "transit",
+      "commute",
+      "rail"
+    ]
+  },
+  {
+    "symbol": "bicycle",
+    "keywords": [
+      "bike",
+      "bicycle",
+      "cycle",
+      "ride",
+      "transport"
+    ]
+  },
+  {
+    "symbol": "fuelpump.fill",
+    "keywords": [
+      "fuel",
+      "gas",
+      "pump",
+      "energy",
+      "station"
+    ]
+  },
+  {
+    "symbol": "sailboat.fill",
+    "keywords": [
+      "boat",
+      "sail",
+      "sea",
+      "ship",
+      "travel"
+    ]
+  },
+  {
+    "symbol": "hammer.fill",
+    "keywords": [
+      "build",
+      "hammer",
+      "tool",
+      "make",
+      "construct"
+    ]
+  },
+  {
+    "symbol": "hammer",
+    "keywords": [
+      "build",
+      "hammer",
+      "tool",
+      "make",
+      "outline"
+    ]
+  },
+  {
+    "symbol": "wrench.and.screwdriver.fill",
+    "keywords": [
+      "tools",
+      "settings",
+      "fix",
+      "maintenance",
+      "config"
+    ]
+  },
+  {
+    "symbol": "gearshape.fill",
+    "keywords": [
+      "settings",
+      "gear",
+      "config",
+      "preferences",
+      "options"
+    ]
+  },
+  {
+    "symbol": "paintbrush.fill",
+    "keywords": [
+      "paint",
+      "brush",
+      "design",
+      "art",
+      "style"
+    ]
+  },
+  {
+    "symbol": "paintpalette.fill",
+    "keywords": [
+      "palette",
+      "color",
+      "design",
+      "art",
+      "theme"
+    ]
+  },
+  {
+    "symbol": "pencil",
+    "keywords": [
+      "pencil",
+      "edit",
+      "write",
+      "draw",
+      "note"
+    ]
+  },
+  {
+    "symbol": "pencil.and.ruler.fill",
+    "keywords": [
+      "design",
+      "draft",
+      "measure",
+      "build",
+      "blueprint"
+    ]
+  },
+  {
+    "symbol": "ruler.fill",
+    "keywords": [
+      "ruler",
+      "measure",
+      "design",
+      "layout",
+      "size"
+    ]
+  },
+  {
+    "symbol": "scissors",
+    "keywords": [
+      "cut",
+      "scissors",
+      "trim",
+      "clip",
+      "edit"
+    ]
+  },
+  {
+    "symbol": "eyedropper",
+    "keywords": [
+      "eyedropper",
+      "color",
+      "pick",
+      "sample",
+      "design"
+    ]
+  },
+  {
+    "symbol": "slider.horizontal.3",
+    "keywords": [
+      "settings",
+      "sliders",
+      "filter",
+      "adjust",
+      "controls"
+    ]
+  },
+  {
+    "symbol": "speedometer",
+    "keywords": [
+      "speed",
+      "performance",
+      "gauge",
+      "dashboard",
+      "fast"
+    ]
+  },
+  {
+    "symbol": "atom",
+    "keywords": [
+      "atom",
+      "science",
+      "physics",
+      "react",
+      "molecule"
+    ]
+  },
+  {
+    "symbol": "testtube.2",
+    "keywords": [
+      "science",
+      "lab",
+      "test",
+      "experiment",
+      "chemistry"
+    ]
+  },
+  {
+    "symbol": "brain.head.profile",
+    "keywords": [
+      "brain",
+      "ai",
+      "think",
+      "mind",
+      "smart"
+    ]
+  },
+  {
+    "symbol": "function",
+    "keywords": [
+      "function",
+      "math",
+      "code",
+      "formula",
+      "compute"
+    ]
+  },
+  {
+    "symbol": "gamecontroller.fill",
+    "keywords": [
+      "game",
+      "controller",
+      "play",
+      "gaming",
+      "console"
+    ]
+  },
+  {
+    "symbol": "dice.fill",
+    "keywords": [
+      "dice",
+      "random",
+      "game",
+      "luck",
+      "chance"
+    ]
+  },
+  {
+    "symbol": "puzzlepiece.fill",
+    "keywords": [
+      "puzzle",
+      "piece",
+      "plugin",
+      "extension",
+      "module"
+    ]
+  },
+  {
+    "symbol": "trophy.fill",
+    "keywords": [
+      "trophy",
+      "win",
+      "award",
+      "achievement",
+      "prize"
+    ]
+  },
+  {
+    "symbol": "crown.fill",
+    "keywords": [
+      "crown",
+      "king",
+      "premium",
+      "vip",
+      "royal"
+    ]
+  },
+  {
+    "symbol": "creditcard.fill",
+    "keywords": [
+      "card",
+      "credit",
+      "payment",
+      "money",
+      "pay"
+    ]
+  },
+  {
+    "symbol": "banknote.fill",
+    "keywords": [
+      "money",
+      "cash",
+      "banknote",
+      "payment",
+      "bills"
+    ]
+  },
+  {
+    "symbol": "dollarsign.circle.fill",
+    "keywords": [
+      "dollar",
+      "money",
+      "price",
+      "usd",
+      "cost"
+    ]
+  },
+  {
+    "symbol": "cart.fill",
+    "keywords": [
+      "cart",
+      "shopping",
+      "buy",
+      "ecommerce",
+      "checkout"
+    ]
+  },
+  {
+    "symbol": "chart.line.uptrend.xyaxis",
+    "keywords": [
+      "chart",
+      "growth",
+      "analytics",
+      "trend",
+      "stats"
+    ]
+  },
+  {
+    "symbol": "chart.bar.fill",
+    "keywords": [
+      "chart",
+      "bar",
+      "analytics",
+      "stats",
+      "metrics"
+    ]
+  },
+  {
+    "symbol": "chart.pie.fill",
+    "keywords": [
+      "chart",
+      "pie",
+      "analytics",
+      "stats",
+      "share"
+    ]
+  },
+  {
+    "symbol": "percent",
+    "keywords": [
+      "percent",
+      "discount",
+      "rate",
+      "sale",
+      "ratio"
+    ]
+  },
+  {
+    "symbol": "heart.fill",
+    "keywords": [
+      "heart",
+      "love",
+      "favorite",
+      "like",
+      "health"
+    ]
+  },
+  {
+    "symbol": "heart",
+    "keywords": [
+      "heart",
+      "love",
+      "favorite",
+      "outline",
+      "like"
+    ]
+  },
+  {
+    "symbol": "cross.fill",
+    "keywords": [
+      "health",
+      "medical",
+      "cross",
+      "hospital",
+      "aid"
+    ]
+  },
+  {
+    "symbol": "pills.fill",
+    "keywords": [
+      "pills",
+      "medicine",
+      "health",
+      "drug",
+      "pharmacy"
+    ]
+  },
+  {
+    "symbol": "bandage.fill",
+    "keywords": [
+      "bandage",
+      "aid",
+      "fix",
+      "heal",
+      "patch"
+    ]
+  },
+  {
+    "symbol": "cup.and.saucer.fill",
+    "keywords": [
+      "coffee",
+      "tea",
+      "cup",
+      "cafe",
+      "drink"
+    ]
+  },
+  {
+    "symbol": "mug.fill",
+    "keywords": [
+      "mug",
+      "coffee",
+      "tea",
+      "drink",
+      "cup"
+    ]
+  },
+  {
+    "symbol": "fork.knife",
+    "keywords": [
+      "food",
+      "eat",
+      "restaurant",
+      "meal",
+      "dining"
+    ]
+  },
+  {
+    "symbol": "birthday.cake.fill",
+    "keywords": [
+      "cake",
+      "birthday",
+      "party",
+      "celebrate",
+      "dessert"
+    ]
+  },
+  {
+    "symbol": "leaf.fill",
+    "keywords": [
+      "leaf",
+      "nature",
+      "eco",
+      "green",
+      "plant"
+    ]
+  },
+  {
+    "symbol": "tree.fill",
+    "keywords": [
+      "tree",
+      "nature",
+      "forest",
+      "green",
+      "plant"
+    ]
+  },
+  {
+    "symbol": "ladybug.fill",
+    "keywords": [
+      "bug",
+      "ladybug",
+      "insect",
+      "debug",
+      "issue"
+    ]
+  },
+  {
+    "symbol": "fish.fill",
+    "keywords": [
+      "fish",
+      "animal",
+      "sea",
+      "aquarium",
+      "swim"
+    ]
+  },
+  {
+    "symbol": "bird.fill",
+    "keywords": [
+      "bird",
+      "animal",
+      "tweet",
+      "fly",
+      "nature"
+    ]
+  },
+  {
+    "symbol": "pawprint.fill",
+    "keywords": [
+      "paw",
+      "pet",
+      "animal",
+      "dog",
+      "cat"
+    ]
+  },
+  {
+    "symbol": "sun.max.fill",
+    "keywords": [
+      "sun",
+      "day",
+      "light",
+      "weather",
+      "bright"
+    ]
+  },
+  {
+    "symbol": "moon.fill",
+    "keywords": [
+      "moon",
+      "night",
+      "dark",
+      "sleep",
+      "dim"
+    ]
+  },
+  {
+    "symbol": "moon.stars.fill",
+    "keywords": [
+      "moon",
+      "night",
+      "stars",
+      "sky",
+      "dream"
+    ]
+  },
+  {
+    "symbol": "cloud.rain.fill",
+    "keywords": [
+      "rain",
+      "weather",
+      "cloud",
+      "wet",
+      "storm"
+    ]
+  },
+  {
+    "symbol": "cloud.bolt.fill",
+    "keywords": [
+      "storm",
+      "thunder",
+      "lightning",
+      "weather",
+      "cloud"
+    ]
+  },
+  {
+    "symbol": "snowflake",
+    "keywords": [
+      "snow",
+      "cold",
+      "winter",
+      "freeze",
+      "ice"
+    ]
+  },
+  {
+    "symbol": "bolt.fill",
+    "keywords": [
+      "bolt",
+      "energy",
+      "power",
+      "fast",
+      "lightning"
+    ]
+  },
+  {
+    "symbol": "flame.fill",
+    "keywords": [
+      "fire",
+      "flame",
+      "hot",
+      "trending",
+      "burn"
+    ]
+  },
+  {
+    "symbol": "drop.fill",
+    "keywords": [
+      "drop",
+      "water",
+      "liquid",
+      "ink",
+      "rain"
+    ]
+  },
+  {
+    "symbol": "bell.fill",
+    "keywords": [
+      "bell",
+      "notification",
+      "alert",
+      "reminder",
+      "ring"
+    ]
+  },
+  {
+    "symbol": "tag.fill",
+    "keywords": [
+      "tag",
+      "label",
+      "category",
+      "price",
+      "mark"
+    ]
+  },
+  {
+    "symbol": "tag",
+    "keywords": [
+      "tag",
+      "label",
+      "category",
+      "outline",
+      "mark"
+    ]
+  },
+  {
+    "symbol": "lock.fill",
+    "keywords": [
+      "lock",
+      "secure",
+      "private",
+      "closed",
+      "security"
+    ]
+  },
+  {
+    "symbol": "lock.open.fill",
+    "keywords": [
+      "unlock",
+      "open",
+      "access",
+      "unlocked",
+      "security"
+    ]
+  },
+  {
+    "symbol": "key.fill",
+    "keywords": [
+      "key",
+      "password",
+      "access",
+      "secret",
+      "auth"
+    ]
+  },
+  {
+    "symbol": "shield.fill",
+    "keywords": [
+      "shield",
+      "security",
+      "protect",
+      "safe",
+      "defense"
+    ]
+  },
+  {
+    "symbol": "checkmark.shield.fill",
+    "keywords": [
+      "secure",
+      "verified",
+      "shield",
+      "safe",
+      "trusted"
+    ]
+  },
+  {
+    "symbol": "exclamationmark.triangle.fill",
+    "keywords": [
+      "warning",
+      "alert",
+      "caution",
+      "error",
+      "danger"
+    ]
+  },
+  {
+    "symbol": "lightbulb.fill",
+    "keywords": [
+      "idea",
+      "light",
+      "bulb",
+      "tip",
+      "insight"
+    ]
+  },
+  {
+    "symbol": "magnifyingglass",
+    "keywords": [
+      "search",
+      "find",
+      "zoom",
+      "look",
+      "magnify"
+    ]
+  },
+  {
+    "symbol": "trash.fill",
+    "keywords": [
+      "trash",
+      "delete",
+      "remove",
+      "bin",
+      "discard"
+    ]
+  },
+  {
+    "symbol": "wand.and.stars",
+    "keywords": [
+      "magic",
+      "wand",
+      "auto",
+      "generate",
+      "ai"
+    ]
+  },
+  {
+    "symbol": "gift.fill",
+    "keywords": [
+      "gift",
+      "present",
+      "reward",
+      "surprise",
+      "box"
+    ]
+  },
+  {
+    "symbol": "balloon.fill",
+    "keywords": [
+      "balloon",
+      "party",
+      "celebrate",
+      "fun",
+      "birthday"
+    ]
+  },
+  {
+    "symbol": "hand.raised.fill",
+    "keywords": [
+      "stop",
+      "hand",
+      "raise",
+      "privacy",
+      "block"
+    ]
+  },
+  {
+    "symbol": "square.grid.2x2.fill",
+    "keywords": [
+      "grid",
+      "apps",
+      "dashboard",
+      "tiles",
+      "layout"
+    ]
+  },
+  {
+    "symbol": "bolt",
+    "keywords": [
+      "bolt",
+      "energy",
+      "power",
+      "flash",
+      "outline"
+    ]
+  }
+]

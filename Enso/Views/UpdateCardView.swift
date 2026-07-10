@@ -56,7 +56,10 @@ private struct UpdateCardBody: View {
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(1)
-                    .fixedSize()
+                    // No fixedSize: the sidebar is drag-resizable, so the
+                    // heading truncates to fit a narrow width instead of
+                    // clipping past the card's edge.
+                    .truncationMode(.tail)
                     // Stay clear of the overlaid close button.
                     .padding(.trailing, isDismissible ? 14 : 0)
 
@@ -268,7 +271,7 @@ private struct CardActionButton: View {
     }
 }
 
-#Preview("States", traits: .fixedLayout(width: 248, height: 420)) {
+#Preview("States", traits: .fixedLayout(width: TerminalSessionStore.defaultSidebarWidth, height: 420)) {
     VStack(spacing: 12) {
         ForEach(
             [
@@ -296,6 +299,6 @@ private struct CardActionButton: View {
         }
     }
     .padding(.vertical)
-    .frame(width: 248)
+    .frame(width: TerminalSessionStore.defaultSidebarWidth)
     .background(Color(red: 0.09, green: 0.09, blue: 0.11))
 }

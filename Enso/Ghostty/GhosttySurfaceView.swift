@@ -17,6 +17,16 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
     private var keyTextAccumulator: [String]?
     private var markedText = NSMutableAttributedString()
 
+    /// The cursor libghostty wants shown over this surface. Terminals default
+    /// to the I-beam; ghostty swaps to a pointer over a link (while ⌘ is held)
+    /// and to resize/other shapes via GHOSTTY_ACTION_MOUSE_SHAPE.
+    private var cursor: NSCursor = .iBeam {
+        didSet {
+            guard cursor != oldValue else { return }
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+
     init(workingDirectory: String) {
         // Non-zero initial frame so the renderer never sees empty bounds.
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
@@ -376,6 +386,43 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         let pos = convert(event.locationInWindow, from: nil)
         // ghostty expects top-left origin.
         ghostty_surface_mouse_pos(surface, pos.x, bounds.height - pos.y, Self.ghosttyMods(event.modifierFlags))
+    }
+
+    // MARK: - Cursor
+
+    /// AppKit owns cursor updates while the pointer is inside the view; we
+    /// hand it the shape ghostty last asked for.
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: cursor)
+    }
+
+    /// Maps a ghostty mouse shape to the closest NSCursor and applies it.
+    /// Driven by GHOSTTY_ACTION_MOUSE_SHAPE, which fires whenever the hovered
+    /// content changes — most notably the pointer over a ⌘-hovered link.
+    func setCursorShape(_ shape: ghostty_action_mouse_shape_e) {
+        switch shape {
+        case GHOSTTY_MOUSE_SHAPE_DEFAULT: cursor = .arrow
+        case GHOSTTY_MOUSE_SHAPE_TEXT: cursor = .iBeam
+        case GHOSTTY_MOUSE_SHAPE_POINTER: cursor = .pointingHand
+        case GHOSTTY_MOUSE_SHAPE_GRAB: cursor = .openHand
+        case GHOSTTY_MOUSE_SHAPE_GRABBING: cursor = .closedHand
+        case GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT: cursor = .iBeamCursorForVerticalLayout
+        case GHOSTTY_MOUSE_SHAPE_CROSSHAIR: cursor = .crosshair
+        case GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED: cursor = .operationNotAllowed
+        case GHOSTTY_MOUSE_SHAPE_W_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_E_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_EW_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_COL_RESIZE: cursor = .resizeLeftRight
+        case GHOSTTY_MOUSE_SHAPE_N_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_S_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_NS_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_ROW_RESIZE: cursor = .resizeUpDown
+        default:
+            // Shapes without a native NSCursor (help, progress, wait, zoom,
+            // diagonal resizes, …): fall back to the terminal's I-beam.
+            cursor = .iBeam
+        }
     }
 
     // MARK: - Drag and drop
