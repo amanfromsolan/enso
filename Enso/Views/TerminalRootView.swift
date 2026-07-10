@@ -29,7 +29,14 @@ struct TerminalRootView: View {
                 .overlay(alignment: .top) {
                     WindowDragHandle().frame(height: 40)
                 }
-                .frame(width: 248)
+                .frame(width: store.sidebarWidth)
+                // Drag the trailing edge to resize. Inset below the top 40pt
+                // so the handle never steals the window-drag strip up in the
+                // traffic-light row.
+                .overlay(alignment: .trailing) {
+                    SidebarResizeHandle(store: store)
+                        .padding(.top, 40)
+                }
                 // Pinned from a peek, the panel is already on screen, so it
                 // appears in place. Shown cold (⌘B), it slides in.
                 .transition(
@@ -105,7 +112,7 @@ struct TerminalRootView: View {
         .overlay(alignment: .leading) {
             if !store.isSidebarVisible {
                 ZStack(alignment: .leading) {
-                    PeekMouseMonitor(isPeeking: isPeeking) { peek in
+                    PeekMouseMonitor(isPeeking: isPeeking, dismissEdge: store.sidebarWidth + PeekMouseMonitor.dismissMargin) { peek in
                         withAnimation(.spring(duration: 0.24, bounce: peek ? 0.1 : 0)) {
                             isPeeking = peek
                         }
@@ -139,7 +146,7 @@ struct TerminalRootView: View {
                     // terminal column, not the whole window.
                     HStack(spacing: 0) {
                         Color.clear
-                            .frame(width: store.isSidebarVisible ? 248 : 0)
+                            .frame(width: store.isSidebarVisible ? store.sidebarWidth : 0)
                             .allowsHitTesting(false)
 
                         // A fixed-height slot the card top-aligns into: the
@@ -271,7 +278,7 @@ struct TerminalRootView: View {
             Color.clear.frame(height: 40)
             SidebarView(store: store, spaceEditor: $spaceEditor)
         }
-        .frame(width: 248)
+        .frame(width: store.sidebarWidth)
         .frame(maxHeight: .infinity)
         .background(
             // Same tint the pinned sidebar sits on, so pinning from a peek
@@ -318,9 +325,13 @@ private struct ModalPopEffect: ViewModifier {
 /// own tracking areas), so a local monitor watches every move.
 private struct PeekMouseMonitor: NSViewRepresentable {
     static let revealEdge: CGFloat = 84
-    static let dismissEdge: CGFloat = 252
+    /// The peek dismisses once the pointer clears the panel's right edge by
+    /// this much; added to the live sidebar width rather than baked into a
+    /// constant, so a resized sidebar peeks and retracts at the right place.
+    static let dismissMargin: CGFloat = 4
 
     var isPeeking: Bool
+    var dismissEdge: CGFloat
     let setPeeking: (Bool) -> Void
 
     func makeNSView(context: Context) -> NSView {
@@ -331,6 +342,7 @@ private struct PeekMouseMonitor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.isPeeking = isPeeking
+        context.coordinator.dismissEdge = dismissEdge
         context.coordinator.setPeeking = setPeeking
     }
 
@@ -339,18 +351,20 @@ private struct PeekMouseMonitor: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isPeeking: isPeeking, setPeeking: setPeeking)
+        Coordinator(isPeeking: isPeeking, dismissEdge: dismissEdge, setPeeking: setPeeking)
     }
 
     @MainActor
     final class Coordinator {
         var isPeeking: Bool
+        var dismissEdge: CGFloat
         var setPeeking: (Bool) -> Void
         private weak var view: NSView?
         nonisolated(unsafe) private var monitor: Any?
 
-        init(isPeeking: Bool, setPeeking: @escaping (Bool) -> Void) {
+        init(isPeeking: Bool, dismissEdge: CGFloat, setPeeking: @escaping (Bool) -> Void) {
             self.isPeeking = isPeeking
+            self.dismissEdge = dismissEdge
             self.setPeeking = setPeeking
         }
 
@@ -369,7 +383,7 @@ private struct PeekMouseMonitor: NSViewRepresentable {
             guard let window = view?.window, event.window === window else { return }
             let x = event.locationInWindow.x
             if isPeeking {
-                if x > PeekMouseMonitor.dismissEdge {
+                if x > dismissEdge {
                     setPeeking(false)
                 }
             } else if x >= 0, x < PeekMouseMonitor.revealEdge {
@@ -525,6 +539,60 @@ private struct TitlebarSidebarToggle: View {
             .opacity(isConcealed ? 0 : 1)
             .allowsHitTesting(!isConcealed)
             .animation(.easeOut(duration: isConcealed ? 0.15 : 0.2), value: isConcealed)
+    }
+}
+
+/// Trailing-edge grip that drag-resizes the sidebar. An 8pt hit strip with a
+/// 1pt hairline that only shows while hovered or dragging; the drag writes
+/// store.sidebarWidth live (the store clamps to its min/max). Shows the
+/// standard horizontal-resize cursor over the strip.
+private struct SidebarResizeHandle: View {
+    @ObservedObject var store: TerminalSessionStore
+    /// Width at the moment the drag began; the gesture translates from it so
+    /// the pointer stays glued to the edge no matter how far it travels.
+    @State private var dragStartWidth: CGFloat?
+    @State private var isHovering = false
+
+    private var isActive: Bool { isHovering || dragStartWidth != nil }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // Invisible grab area straddling the edge; wider than the hairline
+            // so the pointer catches it without pixel-hunting.
+            Color.clear
+                .frame(width: 8)
+                .contentShape(Rectangle())
+
+            Rectangle()
+                .fill(Color.white.opacity(isActive ? 0.22 : 0))
+                .frame(width: 1)
+        }
+        .frame(maxHeight: .infinity)
+        .overlay(ResizeCursor())
+        .onHover { isHovering = $0 }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let base = dragStartWidth ?? store.sidebarWidth
+                    if dragStartWidth == nil { dragStartWidth = base }
+                    store.setSidebarWidth(base + value.translation.width)
+                }
+                .onEnded { _ in dragStartWidth = nil }
+        )
+    }
+}
+
+/// Paints the horizontal-resize cursor over its bounds. A cursor rect (rather
+/// than hover push/pop) so AppKit keeps it correct through relayouts and never
+/// leaves a stale cursor if the view vanishes mid-hover.
+private struct ResizeCursor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { CursorView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class CursorView: NSView {
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
     }
 }
 

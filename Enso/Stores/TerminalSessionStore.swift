@@ -33,6 +33,29 @@ final class TerminalSessionStore: ObservableObject {
         didSet { UserDefaults.standard.set(isSidebarVisible, forKey: "sidebarVisible") }
     }
 
+    /// The one source of truth for the sidebar's width — every layout that
+    /// once hardcoded 248 now follows this. The trailing-edge drag handle
+    /// writes it live; the setter hard-clamps so no caller can push it out
+    /// of range, and it survives launches.
+    static let defaultSidebarWidth: CGFloat = 248
+    static let minSidebarWidth: CGFloat = 200
+    static let maxSidebarWidth: CGFloat = 360
+
+    @Published private(set) var sidebarWidth: CGFloat = {
+        let stored = UserDefaults.standard.object(forKey: "sidebarWidth") as? Double
+        let value = stored.map { CGFloat($0) } ?? TerminalSessionStore.defaultSidebarWidth
+        return min(TerminalSessionStore.maxSidebarWidth,
+                   max(TerminalSessionStore.minSidebarWidth, value))
+    }() {
+        didSet { UserDefaults.standard.set(Double(sidebarWidth), forKey: "sidebarWidth") }
+    }
+
+    /// The one entry point for resizing (the trailing-edge drag handle),
+    /// clamped so the width can never leave [min, max] no matter the caller.
+    func setSidebarWidth(_ width: CGFloat) {
+        sidebarWidth = min(Self.maxSidebarWidth, max(Self.minSidebarWidth, width))
+    }
+
     private var expiryTimer: Timer?
     private let persistToDisk: Bool
 
@@ -267,6 +290,19 @@ final class TerminalSessionStore: ObservableObject {
             )
         }
         save()
+    }
+
+    /// Bulk collapse/expand of a space's folders from the space header menu.
+    /// Session-only like every folder toggle (collapsedFolderIDs isn't
+    /// persisted), so there's nothing to save.
+    func collapseAllFolders(inSpace spaceID: SidebarSpace.ID) {
+        guard let space = spaces.first(where: { $0.id == spaceID }) else { return }
+        collapsedFolderIDs.formUnion(space.pinnedFolders.map(\.id))
+    }
+
+    func expandAllFolders(inSpace spaceID: SidebarSpace.ID) {
+        guard let space = spaces.first(where: { $0.id == spaceID }) else { return }
+        collapsedFolderIDs.subtract(space.pinnedFolders.map(\.id))
     }
 
     private static func makeSession(workingDirectory: String? = nil, accentIndex: Int = 0) -> TerminalSession {

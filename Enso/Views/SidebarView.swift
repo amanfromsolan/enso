@@ -24,7 +24,9 @@ struct SidebarView: View {
         }
     }
 
-    static let pageWidth: CGFloat = 248
+    /// One space page is exactly one sidebar's width, so the paging math
+    /// tracks the live (drag-resizable) sidebar width, not a constant.
+    private var pageWidth: CGFloat { store.sidebarWidth }
 
     private var currentIndex: Int {
         store.spaces.firstIndex { $0.id == store.activeSpaceID } ?? 0
@@ -40,11 +42,11 @@ struct SidebarView: View {
         if offset < 0 && currentIndex == store.spaces.count - 1 {
             offset *= 0.5
         }
-        return min(Self.pageWidth, max(-Self.pageWidth, offset))
+        return min(pageWidth, max(-pageWidth, offset))
     }
 
     private var pager: some View {
-        let width = Self.pageWidth
+        let width = pageWidth
         // Fractional page position, shared by the offset and the fade/blur.
         let position = CGFloat(currentIndex) - visualDrag / width
 
@@ -101,9 +103,9 @@ struct SidebarView: View {
         }
 
         var target = currentIndex
-        if translation < 0, -translation > Self.pageWidth * 0.35 || velocity < -6 {
+        if translation < 0, -translation > pageWidth * 0.35 || velocity < -6 {
             target += 1
-        } else if translation > 0, translation > Self.pageWidth * 0.35 || velocity > 6 {
+        } else if translation > 0, translation > pageWidth * 0.35 || velocity > 6 {
             target -= 1
         }
         target = min(max(target, 0), store.spaces.count - 1)
@@ -427,14 +429,26 @@ private struct SpacePage: View {
             // Always laid out, faded on hover: conditionally inserting the
             // 18pt controls changes the row height and jolts the sidebar.
             Group {
-                HoverIconButton(systemName: "pencil", help: "Rename Space") {
-                    beginSpaceRename()
-                }
-
                 Menu {
+                    Button("Rename", systemImage: "pencil") {
+                        beginSpaceRename()
+                    }
                     Button("Edit Icon & Name…", systemImage: "pencil.and.outline") {
                         onEditSpace(space)
                     }
+                    // Bulk folder controls, shown only when the space has any.
+                    if !space.pinnedFolders.isEmpty {
+                        Divider()
+                        Button("Collapse All Folders", systemImage: "chevron.right") {
+                            store.collapseAllFolders(inSpace: space.id)
+                        }
+                        .disabled(allFoldersCollapsed)
+                        Button("Expand All Folders", systemImage: "chevron.down") {
+                            store.expandAllFolders(inSpace: space.id)
+                        }
+                        .disabled(allFoldersExpanded)
+                    }
+                    Divider()
                     Button("Delete Space", systemImage: "trash") {
                         store.deleteSpace(space.id)
                     }
@@ -469,6 +483,16 @@ private struct SpacePage: View {
             headerHovered = hovering
         }
         .padding(.bottom, 4)
+    }
+
+    /// Every folder in this space is collapsed — nothing left to collapse.
+    private var allFoldersCollapsed: Bool {
+        space.pinnedFolders.allSatisfy { store.collapsedFolderIDs.contains($0.id) }
+    }
+
+    /// Every folder in this space is expanded — nothing left to expand.
+    private var allFoldersExpanded: Bool {
+        space.pinnedFolders.allSatisfy { !store.collapsedFolderIDs.contains($0.id) }
     }
 
     private func beginSpaceRename() {
@@ -1494,77 +1518,36 @@ struct SpaceEditorSheet: View {
         case edit(SidebarSpace)
     }
 
+    private enum PickerTab: Hashable {
+        case icons
+        case emoji
+    }
+
     let mode: Mode
     let onSave: (String, SidebarSpace.Icon) -> Void
     let onDismiss: () -> Void
 
     @State private var name = ""
-    @State private var icon: SidebarSpace.Icon = .symbol("house.fill")
-    @State private var showIconPicker = false
-    @State private var iconHovered = false
+    @State private var icon: SidebarSpace.Icon = .dot
+    @State private var pickerTab: PickerTab = .icons
+    @State private var symbolQuery = ""
+    @State private var emojiQuery = ""
+    /// Drives the shuffle button's squash-and-pop on each press.
+    @State private var shufflePop = false
     @State private var closeHovered = false
     @FocusState private var nameFocused: Bool
 
-    static let symbols = [
-        "house.fill", "terminal", "hammer.fill", "wrench.and.screwdriver.fill",
-        "folder.fill", "globe", "server.rack", "cpu",
-        "bolt.fill", "flame.fill", "leaf.fill", "star.fill",
-        "heart.fill", "book.fill", "graduationcap.fill", "briefcase.fill",
-        "gamecontroller.fill", "music.note", "paintbrush.fill", "camera.fill",
-        "cart.fill", "airplane", "moon.stars.fill", "sparkles"
-    ]
+    private let catalog = IconCatalog.shared
 
     var body: some View {
         VStack(spacing: 0) {
-            // Big tappable icon; click to pick, shuffle for serendipity.
-            ZStack(alignment: .bottomTrailing) {
-                Button {
-                    showIconPicker = true
-                } label: {
-                    ZStack {
-                        // Recessed well so the tappable icon area reads as
-                        // a distinct circle; brightens slightly on hover.
-                        Circle()
-                            .fill(Color.black.opacity(iconHovered ? 0.45 : 0.32))
-                        SpaceIndicatorIcon(icon: icon, isActive: true, size: 46)
-                    }
-                    .frame(width: 84, height: 84)
-                    .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .onHover { iconHovered = $0 }
-                .help("Choose an icon")
-                .popover(isPresented: $showIconPicker, arrowEdge: .bottom) {
-                    IconPickerPopover(icon: $icon)
-                }
-
-                Button {
-                    withAnimation(.snappy(duration: 0.18)) {
-                        icon = .symbol(Self.symbols.randomElement() ?? "sparkles")
-                    }
-                } label: {
-                    Image(systemName: "shuffle")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.black.opacity(0.8))
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.white.opacity(0.94)))
-                }
-                .buttonStyle(.plain)
-                .help("Shuffle icon")
-            }
-            .padding(.top, 38)
-            .padding(.bottom, 16)
+            iconPreview
+                .padding(.top, 32)
+                .padding(.bottom, 14)
 
             Text(isCreating ? "Create a Space" : "Edit Space")
                 .font(.system(size: 17, weight: .semibold))
-                .padding(.bottom, 6)
-
-            Text("A space is its own page of tabs — one per project, client, or mood. Swipe the sidebar to move between them.")
-                .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 44)
-                .padding(.bottom, 24)
+                .padding(.bottom, 14)
 
             TextField("Name your space", text: $name)
                 .textFieldStyle(.plain)
@@ -1578,7 +1561,11 @@ struct SpaceEditorSheet: View {
                 )
                 .onSubmit(saveAndDismiss)
                 .padding(.horizontal, 24)
-                .padding(.bottom, 28)
+                .padding(.bottom, 16)
+
+            picker
+                .padding(.horizontal, 24)
+                .padding(.bottom, 20)
 
             // Bottom-aligned footer, web-modal style: two equal-width
             // solid buttons spanning the sheet.
@@ -1635,11 +1622,282 @@ struct SpaceEditorSheet: View {
                 name = space.name
                 icon = space.icon
             } else {
-                icon = .symbol(Self.symbols.prefix(4).randomElement() ?? "house.fill")
+                // A random pick greets new spaces; the dot is always one tap
+                // away as the first Icons tile.
+                icon = catalog.shuffleChoices.randomElement() ?? .dot
                 nameFocused = true
             }
         }
     }
+
+    // MARK: Preview + shuffle
+
+    private var iconPreview: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ZStack {
+                // Recessed well so the preview reads as a distinct disc.
+                Circle()
+                    .fill(Color.black.opacity(0.32))
+
+                // Keyed on the icon so a swap plays the shrink-out /
+                // spring-in transition instead of cross-fading in place.
+                SpaceIndicatorIcon(icon: icon, isActive: true, size: 46)
+                    .id(icon)
+                    .transition(iconSwap)
+            }
+            .frame(width: 84, height: 84)
+
+            shuffleButton
+                .offset(x: 4, y: 4)
+        }
+        // Every icon change (shuffle or a tile tap) rides the same spring,
+        // so the preview always animates its swap.
+        .animation(.spring(duration: 0.32, bounce: 0.32), value: icon)
+    }
+
+    private var shuffleButton: some View {
+        Button {
+            shuffle()
+        } label: {
+            Image(systemName: "shuffle")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.black.opacity(0.8))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color.white.opacity(0.94)))
+                // A low-damping spring back to 1 overshoots into a pop.
+                .scaleEffect(shufflePop ? 0.8 : 1)
+                .animation(.spring(response: 0.3, dampingFraction: 0.42), value: shufflePop)
+        }
+        .buttonStyle(.plain)
+        .help("Shuffle icon")
+    }
+
+    /// Springy squash on press, then a fresh icon from the full curated set
+    /// (symbols + emoji), never repeating what's already showing.
+    private func shuffle() {
+        shufflePop = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
+            shufflePop = false
+        }
+
+        let choices = catalog.shuffleChoices.filter { $0 != icon }
+        guard let next = choices.randomElement() else { return }
+        icon = next
+    }
+
+    /// Outgoing icon shrinks and blurs away; the incoming one blurs in and
+    /// springs up to full scale (asymmetric, in the spirit of ModalPopEffect).
+    private var iconSwap: AnyTransition {
+        .asymmetric(
+            insertion: .modifier(
+                active: IconSwapEffect(progress: 0),
+                identity: IconSwapEffect(progress: 1)
+            ),
+            removal: .modifier(
+                active: IconSwapEffect(progress: 0),
+                identity: IconSwapEffect(progress: 1)
+            )
+        )
+    }
+
+    // MARK: Icon / emoji picker
+
+    private var picker: some View {
+        VStack(spacing: 10) {
+            tabBar
+
+            searchField(
+                text: pickerTab == .icons ? $symbolQuery : $emojiQuery,
+                prompt: pickerTab == .icons ? "Search icons" : "Search emoji"
+            )
+
+            // A fixed height keeps the sheet from growing with the catalog;
+            // the grids scroll within it.
+            Group {
+                switch pickerTab {
+                case .icons: iconsGrid
+                case .emoji: emojiGrid
+                }
+            }
+            .frame(height: 208)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                )
+        )
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 4) {
+            tabButton("Icons", tab: .icons)
+            tabButton("Emoji", tab: .emoji)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func tabButton(_ title: String, tab: PickerTab) -> some View {
+        let selected = pickerTab == tab
+        return Button {
+            pickerTab = tab
+        } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(selected ? 0.92 : 0.5))
+                .padding(.vertical, 5)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(selected ? 0.1 : 0))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func searchField(text: Binding<String>, prompt: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.35))
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+            if !text.wrappedValue.isEmpty {
+                Button {
+                    text.wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.3))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+    }
+
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 38), spacing: 6)]
+    }
+
+    private var iconsGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: gridColumns, spacing: 6) {
+                ForEach(filteredIconTiles) { tile in
+                    tileButton(isSelected: icon == tile.icon) {
+                        icon = tile.icon
+                    } content: {
+                        SpaceIndicatorIcon(icon: tile.icon, isActive: true, size: 22)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var emojiGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: gridColumns, spacing: 6, pinnedViews: [.sectionHeaders]) {
+                if emojiQuery.isEmpty {
+                    // Unfiltered: gemoji categories, each under a sticky header.
+                    ForEach(catalog.emojiCategories, id: \.self) { category in
+                        Section {
+                            ForEach(catalog.emojiByCategory[category] ?? [], id: \.emoji) { entry in
+                                emojiTile(entry)
+                            }
+                        } header: {
+                            sectionHeader(category)
+                        }
+                    }
+                } else {
+                    ForEach(filteredEmoji, id: \.emoji) { entry in
+                        emojiTile(entry)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func emojiTile(_ entry: EmojiEntry) -> some View {
+        tileButton(isSelected: icon == .emoji(entry.emoji)) {
+            icon = .emoji(entry.emoji)
+        } content: {
+            Text(entry.emoji)
+                .font(.system(size: 20))
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        HStack {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.4))
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 2)
+        .background(Color(red: 0.094, green: 0.096, blue: 0.105).opacity(0.92))
+    }
+
+    /// One selectable grid cell: a rounded well that fills with the accent
+    /// when it holds the current icon.
+    private func tileButton<Content: View>(
+        isSelected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Button(action: action) {
+            content()
+                .frame(width: 38, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isSelected ? Color.accentColor.opacity(0.85) : Color.white.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Color.white.opacity(isSelected ? 0.5 : 0), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Filtering
+
+    private var filteredIconTiles: [IconTile] {
+        let tokens = queryTokens(symbolQuery)
+        guard !tokens.isEmpty else { return catalog.iconTiles }
+        return catalog.iconTiles.filter { tile in
+            tokens.allSatisfy { tile.searchText.contains($0) }
+        }
+    }
+
+    private var filteredEmoji: [EmojiEntry] {
+        let tokens = queryTokens(emojiQuery)
+        guard !tokens.isEmpty else { return catalog.emoji }
+        return catalog.emoji.filter { entry in
+            let text = entry.searchText
+            return tokens.allSatisfy { text.contains($0) }
+        }
+    }
+
+    /// Whitespace-split, lowercased query terms; a tile must match them all.
+    private func queryTokens(_ query: String) -> [String] {
+        query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
+    // MARK: Save
 
     private func saveAndDismiss() {
         onSave(name, icon)
@@ -1652,48 +1910,16 @@ struct SpaceEditorSheet: View {
     }
 }
 
-private struct IconPickerPopover: View {
-    @Binding var icon: SidebarSpace.Icon
-    @State private var emoji = ""
+/// Icon-swap transition: shrinks and blurs the outgoing icon away, blurs the
+/// incoming one in and springs it up to full scale (progress 1 = settled).
+private struct IconSwapEffect: ViewModifier {
+    let progress: CGFloat
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(30)), count: 6), spacing: 4) {
-                ForEach(SpaceEditorSheet.symbols, id: \.self) { symbol in
-                    Button {
-                        icon = .symbol(symbol)
-                    } label: {
-                        Image(systemName: symbol)
-                            .font(.system(size: 13))
-                            .frame(width: 28, height: 26)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(icon == .symbol(symbol) ? Color.accentColor.opacity(0.4) : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            Divider()
-
-            HStack(spacing: 8) {
-                TextField("Or an emoji…", text: $emoji)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: emoji) { _, value in
-                        guard let last = value.last else { return }
-                        emoji = String(last)
-                        icon = .emoji(String(last))
-                    }
-
-                Button("Plain dot") {
-                    icon = .dot
-                }
-                .font(.system(size: 11))
-            }
-        }
-        .padding(12)
-        .frame(width: 220)
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(0.4 + 0.6 * progress)
+            .blur(radius: 8 * (1 - progress))
+            .opacity(Double(progress))
     }
 }
 
