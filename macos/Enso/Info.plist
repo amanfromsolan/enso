@@ -11,10 +11,6 @@
 	     installs are user-driven from the sidebar update card. The name is
 	     deliberately not appcast.xml so pre-rename Bloom installs, whose feed
 	     redirects into this repo, never see updates they can't install. -->
-	<!-- Bundled SF Compact faces for the palette/HUD typography; CoreText
-	     scans this folder (relative to Resources) at launch. -->
-	<key>ATSApplicationFontsPath</key>
-	<string>Fonts</string>
 	<key>SUFeedURL</key>
 	<string>https://github.com/amanfromsolan/enso/releases/latest/download/enso-appcast.xml</string>
 	<key>SUEnableAutomaticChecks</key>

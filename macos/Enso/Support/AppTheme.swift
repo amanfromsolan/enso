@@ -115,3 +115,46 @@ extension NSColor {
         )
     }
 }
+
+// MARK: - Appearance preference
+
+/// User appearance preference: follow the system, or pin the app light/dark.
+/// Applied app-wide via NSApplication.appearance, which every Theme color
+/// and material already tracks.
+enum AppAppearance: String, CaseIterable {
+    case system
+    case light
+    case dark
+
+    static let defaultsKey = "appAppearance"
+
+    static var current: AppAppearance {
+        UserDefaults.standard.string(forKey: defaultsKey)
+            .flatMap(AppAppearance.init) ?? .system
+    }
+
+    static func set(_ value: AppAppearance) {
+        UserDefaults.standard.set(value.rawValue, forKey: defaultsKey)
+        apply(value)
+    }
+
+    static func applyStored() {
+        apply(current)
+    }
+
+    /// Flips between light and dark; from .system it flips away from the
+    /// current effective appearance.
+    static func toggle() {
+        let isDark = NSApplication.shared.effectiveAppearance
+            .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        set(isDark ? .light : .dark)
+    }
+
+    private static func apply(_ value: AppAppearance) {
+        switch value {
+        case .system: NSApplication.shared.appearance = nil
+        case .light: NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}

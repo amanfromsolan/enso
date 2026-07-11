@@ -139,6 +139,7 @@ struct TabSwitcherHUD: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Switch Tabs")
                 .font(PaletteFont.text(13.5, Font.Weight.regular.bumped(for: colorScheme)))
+                .tracking(PaletteFont.tracking)
                 .foregroundStyle(Theme.text(0.38))
                 .padding(.leading, 16)
                 .padding(.top, 12)
@@ -162,7 +163,8 @@ struct TabSwitcherHUD: View {
                 .frame(width: 20, alignment: .center)
 
             Text(session.title)
-                .font(PaletteFont.display(16, Font.Weight.light.bumped(for: colorScheme)))
+                .font(PaletteFont.display(16, Font.Weight.regular.bumped(for: colorScheme)))
+                .tracking(PaletteFont.tracking)
                 .foregroundStyle(Theme.text(isHighlighted ? 0.98 : 0.85))
                 .lineLimit(1)
 

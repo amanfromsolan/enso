@@ -27,7 +27,6 @@
 		A1CMDCTR012FD810C30001BF12 /* CommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */; };
 		A1GRES0012FD810C30001BF12 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0022FD810C30001BF12 /* terminfo */; };
 		A1GRES0032FD810C30001BF12 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0042FD810C30001BF12 /* ghostty */; };
-		A1FONT0012FD810C30001BF12 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = A1FONT0022FD810C30001BF12 /* Fonts */; };
 		A1PICKSF012FD810C30001BF12 /* sf-symbols.json in Resources */ = {isa = PBXBuildFile; fileRef = A1PICKSF022FD810C30001BF12 /* sf-symbols.json */; };
 		A1PICKEM012FD810C30001BF12 /* emoji.json in Resources */ = {isa = PBXBuildFile; fileRef = A1PICKEM022FD810C30001BF12 /* emoji.json */; };
 		A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1QUITG022FD810C30001BF12 /* QuitGuard.swift */; };
@@ -83,7 +82,6 @@
 		A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenter.swift; sourceTree = "<group>"; };
 		A1GRES0022FD810C30001BF12 /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = "<group>"; };
 		A1GRES0042FD810C30001BF12 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = "<group>"; };
-		A1FONT0022FD810C30001BF12 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Resources/Fonts; sourceTree = "<group>"; };
 		A1PICKSF022FD810C30001BF12 /* sf-symbols.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "sf-symbols.json"; path = "Resources/sf-symbols.json"; sourceTree = "<group>"; };
 		A1PICKEM022FD810C30001BF12 /* emoji.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "emoji.json"; path = "Resources/emoji.json"; sourceTree = "<group>"; };
 		A1QUITG022FD810C30001BF12 /* QuitGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuitGuard.swift; sourceTree = "<group>"; };
@@ -171,7 +169,6 @@
 				A100000D2FD810C30001BF12 /* Assets.xcassets */,
 				A1GRES0022FD810C30001BF12 /* terminfo */,
 				A1GRES0042FD810C30001BF12 /* ghostty */,
-				A1FONT0022FD810C30001BF12 /* Fonts */,
 				A1PICKSF022FD810C30001BF12 /* sf-symbols.json */,
 				A1PICKEM022FD810C30001BF12 /* emoji.json */,
 				A100000B2FD810C30001BF12 /* ContentView.swift */,
@@ -376,7 +373,6 @@
 				A100000E2FD810C30001BF12 /* Assets.xcassets in Resources */,
 				A1GRES0012FD810C30001BF12 /* terminfo in Resources */,
 				A1GRES0032FD810C30001BF12 /* ghostty in Resources */,
-				A1FONT0012FD810C30001BF12 /* Fonts in Resources */,
 				A1PICKSF012FD810C30001BF12 /* sf-symbols.json in Resources */,
 				A1PICKEM012FD810C30001BF12 /* emoji.json in Resources */,
 			);

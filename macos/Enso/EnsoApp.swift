@@ -75,6 +75,9 @@ struct EnsoApp: App {
 
         // Start libghostty before any view reads the theme background.
         GhosttyRuntime.shared.ensureStarted()
+
+        // Pin the app light/dark if the user chose to; system otherwise.
+        AppAppearance.applyStored()
     }
 
     var body: some Scene {

@@ -26,6 +26,10 @@ final class CommandCenter: ObservableObject {
     }
     @Published private(set) var items: [PaletteItem] = []
     @Published var highlightedIndex = 0
+    /// Non-nil while a command's option sheet is up (e.g. "Change
+    /// Appearance"): the palette shows only these items, filtered by the
+    /// query, and Esc backs out to the main sheet instead of closing.
+    private var submenuItems: [PaletteItem]?
 
     var isRenaming: Bool {
         if case .search = mode { return false }
@@ -73,6 +77,7 @@ final class CommandCenter: ObservableObject {
     func open() {
         guard store != nil, !isOpen else { return }
         mode = .search
+        submenuItems = nil
         query = ""
         highlightedIndex = 0
         rebuild()
@@ -211,8 +216,13 @@ final class CommandCenter: ObservableObject {
         }
 
         switch event.keyCode {
-        case 53: // esc
-            close()
+        case 53: // esc backs out of a submenu first, then closes
+            if submenuItems != nil {
+                submenuItems = nil
+                query = ""
+            } else {
+                close()
+            }
             return nil
         case 125: // down
             moveHighlight(1)
@@ -250,6 +260,14 @@ final class CommandCenter: ObservableObject {
         guard case .search = mode else { return }
         guard let store else {
             items = []
+            return
+        }
+
+        // Submenu mode: only the submenu's options, filtered.
+        if let submenuItems {
+            let trimmed = query.trimmingCharacters(in: .whitespaces)
+            items = trimmed.isEmpty ? submenuItems : Self.filter(submenuItems, query: trimmed)
+            highlightedIndex = 0
             return
         }
 
@@ -402,6 +420,31 @@ final class CommandCenter: ObservableObject {
     /// The short "Commands" menu shown under the recent tabs on the empty
     /// sheet — the handful the mock surfaces, not the full command list
     /// (that appears once you start typing).
+    /// "Change Appearance" option sheet: System / Light / Dark, with the
+    /// active choice marked. Selecting one applies and closes.
+    private func openAppearanceMenu() {
+        let current = AppAppearance.current
+        func option(_ value: AppAppearance, _ title: String, _ icon: String) -> PaletteItem {
+            PaletteItem(
+                id: "appearance-\(value.rawValue)",
+                icon: .symbol(icon),
+                title: title,
+                context: current == value ? "Current" : nil,
+                verb: "Apply",
+                section: .appearance
+            ) {
+                AppAppearance.set(value)
+            }
+        }
+        submenuItems = [
+            option(.system, "System", "circle.lefthalf.filled"),
+            option(.light, "Light", "sun.max"),
+            option(.dark, "Dark", "moon"),
+        ]
+        highlightedIndex = 0
+        query = ""
+    }
+
     private func menuCommandItems(in store: TerminalSessionStore) -> [PaletteItem] {
         // New-tab items live in the "Suggestions" section up top on the
         // default sheet, so the menu carries only the rest.
@@ -471,6 +514,27 @@ final class CommandCenter: ObservableObject {
             // All update feedback lives in the sidebar card; surface it.
             store?.isSidebarVisible = true
             UpdateController.shared.checkForUpdates()
+        })
+
+        commands.append(PaletteItem(
+            id: "cmd-toggle-appearance",
+            icon: .symbol("circle.lefthalf.filled"),
+            title: "Toggle Light/Dark Mode",
+            context: nil,
+            verb: "Run"
+        ) {
+            AppAppearance.toggle()
+        })
+
+        commands.append(PaletteItem(
+            id: "cmd-change-appearance",
+            icon: .symbol("paintbrush"),
+            title: "Change Appearance",
+            context: nil,
+            verb: "Open",
+            keepsOpen: true
+        ) { [weak self] in
+            self?.openAppearanceMenu()
         })
 
         if let selection = store.selection {
@@ -664,6 +728,7 @@ struct PaletteItem: Identifiable {
     /// Drives the grouped section headers in the palette.
     enum Section: String {
         case suggestions = "Suggestions"
+        case appearance = "Change Appearance To"
         case recentTabs = "Recent Tabs"
         case spaces = "Spaces"
         case commands = "Commands"
@@ -698,11 +763,11 @@ struct CommandCenterView: View {
     // Palette-only typography: SF Compact (installed via Apple's SF font
     // pack; bundle the faces before shipping). The variable "SF Compact"
     // for titles, Text for small labels. Symbols stay on .system.
-    private func compactDisplay(_ size: CGFloat, _ weight: Font.Weight = .light) -> Font {
+    private func compactDisplay(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         PaletteFont.display(size, weight.bumped(for: colorScheme))
     }
 
-    private func compactText(_ size: CGFloat, _ weight: Font.Weight = .light) -> Font {
+    private func compactText(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         PaletteFont.text(size, weight.bumped(for: colorScheme))
     }
 
@@ -739,6 +804,7 @@ struct CommandCenterView: View {
             } else if center.items.isEmpty {
                 Text("No matches")
                     .font(compactText(13))
+                    .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.35))
                     .padding(.vertical, 24)
             } else {
@@ -784,6 +850,7 @@ struct CommandCenterView: View {
     private func sectionHeader(_ title: String, isFirst: Bool) -> some View {
         Text(title)
             .font(compactText(13.5, .regular))
+            .tracking(PaletteFont.tracking)
             .foregroundStyle(Theme.text(0.38))
             .padding(.leading, 16)
             .padding(.top, isFirst ? 6 : 18)
@@ -800,12 +867,14 @@ struct CommandCenterView: View {
             HStack(spacing: 8) {
                 Text(item.title)
                     .font(compactDisplay(16))
+                    .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(isHighlighted ? 0.98 : 0.85))
                     .lineLimit(1)
 
                 if let kind = item.kindLabel {
                     Text(kind)
                         .font(compactDisplay(16))
+                        .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(0.28))
                         .lineLimit(1)
                 }
@@ -817,6 +886,7 @@ struct CommandCenterView: View {
                 HStack(spacing: 6) {
                     Text(context)
                         .font(compactText(15))
+                        .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(isHighlighted ? 0.5 : 0.38))
                         .lineLimit(1)
                     if let symbol = item.contextSymbol {
@@ -876,15 +946,24 @@ struct CommandCenterView: View {
 
 // MARK: - Shared palette chrome
 
-/// SF Compact faces for palette-style overlays. These resolve against the
-/// user-installed Apple SF pack today; bundle the faces before shipping.
+/// System font (SF Pro) for palette and chrome typography. The system face
+/// is a real variable font: weights track the wght axis and Text/Display
+/// optical sizing follows point size automatically, so both helpers resolve
+/// the same way — they remain distinct only to keep call sites semantic.
+/// (Bundled SF Compact was dropped: weight selection is inert for
+/// ATS-registered variable fonts and rendered the Black default instance on
+/// machines without Apple's dev font pack.)
 enum PaletteFont {
-    static func display(_ size: CGFloat, _ weight: Font.Weight = .light) -> Font {
-        .custom("SF Compact", size: size).weight(weight)
+    /// Gentle letterspacing across chrome text, on top of SF's own
+    /// size-dependent tracking.
+    static let tracking: CGFloat = 0.25
+
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
     }
 
-    static func text(_ size: CGFloat, _ weight: Font.Weight = .light) -> Font {
-        .custom("SF Compact Text", size: size).weight(weight)
+    static func text(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
     }
 }
 

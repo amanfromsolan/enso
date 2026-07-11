@@ -417,6 +417,7 @@ private struct SpacePage: View {
             } else {
                 Text(space.name)
                     .font(PaletteFont.text(14, Font.Weight.medium.bumped(for: colorScheme)))
+                    .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.78))
                     .lineLimit(1)
                     // Rename only on the name text, not the whole header.
@@ -535,7 +536,8 @@ private struct SpacePage: View {
 
             if space.pinnedSessions.isEmpty && space.pinnedFolders.isEmpty {
                 Text("Drag tabs here to keep them")
-                    .font(PaletteFont.text(12, Font.Weight.light.bumped(for: colorScheme)))
+                    .font(PaletteFont.text(12, Font.Weight.regular.bumped(for: colorScheme)))
+                    .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.28))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
@@ -605,6 +607,7 @@ private struct SpacePage: View {
                         .frame(width: 14)
                     Text("New Terminal")
                         .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .tracking(PaletteFont.tracking)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(Theme.text(newTabHovered ? 0.7 : 0.45))
@@ -663,6 +666,7 @@ private struct SpacePage: View {
                 } else {
                     Text(folder.title)
                         .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(0.82))
                         .lineLimit(1)
                         // Rename only on the title text; elsewhere the row
@@ -914,7 +918,8 @@ private struct SpacePage: View {
                         }
                 } else {
                     Text(session.title)
-                        .font(PaletteFont.text(14, Font.Weight.light.bumped(for: colorScheme)))
+                        .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(isSelected ? 0.95 : 0.62))
                         .lineLimit(1)
                         .nameShimmer(namer.namingSessions.contains(session.id))
@@ -1005,14 +1010,10 @@ private struct SpacePage: View {
     ) -> some View {
         let shape = RoundedRectangle(cornerRadius: 7)
         if isSelected {
-            let light = colorScheme == .light
             shape
-                .fill(light ? Color.white : Color.white.opacity(0.14))
-                .shadow(
-                    color: light ? Color.black.opacity(0.14) : .clear,
-                    radius: light ? 4 : 0,
-                    y: light ? 1 : 0
-                )
+                .fill(colorScheme == .light ? Color.white : Color.white.opacity(0.14))
+                .shadow(color: .black.opacity(0.14), radius: 0.40357, x: 0, y: 0.75)
+                .shadow(color: .black.opacity(0.06), radius: 2, x: 0, y: 2)
         } else if isMultiSelected {
             shape.fill(Theme.ink.opacity(0.07))
         } else if isHovered {
