@@ -6,43 +6,58 @@ struct TerminalWorkspaceView: View {
     @State private var draftTitle = ""
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if let session = store.selectedSession {
-                VStack(spacing: 0) {
-                    TerminalHeaderView(
-                        session: session,
-                        onRename: {
-                            draftTitle = session.title
-                            isRenaming = true
-                        }
-                    )
-
-                    GhosttyTerminalHostView(session: session, store: store)
-                }
-                .background(GhosttyRuntime.shared.themeBackground)
-                .sheet(isPresented: $isRenaming, onDismiss: {
-                    GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
-                }) {
-                    RenameSessionSheet(
-                        title: $draftTitle,
-                        onCancel: {
-                            isRenaming = false
-                        },
-                        onSave: {
-                            store.rename(session, to: draftTitle)
-                            isRenaming = false
-                        }
-                    )
-                }
-            } else {
-                ContentUnavailableView(
-                    "No Tabs",
-                    systemImage: "terminal",
-                    description: Text("Press ⌘T to open a new tab.")
+                TerminalHeaderView(
+                    session: session,
+                    onRename: {
+                        draftTitle = session.title
+                        isRenaming = true
+                    }
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(GhosttyRuntime.shared.themeBackground)
             }
+
+            // Always mounted: the host container persists across session
+            // and space switches so the Metal surface swap lands in the
+            // same commit as SwiftUI's redraw (see GhosttyTerminalHostView).
+            GhosttyTerminalHostView(session: store.selectedSession, store: store)
+                .overlay {
+                    if store.selectedSession == nil {
+                        ContentUnavailableView(
+                            "No Tabs",
+                            systemImage: "terminal",
+                            description: Text("Press ⌘T to open a new tab.")
+                        )
+                        // Sits on the terminal's theme background, which
+                        // stays dark regardless of app appearance — in
+                        // light mode the inherited dark-on-dark text would
+                        // vanish.
+                        .colorScheme(.dark)
+                    }
+                }
+        }
+        .background(GhosttyRuntime.shared.themeBackground)
+        // Space/tab switches run inside withAnimation; a cross-fade here
+        // makes the SwiftUI header and the Metal-backed terminal (which
+        // can't fade) diverge, flashing the empty state through. Commit
+        // those instantly — but only those: scoped to selection changes so
+        // the sidebar show/hide spring still animates the card's geometry.
+        .transaction(value: store.selection) { $0.animation = nil }
+        .sheet(isPresented: $isRenaming, onDismiss: {
+            GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+        }) {
+            RenameSessionSheet(
+                title: $draftTitle,
+                onCancel: {
+                    isRenaming = false
+                },
+                onSave: {
+                    if let session = store.selectedSession {
+                        store.rename(session, to: draftTitle)
+                    }
+                    isRenaming = false
+                }
+            )
         }
     }
 }

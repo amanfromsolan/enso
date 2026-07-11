@@ -397,13 +397,13 @@ private struct SpacePage: View {
 
     private var spaceHeader: some View {
         HStack(spacing: 8) {
-            SpaceIndicatorIcon(icon: space.icon, isActive: true, size: 15)
-                .frame(width: 16)
+            SpaceIndicatorIcon(icon: space.icon, isActive: true, size: 20)
+                .frame(width: 20)
 
             if isRenamingSpace {
                 TextField("", text: $draftSpaceName)
                     .textFieldStyle(.plain)
-                    .font(PaletteFont.text(14, Font.Weight.medium.bumped(for: colorScheme)))
+                    .font(PaletteFont.text(14, .medium))
                     .foregroundStyle(Theme.text(1))
                     .focused($spaceNameFocused)
                     .onSubmit {
@@ -416,7 +416,7 @@ private struct SpacePage: View {
                     }
             } else {
                 Text(space.name)
-                    .font(PaletteFont.text(14, Font.Weight.medium.bumped(for: colorScheme)))
+                    .font(PaletteFont.text(14, .medium))
                     .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.78))
                     .lineLimit(1)
@@ -510,7 +510,9 @@ private struct SpacePage: View {
     }
 
     private var pinnedZone: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        // Zero list spacing: the row gap lives inside each row's vertical
+        // padding instead, so drag hit-areas stay contiguous.
+        VStack(alignment: .leading, spacing: 0) {
             spaceHeader
                 .onChange(of: spaceNameFocused) { _, focused in
                     if !focused, isRenamingSpace {
@@ -536,7 +538,7 @@ private struct SpacePage: View {
 
             if space.pinnedSessions.isEmpty && space.pinnedFolders.isEmpty {
                 Text("Drag tabs here to keep them")
-                    .font(PaletteFont.text(12, Font.Weight.regular.bumped(for: colorScheme)))
+                    .font(PaletteFont.text(12, .regular))
                     .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.28))
                     .padding(.horizontal, 6)
@@ -589,7 +591,7 @@ private struct SpacePage: View {
     }
 
     private var ephemeralZone: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(space.ephemeralSessions) { session in
                 sessionRow(session)
             }
@@ -606,7 +608,7 @@ private struct SpacePage: View {
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 14)
                     Text("New Terminal")
-                        .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .font(PaletteFont.text(14, .regular))
                         .tracking(PaletteFont.tracking)
                     Spacer(minLength: 0)
                 }
@@ -644,17 +646,17 @@ private struct SpacePage: View {
         let isFolderDragOver = isDropTarget && draggedFolderID != nil
         let isSessionDragOver = isDropTarget && draggedFolderID == nil
 
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 FolderGlyph(isOpen: isExpanded)
                     .fill(Theme.ink.opacity(0.6), style: FillStyle(eoFill: true))
-                    .frame(width: 14, height: 14)
+                    .frame(width: 16, height: 16)
                     .frame(width: 16)
 
                 if isRenaming {
                     TextField("", text: $draftFolderTitle)
                         .textFieldStyle(.plain)
-                        .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .font(PaletteFont.text(14, .medium))
                         .foregroundStyle(Theme.text(1))
                         .focused($folderRenameFocused)
                         .onSubmit {
@@ -665,7 +667,7 @@ private struct SpacePage: View {
                         }
                 } else {
                     Text(folder.title)
-                        .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .font(PaletteFont.text(14, .medium))
                         .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(0.82))
                         .lineLimit(1)
@@ -698,7 +700,7 @@ private struct SpacePage: View {
                     .opacity(isHovered ? 1 : 0)
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 6)
+            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7)
@@ -781,7 +783,7 @@ private struct SpacePage: View {
 
             // Children live in a container that collapses to zero height and
             // clips, so rows disappear into the folder instead of floating.
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(folder.sessions) { session in
                     sessionRow(session)
                 }
@@ -823,6 +825,7 @@ private struct SpacePage: View {
                     }
                 }
         }
+        .geometryGroup()
     }
 
     /// A drop on the strip after a folder: tabs append into the folder, a
@@ -887,7 +890,7 @@ private struct SpacePage: View {
                 Group {
                     if namer.namingSessions.contains(session.id) {
                         AutoNamingIndicator()
-                            .frame(width: 7, height: 7)
+                            .frame(width: 8, height: 8)
                     } else if let process = session.runningProcess {
                         ProcessBadgeView(
                             process: process,
@@ -897,7 +900,7 @@ private struct SpacePage: View {
                     } else {
                         Circle()
                             .fill(session.accent.color.opacity(isSelected ? 0.95 : 0.55))
-                            .frame(width: 7, height: 7)
+                            .frame(width: 8, height: 8)
                     }
                 }
                 .frame(width: 14, height: 14)
@@ -905,7 +908,7 @@ private struct SpacePage: View {
                 if isRenaming {
                     TextField("", text: $draftTitle)
                         .textFieldStyle(.plain)
-                        .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .font(PaletteFont.text(14, .regular))
                         .foregroundStyle(Theme.text(1))
                         .focused($renameFieldFocused)
                         .onSubmit {
@@ -918,7 +921,7 @@ private struct SpacePage: View {
                         }
                 } else {
                     Text(session.title)
-                        .font(PaletteFont.text(14, Font.Weight.regular.bumped(for: colorScheme)))
+                        .font(PaletteFont.text(14, .regular))
                         .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(isSelected ? 0.95 : 0.62))
                         .lineLimit(1)
@@ -944,7 +947,7 @@ private struct SpacePage: View {
                 }
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 6)
+            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 selectedRowBackground(
@@ -997,6 +1000,9 @@ private struct SpacePage: View {
                 commitRename(session)
             }
         }
+        // Rows shifted by a folder collapse move as one geometry unit;
+        // without this the icon and text interpolate at different rates.
+        .geometryGroup()
     }
 
     /// Selected tab background. In dark mode it's the familiar bright wash; in

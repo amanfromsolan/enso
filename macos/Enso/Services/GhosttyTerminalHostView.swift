@@ -2,7 +2,11 @@ import AppKit
 import SwiftUI
 
 struct GhosttyTerminalHostView: NSViewRepresentable {
-    let session: TerminalSession
+    /// Optional so the container outlives any one session: swapping (or
+    /// clearing) the surface happens inside a stable NSView in the same
+    /// commit as SwiftUI's redraw. Destroying the representable instead
+    /// tears the Metal layer down a frame late, flashing stale content.
+    let session: TerminalSession?
     let store: TerminalSessionStore
 
     func makeNSView(context: Context) -> NSView {
@@ -13,6 +17,10 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
+        guard let session else {
+            container.subviews.forEach { $0.removeFromSuperview() }
+            return
+        }
         let sessionID = session.id
         let surfaceView = GhosttySurfaceManager.shared.view(for: session)
 
