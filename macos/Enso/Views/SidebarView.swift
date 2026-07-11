@@ -402,7 +402,7 @@ private struct SpacePage: View {
             if isRenamingSpace {
                 TextField("", text: $draftSpaceName)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(PaletteFont.text(14, .medium))
                     .foregroundStyle(.white)
                     .focused($spaceNameFocused)
                     .onSubmit {
@@ -415,7 +415,7 @@ private struct SpacePage: View {
                     }
             } else {
                 Text(space.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(PaletteFont.text(14, .medium))
                     .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(1)
                     // Rename only on the name text, not the whole header.
@@ -534,7 +534,7 @@ private struct SpacePage: View {
 
             if space.pinnedSessions.isEmpty && space.pinnedFolders.isEmpty {
                 Text("Drag tabs here to keep them")
-                    .font(.system(size: 11))
+                    .font(PaletteFont.text(12, .light))
                     .foregroundStyle(.white.opacity(0.28))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
@@ -603,7 +603,7 @@ private struct SpacePage: View {
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 14)
                     Text("New Terminal")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(PaletteFont.text(14, .regular))
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(.white.opacity(newTabHovered ? 0.7 : 0.45))
@@ -650,7 +650,7 @@ private struct SpacePage: View {
                 if isRenaming {
                     TextField("", text: $draftFolderTitle)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(PaletteFont.text(14, .regular))
                         .foregroundStyle(.white)
                         .focused($folderRenameFocused)
                         .onSubmit {
@@ -661,7 +661,7 @@ private struct SpacePage: View {
                         }
                 } else {
                     Text(folder.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(PaletteFont.text(14, .regular))
                         .foregroundStyle(.white.opacity(0.82))
                         .lineLimit(1)
                         // Rename only on the title text; elsewhere the row
@@ -895,7 +895,7 @@ private struct SpacePage: View {
                 if isRenaming {
                     TextField("", text: $draftTitle)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(PaletteFont.text(14, .regular))
                         .foregroundStyle(.white)
                         .focused($renameFieldFocused)
                         .onSubmit {
@@ -908,7 +908,7 @@ private struct SpacePage: View {
                         }
                 } else {
                     Text(session.title)
-                        .font(.system(size: 13))
+                        .font(PaletteFont.text(14, .light))
                         .foregroundStyle(.white.opacity(isSelected ? 0.95 : 0.62))
                         .lineLimit(1)
                         .nameShimmer(namer.namingSessions.contains(session.id))

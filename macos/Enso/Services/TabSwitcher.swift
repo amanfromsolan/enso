@@ -137,7 +137,7 @@ struct TabSwitcherHUD: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Switch Tabs")
-                .font(PaletteFont.text(13.5))
+                .font(PaletteFont.text(13.5, .regular))
                 .foregroundStyle(.white.opacity(0.38))
                 .padding(.leading, 16)
                 .padding(.top, 12)
