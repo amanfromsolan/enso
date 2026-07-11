@@ -899,7 +899,11 @@ private struct SpacePage: View {
                         )
                     } else {
                         Circle()
-                            .fill(session.accent.color.opacity(isSelected ? 0.95 : 0.55))
+                            // The 0.55 wash reads right on dark; on the
+                            // light sidebar it fades out, so stay denser.
+                            .fill(session.accent.color.opacity(
+                                isSelected ? 0.95 : (colorScheme == .light ? 0.85 : 0.55)
+                            ))
                             .frame(width: 8, height: 8)
                     }
                 }

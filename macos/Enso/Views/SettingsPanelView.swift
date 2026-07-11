@@ -19,7 +19,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case appearance
     case tabs
     case keyboard
-    case notifications
 
     var id: String { rawValue }
 
@@ -29,7 +28,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .appearance: "Appearance"
         case .tabs: "Tabs & Spaces"
         case .keyboard: "Keyboard"
-        case .notifications: "Notifications"
         }
     }
 
@@ -39,7 +37,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .appearance: "paintbrush"
         case .tabs: "rectangle.stack"
         case .keyboard: "keyboard"
-        case .notifications: "bell"
         }
     }
 }
@@ -126,7 +123,6 @@ struct SettingsPanelView: View {
                 case .appearance: AppearanceSettings()
                 case .tabs: TabsSettings()
                 case .keyboard: KeyboardSettings()
-                case .notifications: NotificationSettings()
                 }
             }
             .padding(28)
@@ -220,6 +216,7 @@ private struct GeneralSettings: View {
 
 private struct AppearanceSettings: View {
     @AppStorage("AppleFontSmoothing") private var fontSmoothing = 2
+    @AppStorage(AppAppearance.defaultsKey) private var appearanceRaw = AppAppearance.system.rawValue
 
     private var smoothingOn: Binding<Bool> {
         Binding(
@@ -229,6 +226,15 @@ private struct AppearanceSettings: View {
     }
 
     var body: some View {
+        SettingsGroup("Theme") {
+            SettingsRow(
+                "Appearance",
+                caption: "The app chrome follows this; the terminal keeps its Ghostty theme."
+            ) {
+                AppearanceSegments(selectedRaw: appearanceRaw)
+            }
+        }
+
         SettingsGroup("Text") {
             SettingsRow(
                 "Font smoothing",
@@ -392,34 +398,51 @@ private struct KeyboardSettings: View {
     }
 }
 
-private struct NotificationSettings: View {
-    @AppStorage("notifyAttention") private var notifyAttention = true
-    @AppStorage("notifyCommandDone") private var notifyCommandDone = false
+/// Icon segments for the appearance choice; selection is a neutral ink
+/// well, not the accent, and applies immediately via AppAppearance.
+private struct AppearanceSegments: View {
+    let selectedRaw: String
+
+    @Namespace private var selectionWell
+
+    private static let options: [(AppAppearance, String, String)] = [
+        (.system, "circle.lefthalf.filled", "Match the system"),
+        (.light, "sun.max", "Always light"),
+        (.dark, "moon", "Always dark"),
+    ]
 
     var body: some View {
-        SettingsGroup("Background tabs") {
-            SettingsRow(
-                "Badge tabs that need attention",
-                caption: "Highlight a tab in the sidebar when it rings the bell."
-            ) {
-                Toggle("", isOn: $notifyAttention)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-            }
-
-            SettingsRow(
-                "Notify when a long command finishes",
-                caption: "Sends a notification when a command completes in an unfocused tab."
-            ) {
-                Toggle("", isOn: $notifyCommandDone)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
+        HStack(spacing: 2) {
+            ForEach(Self.options, id: \.0) { option, symbol, help in
+                let isSelected = selectedRaw == option.rawValue
+                Button {
+                    AppAppearance.set(option)
+                } label: {
+                    Image(systemName: symbol)
+                        .symbolVariant(isSelected ? .fill : .none)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.text(isSelected ? 1 : 0.45))
+                        .frame(width: 34, height: 22)
+                        .background {
+                            // One shared well that slides between segments.
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(Theme.ink.opacity(0.12))
+                                    .matchedGeometryEffect(id: "well", in: selectionWell)
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(help)
             }
         }
-
-        PreviewFootnote()
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Theme.ink.opacity(0.05))
+        )
+        .animation(.spring(duration: 0.25, bounce: 0.15), value: selectedRaw)
     }
 }
 
