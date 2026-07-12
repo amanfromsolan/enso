@@ -132,6 +132,12 @@ final class GhosttyRuntime {
         // Respect the user's Ghostty config (fonts, theme) when present.
         ghostty_config_load_default_files(config)
         ghostty_config_load_recursive_files(config)
+        // Enso's own override layer (currently the theme picked in-app) loads
+        // last so it wins over the user's config without ever editing it.
+        let overridePath = TerminalThemeManager.overrideFileURL.path
+        if FileManager.default.fileExists(atPath: overridePath) {
+            overridePath.withCString { ghostty_config_load_file(config, $0) }
+        }
         ghostty_config_finalize(config)
 
         var background = ghostty_config_color_s()
@@ -145,6 +151,30 @@ final class GhosttyRuntime {
         }
 
         return config
+    }
+
+    /// Rebuilds the config (user's ghostty files + Enso's override layer) and
+    /// applies it live to the running app and every surface — the same
+    /// mechanism Ghostty uses for its own config reload. Recolors running
+    /// terminals in place; used by TerminalThemeManager for theme switching.
+    @MainActor
+    func reloadConfig() {
+        guard let app else { return }
+        guard let newConfig = loadConfig() else { return }
+
+        ghostty_app_update_config(app, newConfig)
+        for view in GhosttySurfaceManager.shared.allSurfaceViews {
+            if let surface = view.surface {
+                ghostty_surface_update_config(surface, newConfig)
+            }
+        }
+
+        // libghostty derives what it needs on update; the old handle is ours
+        // to free (mirrors Ghostty.app's own config-replace flow).
+        if let oldConfig = config {
+            ghostty_config_free(oldConfig)
+        }
+        config = newConfig
     }
 
     private func installObservers() {

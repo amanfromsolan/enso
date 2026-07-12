@@ -109,6 +109,8 @@ final class TerminalSessionStore: ObservableObject {
         selection = activeSpace.lastSelection.flatMap { last in
             activeSpace.sessions.contains { $0.id == last } ? last : nil
         } ?? activeSpace.sessions.first?.id
+        // Per-space terminal themes follow the active space.
+        TerminalThemeManager.shared.activeSpaceDidChange(spaceID)
         multiSelection = selection.map { [$0] } ?? []
         save()
     }
@@ -156,7 +158,13 @@ final class TerminalSessionStore: ObservableObject {
             let fallback = spaces[min(index, spaces.count - 1)]
             activeSpaceID = fallback.id
             selection = fallback.lastSelection ?? fallback.sessions.first?.id
+            // Deleting the active space activates the fallback; its per-space
+            // theme has to follow just like an ordinary space switch does.
+            TerminalThemeManager.shared.activeSpaceDidChange(fallback.id)
         }
+        // Drop the removed space's per-space theme override so it doesn't
+        // linger as dead storage.
+        TerminalThemeManager.shared.spaceWasDeleted(spaceID)
         save()
     }
 

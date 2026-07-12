@@ -265,6 +265,7 @@ struct TerminalRootView: View {
             restoreSelection()
             switcher.attach(to: store)
             commandCenter.attach(to: store)
+            TerminalThemeManager.shared.attach(to: store)
             #if DEBUG
             // Design scaffold, opt-in: ENSO_WHATS_NEW=1 fakes a found
             // update (sidebar card); =sheet also opens the What's New

@@ -103,4 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         QuitGuard.shared.consentsToTerminate() ? .terminateNow : .terminateCancel
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // If we quit mid-preview, the override file still holds the previewed
+        // theme; roll it back to the committed choice so the next launch's
+        // first paint isn't the abandoned preview.
+        TerminalThemeManager.shared.reconcileOverrideOnTermination()
+    }
 }

@@ -24,6 +24,12 @@ final class GhosttySurfaceManager {
         views[sessionID]
     }
 
+    /// Every live surface view — for config updates (e.g. a theme change)
+    /// that must reach all running terminals, not just the visible one.
+    var allSurfaceViews: [GhosttySurfaceView] {
+        Array(views.values)
+    }
+
     /// Hands the keyboard back to a session's terminal after a modal or
     /// inline rename steals first responder. Without this, Return keeps
     /// routing to whatever default-action button SwiftUI last resolved

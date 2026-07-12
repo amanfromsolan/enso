@@ -12,11 +12,15 @@ final class CommandCenter: ObservableObject {
     static let shared = CommandCenter()
 
     /// Search is the palette; the rename modes turn the search field into
-    /// an argument input ("new name") without leaving the palette.
+    /// an argument input ("new name") without leaving the palette. The theme
+    /// modes are the "Terminal Theme" token flow: a live-previewing theme
+    /// list, then an apply-scope step for the chosen theme.
     enum Mode {
         case search
         case renameTab(TerminalSession.ID)
         case renameSpace(SidebarSpace.ID)
+        case themePicker
+        case themeScope(String)
     }
 
     @Published private(set) var isOpen = false
@@ -25,15 +29,49 @@ final class CommandCenter: ObservableObject {
         didSet { rebuild() }
     }
     @Published private(set) var items: [PaletteItem] = []
-    @Published var highlightedIndex = 0
+    @Published var highlightedIndex = 0 {
+        didSet { previewHighlightedThemeIfNeeded() }
+    }
+    /// Live preview follows the highlight only after the picker has settled
+    /// on its opening row; otherwise merely opening the picker would recolor
+    /// the terminal to whatever sat at the top of "Recent".
+    private var themePreviewArmed = false
+    /// Screen location the cursor sat at when the row list last changed under
+    /// it (opening the picker, stepping back from the scope). Hover-driven
+    /// highlight changes are ignored until the mouse actually moves off this
+    /// point, so a freshly swapped row under a still cursor can't hijack the
+    /// restored highlight — and its live preview.
+    private var hoverAnchor: NSPoint?
     /// Non-nil while a command's option sheet is up (e.g. "Change
     /// Appearance"): the palette shows only these items, filtered by the
     /// query, and Esc backs out to the main sheet instead of closing.
     private var submenuItems: [PaletteItem]?
 
     var isRenaming: Bool {
-        if case .search = mode { return false }
-        return true
+        switch mode {
+        case .renameTab, .renameSpace: return true
+        case .search, .themePicker, .themeScope: return false
+        }
+    }
+
+    /// The plain search sheet: not a token flow, a rename, or an open submenu.
+    private var isPlainSearch: Bool {
+        if case .search = mode { return submenuItems == nil }
+        return false
+    }
+
+    /// Either theme stage: the search field grows the "Terminal Theme" token.
+    var isThemeMode: Bool {
+        switch mode {
+        case .themePicker, .themeScope: return true
+        case .search, .renameTab, .renameSpace: return false
+        }
+    }
+
+    /// The theme awaiting an apply scope, while in the scope stage.
+    var themeScopeName: String? {
+        if case .themeScope(let name) = mode { return name }
+        return nil
     }
 
     /// Test hook: whether the local key monitor is currently installed.
@@ -44,6 +82,8 @@ final class CommandCenter: ObservableObject {
         case .search: "Search tabs, commands or processes"
         case .renameTab: "New tab name…"
         case .renameSpace: "New space name…"
+        case .themePicker: "Search Themes"
+        case .themeScope: ""
         }
     }
 
@@ -78,6 +118,7 @@ final class CommandCenter: ObservableObject {
         guard store != nil, !isOpen else { return }
         mode = .search
         submenuItems = nil
+        hoverAnchor = nil
         query = ""
         highlightedIndex = 0
         rebuild()
@@ -97,6 +138,12 @@ final class CommandCenter: ObservableObject {
     func openCommandMode() {
         if !isOpen {
             open()
+        } else if !isPlainSearch {
+            // Already open in a transient mode (theme flow, rename, or an open
+            // submenu): drop back to plain search first — cancelling any live
+            // preview — so "> " filters commands instead of wedging the token
+            // flow (query "> " would otherwise filter themes to "No matches").
+            resetToSearch()
         }
         query = "> "
         // Focusing the field selects its contents (so typing would erase
@@ -109,11 +156,25 @@ final class CommandCenter: ObservableObject {
 
     func close() {
         guard isOpen else { return }
+        // Dismissing mid-preview (Esc, click-away) reverts the terminal to
+        // the committed theme; after a commit this is a no-op.
+        TerminalThemeManager.shared.cancelPreview()
         isOpen = false
         mode = .search
         removeMonitorWhenDrained()
         // Hand the keyboard back to the visible terminal.
         GhosttySurfaceManager.shared.restoreFocus(to: store?.selection)
+    }
+
+    /// Returns the open palette to plain search from any transient mode (theme
+    /// flow, rename, or an open submenu), cancelling an uncommitted theme
+    /// preview on the way out. The caller sets the query afterwards, which
+    /// rebuilds against the now-restored `.search` mode.
+    private func resetToSearch() {
+        themePreviewArmed = false
+        TerminalThemeManager.shared.cancelPreview()
+        submenuItems = nil
+        mode = .search
     }
 
     func execute(_ index: Int) {
@@ -159,7 +220,7 @@ final class CommandCenter: ObservableObject {
             }
         case .renameSpace(let spaceID):
             store?.renameSpace(spaceID, to: name)
-        case .search:
+        case .search, .themePicker, .themeScope:
             break
         }
         close()
@@ -168,6 +229,145 @@ final class CommandCenter: ObservableObject {
     private func cancelRename() {
         mode = .search
         query = ""
+    }
+
+    // MARK: - Theme picker flow
+
+    /// "Change Terminal Theme" → token mode listing themes, previewing live.
+    private func beginThemePicker() {
+        guard store != nil else {
+            close()
+            return
+        }
+        themePreviewArmed = false
+        mode = .themePicker
+        query = "" // didSet rebuilds into the theme list
+        parkHighlightOnCurrentTheme()
+        // The list just replaced the command menu under the (likely
+        // stationary) cursor; ignore hover until the mouse moves so the parked
+        // highlight survives.
+        hoverAnchor = NSEvent.mouseLocation
+        themePreviewArmed = true
+    }
+
+    /// Backspace on an empty query pops the token back to plain search.
+    private func exitThemePicker() {
+        themePreviewArmed = false
+        TerminalThemeManager.shared.cancelPreview()
+        mode = .search
+        query = ""
+    }
+
+    /// Enter on a theme row: keep previewing it and ask for the apply scope.
+    private func beginThemeScope(_ name: String) {
+        TerminalThemeManager.shared.preview(name)
+        mode = .themeScope(name)
+        query = ""
+        // Scope rows replaced the theme list under a stationary cursor.
+        hoverAnchor = NSEvent.mouseLocation
+    }
+
+    /// Esc/backspace out of the scope step back to the list, still previewing.
+    private func backToThemePicker(highlighting name: String?) {
+        themePreviewArmed = false
+        mode = .themePicker
+        query = ""
+        if let name, let index = items.firstIndex(where: { $0.id == "theme-\(name)" }) {
+            highlightedIndex = index
+        }
+        // The list replaced the scope rows under a stationary cursor; hold off
+        // hover so the restored highlight isn't clobbered.
+        hoverAnchor = NSEvent.mouseLocation
+        themePreviewArmed = true
+    }
+
+    private func commitTheme(_ name: String, scope: TerminalThemeManager.Scope) {
+        // Commit first: it clears the preview flag, so close() won't revert
+        // the freshly applied colors.
+        TerminalThemeManager.shared.commit(name, scope: scope)
+        close()
+    }
+
+    /// Live preview: the terminal recolors as the highlight moves through the
+    /// theme list (arrow keys and hover both land here via highlightedIndex).
+    private func previewHighlightedThemeIfNeeded() {
+        guard themePreviewArmed, case .themePicker = mode,
+              items.indices.contains(highlightedIndex)
+        else { return }
+        let id = items[highlightedIndex].id
+        guard id.hasPrefix("theme-") else { return }
+        TerminalThemeManager.shared.preview(String(id.dropFirst("theme-".count)))
+    }
+
+    /// Opening the picker parks the highlight on the current theme (visible
+    /// as its muted "Current" tag), so nothing recolors until the user moves.
+    private func parkHighlightOnCurrentTheme() {
+        guard let store,
+              let current = TerminalThemeManager.shared.effectiveThemeName(forSpace: store.activeSpaceID),
+              let index = items.firstIndex(where: { $0.id == "theme-\(current)" })
+        else { return }
+        highlightedIndex = index
+    }
+
+    /// "Recent" (recently applied) then "All Themes", both query-filtered.
+    private func themePickerItems() -> [PaletteItem] {
+        guard let store else { return [] }
+        let manager = TerminalThemeManager.shared
+        let current = manager.effectiveThemeName(forSpace: store.activeSpaceID)
+
+        func item(_ name: String, section: PaletteItem.Section) -> PaletteItem {
+            PaletteItem(
+                id: "theme-\(name)",
+                icon: .themeAccent(name),
+                title: name,
+                context: name == current ? "Current" : nil,
+                verb: "Select",
+                section: section,
+                keepsOpen: true
+            ) { [weak self] in
+                self?.beginThemeScope(name)
+            }
+        }
+
+        let recents = manager.recentThemeNames.filter { manager.themes.contains($0) }
+        let recentItems = recents.map { item($0, section: .recentThemes) }
+        let allItems = manager.themes
+            .filter { !recents.contains($0) }
+            .map { item($0, section: .allThemes) }
+
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return recentItems + allItems }
+        return Self.filter(recentItems, query: trimmed) + Self.filter(allItems, query: trimmed)
+    }
+
+    /// "Apply theme for": the active space (named) or everywhere.
+    private func themeScopeItems(theme name: String) -> [PaletteItem] {
+        guard let store else { return [] }
+        let space = store.activeSpace
+        return [
+            PaletteItem(
+                id: "scope-this-space",
+                icon: .space(space.icon),
+                title: "This Space",
+                context: space.name.isEmpty ? nil : space.name,
+                verb: "Apply",
+                section: .themeScope,
+                keepsOpen: true
+            ) { [weak self] in
+                self?.commitTheme(name, scope: .thisSpace(space.id))
+            },
+            PaletteItem(
+                id: "scope-all-spaces",
+                icon: .symbol("square.grid.2x2"),
+                title: "All Spaces",
+                context: nil,
+                verb: "Apply",
+                section: .themeScope,
+                keepsOpen: true
+            ) { [weak self] in
+                self?.commitTheme(name, scope: .allSpaces)
+            },
+        ]
     }
 
     // MARK: - Keyboard
@@ -215,6 +415,31 @@ final class CommandCenter: ObservableObject {
             }
         }
 
+        // Theme-flow specific keys before the shared navigation handling.
+        switch mode {
+        case .themePicker:
+            if event.keyCode == 51, query.isEmpty { // ⌫ on empty query pops the token
+                exitThemePicker()
+                return nil
+            }
+        case .themeScope(let name):
+            switch event.keyCode {
+            case 51, 53: // ⌫ / esc step back to the theme list, still previewing
+                backToThemePicker(highlighting: name)
+                return nil
+            case 125, 126, 36, 76:
+                break // shared arrows/enter below
+            default:
+                // The scope step takes no text; swallow stray typing so the
+                // field stays empty. ⌘-chords still pass through.
+                if !event.modifierFlags.contains(.command) {
+                    return nil
+                }
+            }
+        case .search, .renameTab, .renameSpace:
+            break
+        }
+
         switch event.keyCode {
         case 53: // esc backs out of a submenu first, then closes
             if submenuItems != nil {
@@ -253,11 +478,36 @@ final class CommandCenter: ObservableObject {
         highlightedIndex = (highlightedIndex + delta + items.count) % items.count
     }
 
+    /// A row reported hover. Honored only once the mouse has moved since the
+    /// last stage transition, so rows rearranged under a stationary cursor
+    /// don't steal the highlight (and re-fire the theme preview).
+    func hoverHighlight(_ index: Int) {
+        if let anchor = hoverAnchor {
+            guard NSEvent.mouseLocation != anchor else { return }
+            hoverAnchor = nil
+        }
+        guard items.indices.contains(index) else { return }
+        highlightedIndex = index
+    }
+
     // MARK: - Results
 
     private func rebuild() {
-        // Rename mode: the query is the new tab name, not a search.
-        guard case .search = mode else { return }
+        switch mode {
+        case .renameTab, .renameSpace:
+            // Rename mode: the query is the new tab name, not a search.
+            return
+        case .themePicker:
+            items = themePickerItems()
+            highlightedIndex = 0
+            return
+        case .themeScope(let name):
+            items = themeScopeItems(theme: name)
+            highlightedIndex = 0
+            return
+        case .search:
+            break
+        }
         guard let store else {
             items = []
             return
@@ -296,11 +546,14 @@ final class CommandCenter: ObservableObject {
         highlightedIndex = 0
     }
 
-    /// Fuzzy-filters items by title and sorts the survivors by score.
+    /// Fuzzy-filters items by title (and hidden aliases, so e.g. "ghostty
+    /// theme" finds "Change Terminal Theme") and sorts survivors by score.
     private static func filter(_ candidates: [PaletteItem], query: String) -> [PaletteItem] {
         candidates
             .compactMap { item -> (PaletteItem, Int)? in
-                guard let score = fuzzyScore(query: query, in: item.title) else { return nil }
+                let haystacks = [item.title] + item.aliases
+                guard let score = haystacks.compactMap({ fuzzyScore(query: query, in: $0) }).max()
+                else { return nil }
                 return (item, score)
             }
             .sorted { $0.1 > $1.1 }
@@ -461,6 +714,7 @@ final class CommandCenter: ObservableObject {
                 TabAutoNamer.shared.forceName(selection)
             })
         }
+        items.append(changeThemeItem())
         items.append(PaletteItem(
             id: "cmd-settings",
             icon: .symbol("gearshape"),
@@ -471,6 +725,24 @@ final class CommandCenter: ObservableObject {
             self?.openWindow?(id: SettingsPanel.windowID)
         })
         return items
+    }
+
+    /// Entry point into the theme flow, surfaced on the default sheet's menu
+    /// and in the full command list. The aliases make loose queries land:
+    /// "theme", "ghostty theme", "terminal theme", even typos like "hteme"
+    /// (the fuzzy subsequence walk finds h-t-e-m-e inside the title).
+    private func changeThemeItem() -> PaletteItem {
+        PaletteItem(
+            id: "cmd-change-theme",
+            icon: .symbol("paintpalette"),
+            title: "Change Terminal Theme",
+            context: nil,
+            verb: "Open",
+            aliases: ["ghostty theme", "terminal theme", "theme", "color scheme", "colors"],
+            keepsOpen: true
+        ) { [weak self] in
+            self?.beginThemePicker()
+        }
     }
 
     /// The full path never fits the narrow context column, so show just the
@@ -536,6 +808,8 @@ final class CommandCenter: ObservableObject {
         ) { [weak self] in
             self?.openAppearanceMenu()
         })
+
+        commands.append(changeThemeItem())
 
         if let selection = store.selection {
             commands.append(PaletteItem(
@@ -721,6 +995,10 @@ final class CommandCenter: ObservableObject {
 struct PaletteItem: Identifiable {
     enum Icon {
         case accent(Color)
+        /// A theme's accent bullet, carried as the theme NAME so the color is
+        /// resolved (and cached) at render time — the LazyVStack then parses
+        /// only the theme files whose rows are actually on screen.
+        case themeAccent(String)
         case space(SidebarSpace.Icon)
         case symbol(String)
     }
@@ -732,6 +1010,9 @@ struct PaletteItem: Identifiable {
         case recentTabs = "Recent Tabs"
         case spaces = "Spaces"
         case commands = "Commands"
+        case recentThemes = "Recent"
+        case allThemes = "All Themes"
+        case themeScope = "Apply Theme For"
     }
 
     let id: String
@@ -747,6 +1028,9 @@ struct PaletteItem: Identifiable {
     /// A dimmed suffix after the title naming the result kind ("Tab"),
     /// shown when a bare title is ambiguous among mixed results.
     var kindLabel: String? = nil
+    /// Hidden search terms fuzzy-matched alongside the title, never shown
+    /// (e.g. "ghostty theme" for "Change Terminal Theme").
+    var aliases: [String] = []
     /// Items that transition the palette (rename mode) instead of acting.
     var keepsOpen: Bool = false
     let perform: () -> Void
@@ -778,6 +1062,25 @@ struct CommandCenterView: View {
                     .font(.system(size: 17, weight: .regular))
                     .foregroundStyle(Theme.text(0.4))
 
+                // The theme flow turns the field into a token input: a
+                // "Terminal Theme" chip, plus the chosen theme's chip while
+                // picking the apply scope.
+                if center.isThemeMode {
+                    chip(label: "Terminal Theme") {
+                        Image(systemName: "paintpalette")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
+                }
+                if let name = center.themeScopeName {
+                    chip(label: name) {
+                        Circle()
+                            .fill(TerminalThemeManager.shared.accentColor(for: name))
+                            .frame(width: 8, height: 8)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
+                }
+
                 TextField(center.inputPlaceholder, text: $center.query)
                     .textFieldStyle(.plain)
                     .font(compactDisplay(18))
@@ -786,6 +1089,8 @@ struct CommandCenterView: View {
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 20)
+            .animation(.easeOut(duration: 0.14), value: center.isThemeMode)
+            .animation(.easeOut(duration: 0.14), value: center.themeScopeName)
 
             Rectangle()
                 .fill(Theme.ink.opacity(0.06))
@@ -810,7 +1115,9 @@ struct CommandCenterView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 2) {
+                        // Lazy: the theme picker lists every bundled Ghostty
+                        // theme (~460 rows); eager row building would lag.
+                        LazyVStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(center.items.enumerated()), id: \.element.id) { index, item in
                                 if index == 0 || center.items[index - 1].section != item.section {
                                     sectionHeader(item.section.rawValue, isFirst: index == 0)
@@ -845,6 +1152,29 @@ struct CommandCenterView: View {
                 searchFocused = true
             }
         }
+    }
+
+    /// The rounded token badge the theme flow plants at the field's left: a
+    /// leading glyph or accent dot, then a label. Used both for the "Terminal
+    /// Theme" token and, during the scope step, the chosen theme's chip.
+    private func chip<Leading: View>(
+        label: String,
+        @ViewBuilder leading: () -> Leading
+    ) -> some View {
+        HStack(spacing: 6) {
+            leading()
+            Text(label)
+                .font(compactText(13, .medium))
+                .tracking(PaletteFont.tracking)
+        }
+        .foregroundStyle(Theme.text(0.85))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Theme.ink.opacity(0.1))
+        )
+        .fixedSize()
     }
 
     private func sectionHeader(_ title: String, isFirst: Bool) -> some View {
@@ -906,7 +1236,7 @@ struct CommandCenterView: View {
         .contentShape(Rectangle())
         .onHover { hovering in
             if hovering {
-                center.highlightedIndex = index
+                center.hoverHighlight(index)
             }
         }
         .onTapGesture {
@@ -920,6 +1250,10 @@ struct CommandCenterView: View {
         case .accent(let color):
             Circle()
                 .fill(color.opacity(isHighlighted ? 1 : 0.9))
+                .frame(width: 9, height: 9)
+        case .themeAccent(let themeName):
+            Circle()
+                .fill(TerminalThemeManager.shared.accentColor(for: themeName).opacity(isHighlighted ? 1 : 0.9))
                 .frame(width: 9, height: 9)
         case .symbol(let name):
             Image(systemName: name)

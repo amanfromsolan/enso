@@ -17,6 +17,9 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
+        // Track live theme changes; the container peeks through during
+        // resizes and while no surface is mounted.
+        container.layer?.backgroundColor = NSColor(GhosttyRuntime.shared.themeBackground).cgColor
         guard let session else {
             container.subviews.forEach { $0.removeFromSuperview() }
             return

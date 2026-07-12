@@ -2,6 +2,9 @@ import SwiftUI
 
 struct TerminalWorkspaceView: View {
     @ObservedObject var store: TerminalSessionStore
+    // Live theme switches change GhosttyRuntime.themeBackground; observing
+    // the manager re-evaluates the body so the backing color tracks it.
+    @ObservedObject private var themeManager = TerminalThemeManager.shared
     @State private var isRenaming = false
     @State private var draftTitle = ""
 

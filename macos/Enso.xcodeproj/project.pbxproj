@@ -24,6 +24,7 @@
 		A10000322FD810C30001BF12 /* GhosttySurfaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000352FD810C30001BF12 /* GhosttySurfaceManager.swift */; };
 		A10000362FD810C30001BF12 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000372FD810C30001BF12 /* GhosttyKit.xcframework */; };
 		A1AUTONM012FD810C30001BF12 /* TabAutoNamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */; };
+		A1THMMGR012FD810C30001BF12 /* TerminalThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1THMMGR022FD810C30001BF12 /* TerminalThemeManager.swift */; };
 		A1CMDCTR012FD810C30001BF12 /* CommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */; };
 		A1GRES0012FD810C30001BF12 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0022FD810C30001BF12 /* terminfo */; };
 		A1GRES0032FD810C30001BF12 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = A1GRES0042FD810C30001BF12 /* ghostty */; };
@@ -79,6 +80,7 @@
 		A10000352FD810C30001BF12 /* GhosttySurfaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttySurfaceManager.swift; sourceTree = "<group>"; };
 		A10000372FD810C30001BF12 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
 		A1AUTONM022FD810C30001BF12 /* TabAutoNamer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabAutoNamer.swift; sourceTree = "<group>"; };
+		A1THMMGR022FD810C30001BF12 /* TerminalThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalThemeManager.swift; sourceTree = "<group>"; };
 		A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenter.swift; sourceTree = "<group>"; };
 		A1GRES0022FD810C30001BF12 /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = "<group>"; };
 		A1GRES0042FD810C30001BF12 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = "<group>"; };
@@ -213,6 +215,7 @@
 				A1CMDCTR022FD810C30001BF12 /* CommandCenter.swift */,
 				A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */,
 				A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */,
+				A1THMMGR022FD810C30001BF12 /* TerminalThemeManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -410,6 +413,7 @@
 				A10000122FD810C30001BF12 /* GhosttyTerminalHostView.swift in Sources */,
 				A1TABSW012FD810C30001BF12 /* TabSwitcher.swift in Sources */,
 				A1AUTONM012FD810C30001BF12 /* TabAutoNamer.swift in Sources */,
+				A1THMMGR012FD810C30001BF12 /* TerminalThemeManager.swift in Sources */,
 				A1CMDCTR012FD810C30001BF12 /* CommandCenter.swift in Sources */,
 				A10000302FD810C30001BF12 /* GhosttyRuntime.swift in Sources */,
 				A10000312FD810C30001BF12 /* GhosttySurfaceView.swift in Sources */,
