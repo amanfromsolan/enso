@@ -143,7 +143,13 @@ final class GhosttyRuntime {
         var background = ghostty_config_color_s()
         let key = "background"
         if key.withCString({ ghostty_config_get(config, &background, $0, UInt(key.utf8.count)) }) {
+            // Ghostty renders config colors as raw components in
+            // `window-colorspace` (no conversion), so chrome that restates the
+            // background must build its Color in that same space — an sRGB
+            // read of P3 components paints the header strip a visibly
+            // different color than the terminal on light themes.
             themeBackground = Color(
+                Self.colorSpace(of: config),
                 red: Double(background.r) / 255,
                 green: Double(background.g) / 255,
                 blue: Double(background.b) / 255
@@ -151,6 +157,19 @@ final class GhosttyRuntime {
         }
 
         return config
+    }
+
+    /// The colorspace ghostty will interpret config colors in
+    /// (`window-colorspace`); the same defensive string read Ghostty.app's
+    /// own Config wrapper uses.
+    private static func colorSpace(of config: ghostty_config_t?) -> Color.RGBColorSpace {
+        var value: UnsafePointer<CChar>?
+        let key = "window-colorspace"
+        let found = key.withCString {
+            ghostty_config_get(config, &value, $0, UInt(key.utf8.count))
+        }
+        guard found, let value, String(cString: value) == "display-p3" else { return .sRGB }
+        return .displayP3
     }
 
     /// Rebuilds the config (user's ghostty files + Enso's override layer) and

@@ -46,6 +46,11 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
         surfaceView.autoresizingMask = [.width, .height]
         container.addSubview(surfaceView)
 
+        // While the ⌘T palette is up its search field owns the keyboard: a
+        // tab mounted behind it (the theme flow's preview tab) must not grab
+        // first responder or typing in the palette breaks. close() hands
+        // focus back to the visible terminal when the palette dismisses.
+        guard !CommandCenter.shared.isOpen else { return }
         if let window = container.window {
             window.makeFirstResponder(surfaceView)
         } else {

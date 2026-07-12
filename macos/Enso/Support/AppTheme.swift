@@ -85,6 +85,17 @@ enum Theme {
         light: NSColor(white: 1, alpha: 0.66)
     ))
 
+    /// Foreground ink for content laid *directly over the terminal theme
+    /// background* — the header strip. Unlike the appearance-driven ``ink``,
+    /// this follows the actual color under it: white on a dark terminal theme,
+    /// near-black on a light one. Picked from the background's own luminance,
+    /// never from the theme name (see ``Color/isLight``). Comparable opacities
+    /// on both sides so the dark-theme look is unchanged from the old
+    /// `.white.opacity(x)`.
+    static func headerInk(_ opacity: Double, over background: Color) -> Color {
+        background.isLight ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
+    }
+
     /// Builds a dynamic NSColor that resolves per light/dark appearance.
     static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in
@@ -112,6 +123,26 @@ extension Font.Weight {
         default: return self
         }
     }
+}
+
+extension Color {
+    /// WCAG relative luminance (sRGB-linearized), 0…1. Computed off the real
+    /// sRGB components via NSColor so it works for any color — used to decide
+    /// whether ink laid over this color should be light or dark.
+    var relativeLuminance: Double {
+        let resolved = NSColor(self).usingColorSpace(.sRGB) ?? NSColor(white: 0, alpha: 1)
+        func linear(_ component: CGFloat) -> Double {
+            let c = Double(component)
+            return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(resolved.redComponent)
+            + 0.7152 * linear(resolved.greenComponent)
+            + 0.0722 * linear(resolved.blueComponent)
+    }
+
+    /// True when the color is light enough that dark ink reads better on top
+    /// (threshold at the luminance midpoint).
+    var isLight: Bool { relativeLuminance > 0.5 }
 }
 
 extension NSColor {

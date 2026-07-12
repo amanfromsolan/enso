@@ -8,6 +8,14 @@ struct TerminalHeaderView: View {
     let session: TerminalSession
     let onRename: () -> Void
 
+    // The strip is filled with the terminal theme's background, so its ink
+    // has to follow that color, not the app appearance. Read live: the parent
+    // (TerminalWorkspaceView) observes TerminalThemeManager and re-evaluates
+    // its body on every apply/preview, which re-renders this view and re-reads
+    // the (by-then updated) themeBackground — flipping light↔dark in step with
+    // the terminal recolor.
+    private var background: Color { GhosttyRuntime.shared.themeBackground }
+
     var body: some View {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
@@ -19,7 +27,7 @@ struct TerminalHeaderView: View {
 
                 Text(session.title)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(Theme.headerInk(0.6, over: background))
                     .lineLimit(1)
 
                 breadcrumb
@@ -37,7 +45,7 @@ struct TerminalHeaderView: View {
         #if DEBUG
         // Overlaid so the badge never pushes the centered title off-axis.
         .overlay(alignment: .trailing) {
-            DevBadge()
+            DevBadge(onLight: background.isLight)
                 .frame(height: 22)
                 .padding(.trailing, 12)
         }
@@ -59,23 +67,24 @@ struct TerminalHeaderView: View {
         return HStack(spacing: 4) {
             Image(systemName: trail.rootIcon)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white.opacity(trail.segments.isEmpty ? 0.42 : 0.3))
+                .foregroundStyle(Theme.headerInk(trail.segments.isEmpty ? 0.42 : 0.3, over: background))
 
             if let rootLabel = trail.rootLabel {
                 Text(rootLabel)
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.42))
+                    .foregroundStyle(Theme.headerInk(0.42, over: background))
             }
 
             ForEach(Array(trail.segments.enumerated()), id: \.offset) { index, segment in
                 Image(systemName: "chevron.compact.right")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.18))
+                    .foregroundStyle(Theme.headerInk(0.18, over: background))
 
                 Text(segment)
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(
-                        index == trail.segments.count - 1 ? 0.42 : 0.28
+                    .foregroundStyle(Theme.headerInk(
+                        index == trail.segments.count - 1 ? 0.42 : 0.28,
+                        over: background
                     ))
                     .lineLimit(1)
             }
@@ -87,15 +96,26 @@ struct TerminalHeaderView: View {
 /// Marks a "Enso Nightly" window so it's never mistaken for the installed
 /// Enso while dogfooding. Debug builds only.
 private struct DevBadge: View {
+    /// True when the strip's fill (the terminal theme background) is light, so
+    /// the badge flips from its airy yellow (built for a dark strip) to a dark
+    /// amber that still reads as a warning chip but is visible on white.
+    let onLight: Bool
+
+    /// Yellow reads on a dark strip; on a light one it washes out, so switch to
+    /// a dark amber ink at comparable opacities.
+    private var accent: Color {
+        onLight ? Color(red: 0.42, green: 0.30, blue: 0) : .yellow
+    }
+
     var body: some View {
         Text("NIGHTLY")
             .font(.system(size: 9, weight: .bold, design: .monospaced))
             .tracking(0.8)
-            .foregroundStyle(Color.yellow.opacity(0.85))
+            .foregroundStyle(accent.opacity(0.85))
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color.yellow.opacity(0.12)))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.yellow.opacity(0.3), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 4).fill(accent.opacity(0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(accent.opacity(0.3), lineWidth: 1))
     }
 }
 #endif

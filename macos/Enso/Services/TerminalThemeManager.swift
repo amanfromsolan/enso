@@ -10,8 +10,13 @@ import SwiftUI
 ///     per-space overrides, and the "recent themes" list), and
 ///   - a small override config file under Application Support that is loaded
 ///     *after* the user's config whenever a `ghostty_config_t` is built, so
-///     Enso's `theme` key wins while everything else (fonts, keybinds, any
-///     explicitly set colors) stays the user's.
+///     Enso's keys win while everything else (fonts, keybinds, ...) stays the
+///     user's. Besides `theme` it restates the theme's own `background` and
+///     `foreground`, because ghostty lets an explicitly set color in the
+///     user's config outrank a theme's — restating them makes ordinary
+///     last-key-wins precedence apply the theme's colors anyway. It also
+///     pins `background-opacity = 1` (theme or not), so the terminal's
+///     rendered background exactly matches the chrome painted with it.
 ///
 /// Live application is real: changing the theme rebuilds the config and pushes
 /// it through `ghostty_app_update_config` / `ghostty_surface_update_config`
@@ -74,7 +79,14 @@ final class TerminalThemeManager: ObservableObject {
     /// the committed preference for the active space.
     func attach(to store: TerminalSessionStore) {
         self.store = store
-        apply(effectiveThemeName(forSpace: store.activeSpaceID))
+        // Unconditional write + reload, bypassing apply()'s no-change guard:
+        // the override file must exist even with no theme picked (it pins
+        // background-opacity), and one written by an older build may lack
+        // that key.
+        let name = effectiveThemeName(forSpace: store.activeSpaceID)
+        setAppliedName(name)
+        Self.writeOverrideFile(themeName: name)
+        GhosttyRuntime.shared.reloadConfig()
     }
 
     // MARK: - Preference
@@ -210,14 +222,33 @@ final class TerminalThemeManager: ObservableObject {
 
     private static func writeOverrideFile(themeName: String?) {
         let url = overrideFileURL
-        guard let themeName else {
-            try? FileManager.default.removeItem(at: url)
-            return
+        // Always written (theme or not): Enso needs the terminal fully
+        // opaque. The header strip is a flat fill of the theme background,
+        // and a user background-opacity < 1 shifts the rendered terminal a
+        // shade off that fill — visibly so on light themes. Translucency
+        // bought nothing here anyway: the surface sits on an opaque
+        // same-color container, never the desktop.
+        var lines = ["background-opacity = 1"]
+        if let themeName {
+            // Ghostty treats an explicit `background`/`foreground` in the
+            // user's config as outranking any theme's colors, regardless of
+            // where the `theme` key loads. Restating the theme's own values
+            // here turns that into plain last-key-wins precedence, so this
+            // file (loaded last) actually recolors the terminal even when
+            // the user pins those keys.
+            lines.append("theme = \(themeName)")
+            let colors = themeColors(named: themeName)
+            if let background = colors.background {
+                lines.append("background = \(background)")
+            }
+            if let foreground = colors.foreground {
+                lines.append("foreground = \(foreground)")
+            }
         }
         let contents = """
         # Managed by Enso. This is Enso's own layer over your Ghostty config;
         # your ~/.config/ghostty files are never modified.
-        theme = \(themeName)
+        \(lines.joined(separator: "\n"))
 
         """
         do {
@@ -297,6 +328,60 @@ final class TerminalThemeManager: ObservableObject {
             if blue != nil { break }
         }
         return blue ?? foreground
+    }
+
+    /// A theme's own `background`/`foreground`, as normalized `#rrggbb`
+    /// strings ready to be written into the override file. Parsed from the
+    /// bundled theme file once and cached (same pattern as accent colors).
+    private struct ThemeColors {
+        var background: String?
+        var foreground: String?
+    }
+
+    private static var themeColorsCache: [String: ThemeColors] = [:]
+
+    private static func themeColors(named name: String) -> ThemeColors {
+        if let cached = themeColorsCache[name] { return cached }
+        let colors = parseThemeColors(named: name)
+        themeColorsCache[name] = colors
+        return colors
+    }
+
+    private static func parseThemeColors(named name: String) -> ThemeColors {
+        var colors = ThemeColors()
+        guard
+            let url = themesDirectoryURL?.appendingPathComponent(name),
+            let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return colors }
+
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            guard parts.count == 2 else { continue }
+            switch parts[0] {
+            case "background" where colors.background == nil:
+                colors.background = normalizedHex(parts[1])
+            case "foreground" where colors.foreground == nil:
+                colors.foreground = normalizedHex(parts[1])
+            default:
+                break
+            }
+            if colors.background != nil, colors.foreground != nil { break }
+        }
+        return colors
+    }
+
+    /// Accepts `#1e1e2e`, `1e1e2e`, or either form in quotes; returns the
+    /// canonical `#rrggbb` ghostty accepts, or nil for anything else.
+    private static func normalizedHex(_ raw: String) -> String? {
+        var hex = raw
+        if hex.hasPrefix("\""), hex.hasSuffix("\""), hex.count >= 2 {
+            hex = String(hex.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, UInt32(hex, radix: 16) != nil else { return nil }
+        return "#" + hex.lowercased()
     }
 
     private static func color(fromHex string: String) -> Color? {

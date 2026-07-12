@@ -170,6 +170,7 @@ struct TerminalRootView: View {
 
                     // Mirror the root layout so the palette centers on the
                     // terminal column, not the whole window.
+                    let themeBrowsing = commandCenter.isThemeMode
                     HStack(spacing: 0) {
                         Color.clear
                             .frame(width: store.isSidebarVisible ? store.sidebarWidth : 0)
@@ -177,12 +178,27 @@ struct TerminalRootView: View {
 
                         // A fixed-height slot the card top-aligns into: the
                         // slot stays vertically centered, so the search bar
-                        // never moves as results grow or shrink.
+                        // never moves as results grow or shrink. While
+                        // browsing themes the slot slides to the column's
+                        // bottom-right corner instead, keeping the preview
+                        // tab's content readable behind it; stepping back
+                        // slides it home.
                         CommandCenterView(center: commandCenter)
-                            .frame(height: 480, alignment: .top)
-                            .padding(.bottom, 110)
-                            .frame(maxWidth: .infinity)
+                            // The card's children (the search field especially)
+                            // otherwise animate their geometry independently
+                            // and trail the slide; group them so the card
+                            // moves as one rigid unit.
+                            .geometryGroup()
+                            .frame(height: 480, alignment: themeBrowsing ? .bottom : .top)
+                            .padding(.bottom, themeBrowsing ? 24 : 110)
+                            .padding(.trailing, themeBrowsing ? 24 : 0)
+                            .frame(
+                                maxWidth: .infinity,
+                                maxHeight: .infinity,
+                                alignment: themeBrowsing ? .bottomTrailing : .center
+                            )
                     }
+                    .animation(.spring(duration: 0.22, bounce: 0.08), value: themeBrowsing)
                 }
             }
         }

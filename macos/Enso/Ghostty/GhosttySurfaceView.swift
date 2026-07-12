@@ -27,11 +27,11 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         }
     }
 
-    init(workingDirectory: String) {
+    init(workingDirectory: String, command: String? = nil) {
         // Non-zero initial frame so the renderer never sees empty bounds.
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         registerForDraggedTypes(Array(Self.dropTypes))
-        createSurface(workingDirectory: workingDirectory)
+        createSurface(workingDirectory: workingDirectory, command: command)
     }
 
     @available(*, unavailable)
@@ -39,7 +39,7 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         fatalError("init(coder:) is not supported")
     }
 
-    private func createSurface(workingDirectory: String) {
+    private func createSurface(workingDirectory: String, command: String?) {
         GhosttyRuntime.shared.ensureStarted()
         guard let app = GhosttyRuntime.shared.app else { return }
 
@@ -51,10 +51,24 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         config.userdata = Unmanaged.passUnretained(self).toOpaque()
         config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
 
+        // The C strings only need to outlive ghostty_surface_new: libghostty
+        // copies the config into the surface (upstream's SurfaceView scopes
+        // its strings the same way).
         let directory = (workingDirectory as NSString).expandingTildeInPath
         directory.withCString { directoryPtr in
             config.working_directory = directoryPtr
-            surface = ghostty_surface_new(app, &config)
+            if let command {
+                // libghostty runs this as a shell command string instead of
+                // spawning the user's shell (on macOS: wrapped in login(1) +
+                // `bash -c "exec -l …"`), and keeps the surface open after
+                // exit.
+                command.withCString { commandPtr in
+                    config.command = commandPtr
+                    surface = ghostty_surface_new(app, &config)
+                }
+            } else {
+                surface = ghostty_surface_new(app, &config)
+            }
         }
 
         if surface == nil {

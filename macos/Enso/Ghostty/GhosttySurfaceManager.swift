@@ -7,14 +7,26 @@ final class GhosttySurfaceManager {
     static let shared = GhosttySurfaceManager()
 
     private var views: [TerminalSession.ID: GhosttySurfaceView] = [:]
+    /// Commands to run instead of the user's shell, keyed by session. Surface
+    /// creation is lazy (it happens when SwiftUI first mounts the tab), so a
+    /// command registered right after creating the session always lands
+    /// before the surface spawns.
+    private var spawnCommands: [TerminalSession.ID: String] = [:]
 
     private init() {}
+
+    func setSpawnCommand(_ command: String, for sessionID: TerminalSession.ID) {
+        spawnCommands[sessionID] = command
+    }
 
     func view(for session: TerminalSession) -> GhosttySurfaceView {
         if let existing = views[session.id] {
             return existing
         }
-        let view = GhosttySurfaceView(workingDirectory: session.workingDirectory)
+        let view = GhosttySurfaceView(
+            workingDirectory: session.workingDirectory,
+            command: spawnCommands.removeValue(forKey: session.id)
+        )
         views[session.id] = view
         return view
     }

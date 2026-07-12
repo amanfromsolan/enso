@@ -281,6 +281,31 @@ final class TerminalSessionStore: ObservableObject {
         }
     }
 
+    /// The palette's theme picker judges live previews against this
+    /// disposable tab instead of whatever the user had open. Tracked so
+    /// persistence can exclude it: state.json saves on every mutation, and a
+    /// crash mid-pick must not resurrect the tab on the next launch.
+    private(set) var themePreviewSessionID: TerminalSession.ID?
+
+    @discardableResult
+    func createThemePreviewSession() -> TerminalSession.ID {
+        // titleOrigin .user pins the name against shell titles and auto-naming.
+        let session = TerminalSession(
+            title: "Terminal Preview",
+            titleOrigin: .user,
+            workingDirectory: NSHomeDirectory(),
+            accent: .cycling(index: sessions.count)
+        )
+        themePreviewSessionID = session.id
+        withSpace(activeSpaceID) { space in
+            space.ephemeralSessions.append(session)
+        }
+        selection = session.id
+        multiSelection = [session.id]
+        save()
+        return session.id
+    }
+
     func createFolder(inSpace spaceID: SidebarSpace.ID? = nil) {
         withSpace(spaceID ?? activeSpaceID) { space in
             space.pinnedFolders.append(TerminalFolder(title: "Folder \(space.pinnedFolders.count + 1)"))
@@ -427,6 +452,9 @@ final class TerminalSessionStore: ObservableObject {
         }
         _ = removeSessions(with: sessionIDs)
         multiSelection.subtract(sessionIDs)
+        if let previewID = themePreviewSessionID, sessionIDs.contains(previewID) {
+            themePreviewSessionID = nil
+        }
 
         if let selection, sessionIDs.contains(selection) {
             let remaining = activeSpace.sessions
@@ -774,7 +802,15 @@ final class TerminalSessionStore: ObservableObject {
     private func save() {
         guard persistToDisk else { return }
         withSpace(activeSpaceID) { $0.lastSelection = selection }
-        guard let data = try? JSONEncoder().encode(PersistedState(spaces: spaces)) else { return }
+        // The theme-preview tab is strictly session-only; persisting it would
+        // restore a dead "Terminal Preview" tab after a crash mid-pick.
+        var snapshot = spaces
+        if let previewID = themePreviewSessionID {
+            for index in snapshot.indices {
+                snapshot[index].ephemeralSessions.removeAll { $0.id == previewID }
+            }
+        }
+        guard let data = try? JSONEncoder().encode(PersistedState(spaces: snapshot)) else { return }
         try? data.write(to: Self.stateURL, options: .atomic)
     }
 }
