@@ -243,9 +243,16 @@ private struct NewSpaceTeaser: View {
     var body: some View {
         ZStack {
                 Circle()
-                    .fill(Color.black.opacity(0.45))
+                    // Dark keeps the original HUD-style black disc; a black
+                    // disc on the light sidebar reads as a heavy blot, so
+                    // light mode sinks a soft grey well instead (iconWell's
+                    // weight) and lets the ink glyph carry the contrast.
+                    .fill(Color(nsColor: Theme.dynamic(
+                        dark: NSColor(white: 0, alpha: 0.45),
+                        light: NSColor(white: 0, alpha: 0.12)
+                    )))
                 Circle()
-                    .stroke(Color.white.opacity(0.14), lineWidth: 2)
+                    .stroke(Theme.ink.opacity(0.14), lineWidth: 2)
                 Circle()
                     .trim(from: 0, to: progress)
                     .stroke(
@@ -255,7 +262,7 @@ private struct NewSpaceTeaser: View {
                     .rotationEffect(.degrees(-90))
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.35 + 0.65 * progress))
+                    .foregroundStyle(Theme.ink.opacity(0.35 + 0.65 * progress))
         }
         .frame(width: 30, height: 30)
         .scaleEffect(0.72 + 0.42 * progress)

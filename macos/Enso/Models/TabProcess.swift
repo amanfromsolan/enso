@@ -30,9 +30,11 @@ enum TabProcess: String, Hashable {
     var badge: Badge {
         switch self {
         case .claude: .asset("AgentClaude", Color(hex: 0xD97757))
-        case .codex: .asset("AgentCodex", Color.white.opacity(0.85))
+        // Codex and Ollama ship monochrome marks; ink keeps them legible on
+        // both the dark and the light sidebar (white there would vanish).
+        case .codex: .asset("AgentCodex", Theme.ink.opacity(0.85))
         case .gemini: .asset("AgentGemini", Color(hex: 0x8E75B2))
-        case .ollama: .asset("AgentOllama", Color.white.opacity(0.8))
+        case .ollama: .asset("AgentOllama", Theme.ink.opacity(0.8))
         case .editor: .symbol("square.and.pencil")
         case .remote: .symbol("network")
         case .git: .symbol("arrow.triangle.branch")
