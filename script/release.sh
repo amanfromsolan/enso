@@ -119,6 +119,12 @@ xcodebuild -project macos/Enso.xcodeproj -scheme Enso -configuration "$CONFIGURA
     ARCHS=arm64 \
     build | grep -E "error|warning: Signing|BUILD" || true
 
+# Bake this version's notes into the bundle: the command palette's
+# "What's New" reads Resources/ReleaseNotes.html so the changelog opens
+# on demand, offline. Injected before signing so the seal covers it.
+echo "==> Bundling release notes into the app"
+python3 script/release_notes.py "$NOTES_MD" > "$APP/Contents/Resources/ReleaseNotes.html"
+
 # Sparkle's nested helpers ship with upstream signatures; the notary service
 # requires every executable be signed by our Developer ID with a secure
 # timestamp. Re-sign inside-out (helpers -> framework -> app) so each outer

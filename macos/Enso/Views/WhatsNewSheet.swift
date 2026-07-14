@@ -2,9 +2,11 @@ import AppKit
 import SwiftUI
 
 /// Release-notes modal shown when an update is waiting: what changed in the
-/// new version, with Update Now / Skip This Version as the ways out.
-/// Presented as an owned in-window overlay (same chrome as
-/// SpaceEditorSheet), never a macOS sheet. Knows nothing about Sparkle —
+/// new version, with Update Now / Skip This Version as the ways out. The
+/// same sheet doubles as the on-demand changelog (command palette "What's
+/// New"), where there is nothing to install — the footer collapses to a
+/// lone Done button. Presented as an owned in-window overlay (same chrome
+/// as SpaceEditorSheet), never a macOS sheet. Knows nothing about Sparkle —
 /// it renders whatever Content it's handed.
 struct WhatsNewSheet: View {
     /// Mirrors the markdown the release notes are authored in: `##`
@@ -26,6 +28,10 @@ struct WhatsNewSheet: View {
     /// False when presented inside a native macOS sheet, which brings its
     /// own background, radius, and shadow.
     var ownsChrome: Bool = true
+    /// True when the notes belong to a pending update (Update Now / Skip
+    /// footer); false when they're the running version's own changelog,
+    /// opened on demand — nothing to install, so just a Done button.
+    var isUpdatePending: Bool = true
     let onUpdate: () -> Void
     let onSkip: () -> Void
     let onDismiss: () -> Void
@@ -50,9 +56,13 @@ struct WhatsNewSheet: View {
                     Text("What's New in Enso")
                         .font(.system(size: 18, weight: .semibold))
 
-                    Text("Version \(content.version) is ready to install.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                    Text(
+                        isUpdatePending
+                            ? "Version \(content.version) is ready to install."
+                            : "You're running version \(content.version)."
+                    )
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 24)  // keeps clear of the close button
@@ -89,22 +99,30 @@ struct WhatsNewSheet: View {
                 .padding(.bottom, 14)
 
             HStack(spacing: 8) {
-                Button("Skip This Version") {
-                    onSkip()
-                }
-                .buttonStyle(ModalSecondaryButtonStyle())
-
-                Button {
-                    onUpdate()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 12, weight: .bold))
-                        Text("Update Now")
+                if isUpdatePending {
+                    Button("Skip This Version") {
+                        onSkip()
                     }
+                    .buttonStyle(ModalSecondaryButtonStyle())
+
+                    Button {
+                        onUpdate()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("Update Now")
+                        }
+                    }
+                    .buttonStyle(ModalPrimaryButtonStyle(accent: .accentColor))
+                    .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Done") {
+                        onDismiss()
+                    }
+                    .buttonStyle(ModalPrimaryButtonStyle(accent: .accentColor))
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(ModalPrimaryButtonStyle(accent: .accentColor))
-                .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 18)
@@ -215,6 +233,12 @@ extension WhatsNewSheet.Content {
 
 #Preview("Typical") {
     WhatsNewSheet(content: .preview, onUpdate: {}, onSkip: {}, onDismiss: {})
+        .padding(60)
+        .background(.black)
+}
+
+#Preview("Changelog (current version)") {
+    WhatsNewSheet(content: .preview, isUpdatePending: false, onUpdate: {}, onSkip: {}, onDismiss: {})
         .padding(60)
         .background(.black)
 }

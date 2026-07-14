@@ -308,11 +308,15 @@ final class CommandCenter: ObservableObject {
         highlightedIndex = 0
     }
 
-    /// Fuzzy-filters items by title and sorts the survivors by score.
+    /// Fuzzy-filters items by title (and any hidden search aliases,
+    /// keeping the best score) and sorts the survivors by score.
     private static func filter(_ candidates: [PaletteItem], query: String) -> [PaletteItem] {
         candidates
             .compactMap { item -> (PaletteItem, Int)? in
-                guard let score = fuzzyScore(query: query, in: item.title) else { return nil }
+                let score = ([item.title] + item.searchAliases)
+                    .compactMap { fuzzyScore(query: query, in: $0) }
+                    .max()
+                guard let score else { return nil }
                 return (item, score)
             }
             .sorted { $0.1 > $1.1 }
@@ -531,6 +535,22 @@ final class CommandCenter: ObservableObject {
             store?.isSidebarVisible = true
             UpdateController.shared.checkForUpdates()
         })
+
+        // On-demand changelog: reopens the What's New sheet with the
+        // running version's notes. Hidden when the build carries none
+        // (installs predating the bundled-notes pipeline).
+        if UpdateController.shared.currentVersionNotes != nil {
+            commands.append(PaletteItem(
+                id: "cmd-whats-new",
+                icon: .symbol("sparkles"),
+                title: "What's New",
+                context: "Version \(UpdateController.shared.currentVersion)",
+                verb: "Open",
+                searchAliases: ["Changelog", "Release Notes"]
+            ) {
+                UpdateController.shared.showChangelog()
+            })
+        }
 
         commands.append(PaletteItem(
             id: "cmd-toggle-appearance",
@@ -763,6 +783,9 @@ struct PaletteItem: Identifiable {
     /// A dimmed suffix after the title naming the result kind ("Tab"),
     /// shown when a bare title is ambiguous among mixed results.
     var kindLabel: String? = nil
+    /// Hidden synonyms the fuzzy filter also scores, so searches like
+    /// "changelog" land on a command titled "What's New". Never displayed.
+    var searchAliases: [String] = []
     /// Items that transition the palette (rename mode) instead of acting.
     var keepsOpen: Bool = false
     let perform: () -> Void

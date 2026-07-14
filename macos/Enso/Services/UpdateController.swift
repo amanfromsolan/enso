@@ -28,13 +28,47 @@ final class UpdateController: NSObject, ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
 
+    /// Which notes the What's New sheet is presenting: the pending
+    /// update's (sidebar card flow, with Update Now / Skip) or the running
+    /// version's own changelog (command palette, read-only).
+    enum WhatsNewMode {
+        case pendingUpdate
+        case currentVersion
+    }
+
     /// Parsed release notes for the pending update (nil when the appcast
     /// had none worth showing); drives the card's "What's New" button.
     @Published private(set) var releaseNotes: WhatsNewSheet.Content?
     @Published var isShowingWhatsNew = false
+    @Published private(set) var whatsNewMode: WhatsNewMode = .pendingUpdate
 
     let currentVersion =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+
+    /// The running version's own release notes, read from ReleaseNotes.html
+    /// that script/release.sh bakes into the bundle. Nil when nothing is
+    /// bundled (installs predating the changelog command), in which case
+    /// the palette hides its "What's New" entry. Debug builds fall back to
+    /// the canned scaffold notes so the flow stays exercisable from Xcode.
+    lazy var currentVersionNotes: WhatsNewSheet.Content? = {
+        if let url = Bundle.main.url(forResource: "ReleaseNotes", withExtension: "html"),
+           let html = try? String(contentsOf: url, encoding: .utf8) {
+            return ReleaseNotesParser.parse(html: html, version: currentVersion)
+        }
+        #if DEBUG
+        return ReleaseNotesParser.parse(html: Self.debugNotesHTML, version: currentVersion)
+        #else
+        return nil
+        #endif
+    }()
+
+    /// What the sheet should render right now, per the mode it was opened in.
+    var presentedWhatsNewNotes: WhatsNewSheet.Content? {
+        switch whatsNewMode {
+        case .pendingUpdate: releaseNotes
+        case .currentVersion: currentVersionNotes
+        }
+    }
 
     private var updater: SPUUpdater?
     /// Pending Sparkle replies; the card's buttons consume them.
@@ -82,6 +116,16 @@ final class UpdateController: NSObject, ObservableObject {
 
     func showWhatsNew() {
         guard releaseNotes != nil else { return }
+        whatsNewMode = .pendingUpdate
+        isShowingWhatsNew = true
+    }
+
+    /// Command palette "What's New": the running version's changelog on
+    /// demand — always what *you* have, never the pending update's notes
+    /// (those stay behind the card's button).
+    func showChangelog() {
+        guard currentVersionNotes != nil else { return }
+        whatsNewMode = .currentVersion
         isShowingWhatsNew = true
     }
 
@@ -127,6 +171,7 @@ final class UpdateController: NSObject, ObservableObject {
         // ENSO_WHATS_NEW=sheet lands straight in the sheet (design
         // iteration without reaching for the card's button).
         if ProcessInfo.processInfo.environment["ENSO_WHATS_NEW"] == "sheet" {
+            whatsNewMode = .pendingUpdate
             isShowingWhatsNew = true
         }
     }

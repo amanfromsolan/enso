@@ -228,9 +228,11 @@ struct TerminalRootView: View {
         // native sheets were tried and rejected (animation too slow, scrim
         // unfixably light-on-light, no styling knobs). Update Now / Skip
         // This Version reply to Sparkle through the controller; close just
-        // tucks the sheet away, card stays.
+        // tucks the sheet away, card stays. The palette's "What's New"
+        // command reuses the sheet in changelog mode: the running
+        // version's notes, no update buttons.
         .overlay {
-            if updateController.isShowingWhatsNew, let notes = updateController.releaseNotes {
+            if updateController.isShowingWhatsNew, let notes = updateController.presentedWhatsNewNotes {
                 ZStack {
                     Color.black.opacity(0.5)
                         .contentShape(Rectangle())
@@ -241,7 +243,10 @@ struct TerminalRootView: View {
                             removal: .opacity.animation(.easeOut(duration: 0.07))
                         ))
 
-                    WhatsNewSheet(content: notes) {
+                    WhatsNewSheet(
+                        content: notes,
+                        isUpdatePending: updateController.whatsNewMode == .pendingUpdate
+                    ) {
                         updateController.installNow()
                         restoreTerminalFocus()
                     } onSkip: {
