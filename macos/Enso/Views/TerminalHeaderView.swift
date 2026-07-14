@@ -13,9 +13,16 @@ struct TerminalHeaderView: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 8) {
-                Circle()
-                    .fill(session.accent.color.opacity(0.8))
-                    .frame(width: 6, height: 6)
+                // Leading slot mirrors the sidebar row: the detected-process
+                // badge supplants the accent dot while something known is
+                // running; idle tabs keep today's dot — never an empty slot.
+                if let process = session.runningProcess {
+                    HeaderProcessBadge(process: process, ink: terminalInk)
+                } else {
+                    Circle()
+                        .fill(session.accent.color.opacity(0.8))
+                        .frame(width: 6, height: 6)
+                }
 
                 Text(session.title)
                     .font(.system(size: 12, weight: .medium))
@@ -51,6 +58,14 @@ struct TerminalHeaderView: View {
         .background(WindowDragHandle())
     }
 
+    /// Ink for the process badge. The header sits on the Ghostty theme
+    /// background, not the app chrome, so the tint keys off that color's
+    /// luminance rather than the SwiftUI colorScheme: a light terminal
+    /// theme gets dark ink, a dark theme light ink.
+    private var terminalInk: Color {
+        GhosttyRuntime.shared.themeBackground.relativeLuminance > 0.179 ? .black : .white
+    }
+
     // MARK: - Breadcrumb
 
     private var breadcrumb: some View {
@@ -80,6 +95,60 @@ struct TerminalHeaderView: View {
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// Detected-process icon in the header's leading slot — the header twin of
+/// the sidebar's ProcessBadgeView, but tinted for the terminal background:
+/// brand colors and tab accents are tuned for the app chrome, so everything
+/// here renders in the luminance-derived ink at a subdued opacity to stay
+/// legible and quiet on any Ghostty theme.
+///
+/// Integration note: when TabProcess.Badge grows a full-color
+/// `.artwork(name)` case, add it to this switch rendering the image with no
+/// template tinting (full color on light and dark alike) and opacity-only
+/// dimming, e.g. `Image(name).resizable().aspectRatio(contentMode: .fit)
+/// .opacity(0.85).frame(width: 14, height: 14)`.
+private struct HeaderProcessBadge: View {
+    let process: TabProcess
+    let ink: Color
+
+    var body: some View {
+        switch process.badge {
+        case .artwork(let name):
+            Image(name)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .opacity(0.85)
+                .frame(width: 14, height: 14)
+        case .asset(let name, _):
+            Image(name)
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(ink.opacity(0.6))
+                .frame(width: 12, height: 12)
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(ink.opacity(0.6))
+        }
+    }
+}
+
+private extension Color {
+    /// WCAG relative luminance (sRGB, linearized). Used to pick dark vs
+    /// light ink against the terminal background; the 0.179 threshold is
+    /// where black and white text reach equal contrast.
+    var relativeLuminance: Double {
+        guard let srgb = NSColor(self).usingColorSpace(.sRGB) else { return 0 }
+        func lin(_ channel: CGFloat) -> Double {
+            let c = Double(channel)
+            return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * lin(srgb.redComponent)
+            + 0.7152 * lin(srgb.greenComponent)
+            + 0.0722 * lin(srgb.blueComponent)
     }
 }
 
