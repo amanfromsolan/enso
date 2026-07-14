@@ -387,32 +387,36 @@ final class CommandCenter: ObservableObject {
         section: PaletteItem.Section = .commands
     ) -> [PaletteItem] {
         var items: [PaletteItem] = []
-        items.append(PaletteItem(
-            id: "cmd-new-tab",
-            icon: .symbol("plus.square"),
-            title: "New Tab",
-            context: nil,
-            verb: "Open",
-            section: section
-        ) { [weak store] in
-            store?.createSession(workingDirectory: NSHomeDirectory())
-        })
-        if let selection = store.selection,
-           let folder = Self.folder(of: selection, in: store.activeSpace) {
+        let folder = store.selection.flatMap { Self.folder(of: $0, in: store.activeSpace) }
+        if let folder {
             // The selected tab lives in a sidebar folder: new siblings go
-            // into that folder.
+            // into that folder. First on the empty sheet (#28) — ⌘T ↵ is
+            // "another terminal for this project" — and named for the
+            // folder so the destination reads without thinking.
             items.append(PaletteItem(
                 id: "cmd-new-tab-folder",
                 icon: .symbol("folder.badge.plus"),
-                title: "New Tab in Current Folder",
-                context: folder.title,
-                contextSymbol: "folder",
+                title: "New Tab in \(folder.title)",
+                context: nil,
                 verb: "Open",
                 section: section
             ) { [weak store] in
                 store?.createSession(inFolder: folder.id)
             })
-        } else if let current = store.selectedSession {
+        }
+        // Plain "New Tab": the top entry for loose tabs; behind the folder
+        // entry it's the deliberate top-level escape hatch.
+        items.append(PaletteItem(
+            id: "cmd-new-tab",
+            icon: .symbol("plus.square"),
+            title: "New Tab",
+            context: folder == nil ? nil : "Top Level",
+            verb: "Open",
+            section: section
+        ) { [weak store] in
+            store?.createSession(workingDirectory: NSHomeDirectory())
+        })
+        if folder == nil, let current = store.selectedSession {
             // Loose tab: "folder" means the working directory instead.
             let cwd = current.workingDirectory
             items.append(PaletteItem(

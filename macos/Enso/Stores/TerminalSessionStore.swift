@@ -176,12 +176,28 @@ final class TerminalSessionStore: ObservableObject {
         !spaces.contains { $0.ephemeralSessions.contains { $0.id == sessionID } }
     }
 
+    /// The folder the selected tab is filed under, if any. New tabs inherit
+    /// it (#28), so "another terminal for this project" is one keystroke.
+    var selectionFolder: TerminalFolder? {
+        guard let selection else { return nil }
+        return spaces
+            .flatMap(\.pinnedFolders)
+            .first { $0.sessions.contains { $0.id == selection } }
+    }
+
     // MARK: - Creation
 
-    /// ⌘N and the command center default: new terminals continue in the
-    /// selected tab's working directory rather than resetting to home.
+    /// ⌘N and the command center default: new terminals join the active
+    /// tab's folder (#28) and continue in its working directory rather than
+    /// resetting to home. A loose tab keeps today's behavior — a new
+    /// top-level tab. The deliberate top-level door stays open via ⌥⌘N and
+    /// the sidebar's root-level "New Terminal".
     func createSessionInheritingWorkingDirectory() {
-        createSession(workingDirectory: selectedSession?.workingDirectory)
+        if let folder = selectionFolder {
+            createSession(inFolder: folder.id, workingDirectory: selectedSession?.workingDirectory)
+        } else {
+            createSession(workingDirectory: selectedSession?.workingDirectory)
+        }
     }
 
     func createSession(inSpace spaceID: SidebarSpace.ID? = nil, workingDirectory: String? = nil) {
@@ -250,15 +266,18 @@ final class TerminalSessionStore: ObservableObject {
         createSession(workingDirectory: workingDirectory)
     }
 
-    /// New terminal inside a folder, continuing in the working directory of
-    /// the folder's most recently active tab (home for an empty folder).
-    func createSession(inFolder folderID: TerminalFolder.ID) {
+    /// New terminal inside a folder. Continues in the given working
+    /// directory when one is passed (⌘N inheriting the active tab's cwd);
+    /// otherwise in the working directory of the folder's most recently
+    /// active tab (home for an empty folder).
+    func createSession(inFolder folderID: TerminalFolder.ID, workingDirectory: String? = nil) {
         for spaceIndex in spaces.indices {
             guard let folderIndex = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == folderID }) else {
                 continue
             }
             let folder = spaces[spaceIndex].pinnedFolders[folderIndex]
-            let cwd = folder.sessions.max(by: { $0.lastActivity < $1.lastActivity })?.workingDirectory
+            let cwd = workingDirectory
+                ?? folder.sessions.max(by: { $0.lastActivity < $1.lastActivity })?.workingDirectory
             let session = Self.makeSession(workingDirectory: cwd, accentIndex: sessions.count)
             spaces[spaceIndex].pinnedFolders[folderIndex].sessions.append(session)
             if spaces[spaceIndex].id != activeSpaceID {
