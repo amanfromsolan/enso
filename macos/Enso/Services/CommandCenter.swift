@@ -112,8 +112,20 @@ final class CommandCenter: ObservableObject {
         isOpen = false
         mode = .search
         removeMonitorWhenDrained()
-        // Hand the keyboard back to the visible terminal.
-        GhosttySurfaceManager.shared.restoreFocus(to: store?.selection)
+        // Hand the keyboard back to the visible terminal — but resolve
+        // which terminal a turn later, not now. execute() closes the
+        // palette first and runs the command after, and commands that
+        // create or reveal a tab move the selection: an eager read aims
+        // the restore at the old tab, whose surface may already be
+        // detached from the window when the attempt fires (issue #21).
+        // The extra turn also lets SwiftUI finish tearing down the
+        // palette's focused search field, which clears first responder
+        // as it unwinds and would wipe an immediate grab — the same race
+        // the open path defers around when it focuses the field.
+        let store = store
+        DispatchQueue.main.async {
+            GhosttySurfaceManager.shared.restoreFocus(to: store?.selection)
+        }
     }
 
     func execute(_ index: Int) {
