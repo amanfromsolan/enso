@@ -223,6 +223,16 @@ if [[ "$CHANNEL" == "next" ]]; then
         "$APPCAST_DIR/$APPCAST_NAME" \
         --repo "$REPO" \
         --clobber
+    # --clobber only replaces same-named assets, and each DMG's name embeds
+    # its version — prune everything except this build's pair so the rolling
+    # release doesn't accumulate old DMGs. Their canonical home stays the
+    # versioned v<version> prerelease, which the appcast enclosures use.
+    gh release view next --repo "$REPO" --json assets --jq '.assets[].name' \
+        | while read -r ASSET; do
+            if [[ "$ASSET" != "$DMG_BASENAME" && "$ASSET" != "$APPCAST_NAME" ]]; then
+                gh release delete-asset next "$ASSET" --repo "$REPO" --yes
+            fi
+        done
 fi
 
 echo "==> Done: https://github.com/$REPO/releases/tag/v$VERSION"
