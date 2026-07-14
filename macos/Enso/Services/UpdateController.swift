@@ -56,7 +56,7 @@ final class UpdateController: NSObject, ObservableObject {
             hostBundle: .main,
             applicationBundle: .main,
             userDriver: self,
-            delegate: nil
+            delegate: self
         )
         do {
             try updater.start()
@@ -159,6 +159,19 @@ final class UpdateController: NSObject, ObservableObject {
             guard let self, self.phase == .upToDate else { return }
             self.phase = .idle
         }
+    }
+}
+
+// MARK: - SPUUpdaterDelegate
+
+extension UpdateController: @preconcurrency SPUUpdaterDelegate {
+    /// The Next channel (bundle id suffix ".next") updates from its own
+    /// appcast on the rolling `next` GitHub release; stable falls through
+    /// (nil) to the SUFeedURL in Info.plist. Runtime override beats Info.plist
+    /// preprocessing: one plist serves every configuration.
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        guard Bundle.main.bundleIdentifier?.hasSuffix(".next") == true else { return nil }
+        return "https://github.com/amanfromsolan/enso/releases/download/next/enso-next-appcast.xml"
     }
 }
 

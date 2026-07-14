@@ -7,31 +7,60 @@
 
 import SwiftUI
 
-/// Root Application Support directory for this build identity. The debug
-/// build ("Enso Nightly") runs alongside the installed release Enso, and two
-/// live apps sharing state.json is last-writer-wins data loss — whichever
-/// saves second silently erases the other's tabs. So each identity gets its
-/// own folder; the nightly seeds itself once with a COPY of the release
-/// state so dev builds start from real tabs without ever writing back.
+/// Root Application Support directory for this build identity. Three build
+/// identities can run side by side — Dev (debug builds), Next (the
+/// pre-release channel), and stable Enso — and two live apps sharing
+/// state.json is last-writer-wins data loss: whichever saves second silently
+/// erases the other's tabs. So each identity gets its own folder; Dev and
+/// Next seed themselves once with a COPY of the stable release's state so
+/// they start from real tabs without ever writing back.
 enum EnsoAppSupport {
-    static let directory: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    /// Folder name for this build identity. Debug builds are "Enso Dev"
+    /// (compile-time — they keep the .debug bundle id). Release-family
+    /// builds distinguish Next from stable at runtime by bundle id suffix,
+    /// since ReleaseNext compiles without DEBUG.
+    static let folderName: String = {
         #if DEBUG
-        let dir = appSupport.appendingPathComponent("Enso Nightly", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let releaseState = appSupport.appendingPathComponent("Enso/state.json")
-            if FileManager.default.fileExists(atPath: releaseState.path) {
-                try? FileManager.default.copyItem(
-                    at: releaseState,
-                    to: dir.appendingPathComponent("state.json")
-                )
+        return "Enso Dev"
+        #else
+        if Bundle.main.bundleIdentifier?.hasSuffix(".next") == true {
+            return "Enso Next"
+        }
+        return "Enso"
+        #endif
+    }()
+
+    static let directory: URL = {
+        let fm = FileManager.default
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = appSupport.appendingPathComponent(folderName, isDirectory: true)
+
+        // Stable keeps its historical behavior untouched (no eager create,
+        // no seeding — TerminalSessionStore owns that path's lifecycle).
+        guard folderName != "Enso" else { return dir }
+
+        if !fm.fileExists(atPath: dir.path) {
+            #if DEBUG
+            // One-time migration: debug builds were "Enso Nightly" before
+            // the Dev rename. MOVE the old folder so existing dev state
+            // (tabs, agent sessions, shims) survives the rename.
+            let legacy = appSupport.appendingPathComponent("Enso Nightly", isDirectory: true)
+            if fm.fileExists(atPath: legacy.path) {
+                try? fm.moveItem(at: legacy, to: dir)
+            }
+            #endif
+            if !fm.fileExists(atPath: dir.path) {
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                let releaseState = appSupport.appendingPathComponent("Enso/state.json")
+                if fm.fileExists(atPath: releaseState.path) {
+                    try? fm.copyItem(
+                        at: releaseState,
+                        to: dir.appendingPathComponent("state.json")
+                    )
+                }
             }
         }
         return dir
-        #else
-        return appSupport.appendingPathComponent("Enso", isDirectory: true)
-        #endif
     }()
 }
 

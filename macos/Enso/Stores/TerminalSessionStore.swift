@@ -728,9 +728,10 @@ final class TerminalSessionStore: ObservableObject {
 
     private static var stateURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        // Per-build-identity folder (debug builds get "Enso Nightly") so a
-        // nightly running alongside the installed Enso can't clobber its
-        // state.json — two live writers is last-writer-wins data loss.
+        // Per-build-identity folder (debug builds get "Enso Dev", the Next
+        // channel gets "Enso Next") so a dev or Next build running alongside
+        // the installed Enso can't clobber its state.json — two live writers
+        // is last-writer-wins data loss.
         let base = EnsoAppSupport.directory
 
         // One-time migration from a prior app identity, most recent first:

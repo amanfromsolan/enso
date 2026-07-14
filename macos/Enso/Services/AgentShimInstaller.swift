@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Rewrites ~/Library/Application Support/Enso/shims/bin/ from the bundled
+/// Rewrites <EnsoAppSupport.directory>/shims/bin/ from the bundled
 /// wrapper scripts at every launch — skipped when the version stamp already
 /// matches — so the installed shims always match the running app. Not under
 /// TMPDIR: macOS purges /var/folders entries not accessed for a few days.

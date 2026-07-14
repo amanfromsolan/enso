@@ -84,11 +84,11 @@ struct TerminalHeaderView: View {
 }
 
 #if DEBUG
-/// Marks a "Enso Nightly" window so it's never mistaken for the installed
+/// Marks an "Enso Dev" window so it's never mistaken for the installed
 /// Enso while dogfooding. Debug builds only.
 private struct DevBadge: View {
     var body: some View {
-        Text("NIGHTLY")
+        Text("DEV")
             .font(.system(size: 9, weight: .bold, design: .monospaced))
             .tracking(0.8)
             .foregroundStyle(Color.yellow.opacity(0.85))
