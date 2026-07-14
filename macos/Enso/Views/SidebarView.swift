@@ -885,18 +885,21 @@ private struct SpacePage: View {
                 .opacity(dropTargetID == session.id && draggedFolderID == nil ? 1 : 0)
 
             HStack(spacing: 8) {
-                // Uniform slot: spinner while naming, detected-process badge
-                // when something known is running, accent dot otherwise.
+                // Uniform slot: detected-process badge when something known
+                // is running, spinner while naming, accent dot otherwise.
+                // The badge outranks the spinner: auto-naming fires on a
+                // tab's first real command, and hiding the fresh badge
+                // behind the spinner read as the icon skipping that command.
                 Group {
-                    if namer.namingSessions.contains(session.id) {
-                        AutoNamingIndicator()
-                            .frame(width: 8, height: 8)
-                    } else if let process = session.runningProcess {
+                    if let process = session.runningProcess {
                         ProcessBadgeView(
                             process: process,
                             accent: session.accent.color,
                             isSelected: isSelected
                         )
+                    } else if namer.namingSessions.contains(session.id) {
+                        AutoNamingIndicator()
+                            .frame(width: 8, height: 8)
                     } else {
                         Circle()
                             // The 0.55 wash reads right on dark; on the

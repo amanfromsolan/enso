@@ -69,10 +69,10 @@ enum TabProcess: String, Hashable {
 
     /// Next detected process given a new title event. Titles come in three
     /// shapes: a command line from shell preexec ("claude --continue"), an
-    /// idle prompt (shell name or a path), or a foreign title an app set
+    /// idle prompt (shell name or the cwd), or a foreign title an app set
     /// itself (Claude Code retitles constantly). Commands match, idle
     /// clears, foreign titles keep the current detection — that stickiness
-    /// is what survives an agent's own retitling.
+    /// is what survives an agent's own retitling while it is still running.
     static func detect(after current: TabProcess?, title: String) -> TabProcess? {
         guard let firstWord = title.split(separator: " ").first else { return current }
         let command = (String(firstWord) as NSString).lastPathComponent.lowercased()
@@ -80,10 +80,19 @@ enum TabProcess: String, Hashable {
         if let match = commands[command] {
             return match
         }
-        if idleShells.contains(command) || command.hasPrefix("~") || firstWord.hasPrefix("/") {
+        if idleShells.contains(command) || isPathShaped(firstWord) {
             return nil
         }
         return current
+    }
+
+    /// Shell-integration prompts report the cwd as the title, in every
+    /// shape the shell prints it: "~", "~/a/b", "/x/y", or ghostty's
+    /// "…/a/b/c" shortening for deep paths. A path-shaped title that didn't
+    /// match a known command means the shell is back at an idle prompt —
+    /// this is what clears the badge when an agent or tool exits.
+    private static func isPathShaped(_ word: Substring) -> Bool {
+        word.hasPrefix("~") || word.hasPrefix("/") || word.hasPrefix("…")
     }
 }
 
