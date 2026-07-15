@@ -1,15 +1,15 @@
 <div align="center">
   <img src="docs/icon.png" width="128" alt="Enso icon" />
   <h1>Enso</h1>
-  <p><strong>A macOS terminal built for the agent era.</strong></p>
+  <p><strong>The terminal that keeps itself organized.</strong></p>
   <p>
     <img src="https://img.shields.io/badge/platform-macOS-6fa8ff" alt="macOS" />
     <img src="https://img.shields.io/badge/built%20on-libghostty-ff7eb6" alt="libghostty" />
-    <img src="https://img.shields.io/badge/Swift-SwiftUI-ffb454" alt="SwiftUI" />
+    <img src="https://img.shields.io/github/v/release/amanfromsolan/enso?color=ffb454&label=release" alt="latest release" />
   </p>
 </div>
 
-Enso is a fast, keyboard-first terminal for people who run a lot of tabs — especially tabs full of AI agents. GPU-accelerated rendering by [libghostty](https://github.com/ghostty-org/ghostty), native SwiftUI chrome, and a sidebar that actually understands what's running inside each tab.
+Enso is a native macOS terminal. Tabs show what's actually running in them, with names and icons instead of `zsh · 80×24`. Workspaces keep projects apart, the command palette finds everything, and it's all GPU-fast thanks to [libghostty](https://github.com/ghostty-org/ghostty). If you run AI coding agents all day, Enso is especially good at that.
 
 ![Enso screenshot](docs/screenshot.png)
 
