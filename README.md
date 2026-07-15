@@ -21,13 +21,19 @@ Enso is a native macOS terminal. Tabs show what's actually running in them, with
 
 ## Highlights
 
-- **🪷 Spaces** — swipeable sidebar workspaces with their own tabs, folders, and pinned sessions. Overswipe past the last space to create a new one.
-- **⌘T Command Center** — one fuzzy palette across tabs, spaces, and commands. `⌘1–9` quick-select, inline rename for tabs and spaces, and actions like Duplicate Tab, Close Others, Copy CWD, Open in Finder.
-- **⌃Tab switcher** — most-recently-used tab cycling with a live-preview HUD, like app switching but for terminals.
-- **✨ AI tab naming** — a cheap LLM call names your tabs from what's actually happening in them ("fix rate limiter", not "zsh"). Bring your own CLI: Claude, Codex, Gemini, or any custom command. Gradient shimmer while it thinks. Manual renames are sacred and never overwritten.
-- **🕵️ Live process icons** — tabs show what they're running: Claude, Codex, Gemini, and Ollama get their real logos; vim, ssh, git, docker & friends get glyphs; idle shells get a quiet accent dot.
-- **🧭 Live breadcrumb** — the titlebar tracks your shell's working directory as you `cd`.
-- **📌 Tab lifecycle** — pin tabs to keep them forever, group them into folders; unpinned tabs quietly expire after 24h so the sidebar never rots.
+- **🪷 Spaces:** swipeable workspaces in the sidebar, each with its own tabs and folders. Swipe past the last one to create a new one.
+
+- **🕵️ Icons for what's running:** Claude, Codex, Gemini, and Ollama show their real logos; vim, ssh, git, and docker get glyphs; idle shells show a default terminal icon.
+
+- **🔁 Tabs that survive a restart:** tabs running Claude or Codex pick up right where they left off after a relaunch.
+
+- **⌘T Command palette:** every tab, space, and command in one search. Jump with `⌘1–9`, rename inline, duplicate, close others, open in Finder.
+
+- **⌃Tab switcher:** flip through your recent tabs with a live preview, like the app switcher but for terminals.
+
+- **🌗 Feels like a Mac app:** native SwiftUI chrome that follows your system's light or dark look, while the terminal keeps your Ghostty theme.
+
+- **📌 A sidebar that never rots:** pin tabs to keep them forever, group them into folders, double-click to rename. Unpinned tabs quietly expire after 24 hours.
 
 ## Keyboard
 
