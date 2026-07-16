@@ -129,37 +129,6 @@ final class SidebarScrollDriver {
     }
 }
 
-/// A sidebar row's participation in the drag flow: its uniform top gap, the
-/// drop gap that opens above it while a drag hovers, and the plucked state
-/// that collapses it out of the list while it's the one being dragged.
-struct SidebarRowFlowModifier: ViewModifier {
-    /// The uniform gap between all sidebar rows.
-    static let rowGap: CGFloat = 4
-    /// One row height: what the list parts by to make space for a drop.
-    static let dropGap: CGFloat = 30
-
-    let plucked: Bool
-    let gapOpen: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .frame(height: plucked ? 0 : nil, alignment: .top)
-            // Clip only while plucked (the huge negative inset is a no-op
-            // otherwise, so selected-row shadows stay intact). A structural
-            // if/else here would swap the view's identity and could kill an
-            // in-flight drag whose source this row is.
-            .clipShape(Rectangle().inset(by: plucked ? 0 : -2000))
-            .opacity(plucked ? 0 : 1)
-            .allowsHitTesting(!plucked)
-            // The padding must sit outside a geometry group: a padding
-            // change inside the row would re-layout the HStack and animate
-            // the icon and label independently, drifting at different
-            // speeds. Grouped, the content rides the gap as one rigid unit.
-            .geometryGroup()
-            .padding(.top, plucked ? 0 : Self.rowGap + (gapOpen ? Self.dropGap : 0))
-    }
-}
-
 extension NSItemProvider {
     /// The plain-text payload of a sidebar drag item, for
     /// `SidebarDragPayload.decode`.

@@ -307,13 +307,6 @@ private struct SpacePage: View {
     /// Folders sprung open by hover during this drag; the ones that don't
     /// receive the drop fold back when it ends.
     @State private var autoExpandedDuringDrag: [TerminalFolder.ID] = []
-    /// Rows plucked out of the flow for the drag: they collapse to zero
-    /// height so the list closes ranks, and spring back at end-of-drag.
-    @State private var pluckedRowIDs: Set<UUID> = []
-    /// One-frame switch for the drop commit: the reorder moves zero-height
-    /// rows, so it must not animate — animating it would slide the dropped
-    /// row from its old slot instead of landing it at the drop point.
-    @State private var suppressLayoutAnimation = false
     /// SwiftUI has no end-of-drag callback, so a slow watcher polls the
     /// mouse button during a tracked drag; button-up with no drop delivered
     /// means the drag was cancelled (ESC, or released outside any target).
@@ -339,10 +332,8 @@ private struct SpacePage: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
-            .animation(suppressLayoutAnimation ? nil : .snappy(duration: 0.22), value: rowLayout)
+            .animation(.snappy(duration: 0.22), value: rowLayout)
             .animation(.snappy(duration: 0.22), value: store.collapsedFolderIDs)
-            .animation(.spring(duration: 0.25, bounce: 0), value: pluckedRowIDs)
-            .animation(.spring(duration: 0.25, bounce: 0), value: dropProposal?.gapRowID)
             // Behind the rows, so it only catches clicks on empty sidebar
             // space — row clicks never race it into cancelling a rename.
             .background(
@@ -807,11 +798,8 @@ private struct SpacePage: View {
                 dragPreviewPill(icon: "FolderClosed16", title: folder.title)
             }
             .background(rowFrameReporter(folder.id))
-            // The same uniform row gap (and drop-gap swell) as sessionRow.
-            .modifier(SidebarRowFlowModifier(
-                plucked: pluckedRowIDs.contains(folder.id),
-                gapOpen: dropProposal?.gapRowID == folder.id
-            ))
+            // The same uniform row gap as sessionRow.
+            .padding(.top, SpacePage.rowGap)
 
             // Children live in a container that collapses to zero height and
             // clips, so rows disappear into the folder instead of floating.
@@ -966,12 +954,8 @@ private struct SpacePage: View {
         .background(rowFrameReporter(session.id))
         // Every sidebar row spaces itself with the same top gap, so the
         // rhythm is uniform across tabs and folders and drag hit-areas stay
-        // contiguous. The gap sits outside the reported frame, and swells
-        // to make space when the drop gap opens above this row.
-        .modifier(SidebarRowFlowModifier(
-            plucked: pluckedRowIDs.contains(session.id),
-            gapOpen: dropProposal?.gapRowID == session.id
-        ))
+        // contiguous. The gap sits outside the reported frame.
+        .padding(.top, SpacePage.rowGap)
         .onChange(of: renameFieldFocused) { _, focused in
             if !focused, renamingSessionID == session.id {
                 commitRename(session)
@@ -1132,6 +1116,9 @@ private struct SpacePage: View {
 
     private static let dropSpaceName = "sidebarDropSpace"
 
+    /// The uniform gap between all sidebar rows.
+    private static let rowGap: CGFloat = 4
+
     /// The sidebar's visual order, flattened; shared by drop projection and
     /// selection ranges.
     private var flatRows: [SidebarFlatRow] {
@@ -1151,38 +1138,23 @@ private struct SpacePage: View {
         }
     }
 
-    /// Where the insertion line renders, in live coordinates. Proposals are
-    /// resolved in gap-free space; when a drop gap is open, the line sits
-    /// centered in it, riding the gap row's live frame as it animates.
-    private var indicatorLineGeometry: (y: CGFloat, minX: CGFloat, maxX: CGFloat)? {
-        guard let proposal = dropProposal,
-              case .line(let y, let minX, let maxX) = proposal.indicator else { return nil }
-        if let gapID = proposal.gapRowID, let gapFrame = rowFrames[gapID] {
-            let gapHeight = SidebarRowFlowModifier.dropGap + SidebarRowFlowModifier.rowGap
-            return (gapFrame.minY - gapHeight / 2, minX, maxX)
-        }
-        return (y, minX, maxX)
-    }
-
     /// The single insertion indicator: a small open ring at the leading
     /// edge with the line running from its right edge — both following the
     /// proposal's depth indent.
     @ViewBuilder
     private var dropIndicatorLine: some View {
-        if let lineGeometry = indicatorLineGeometry {
+        if let proposal = dropProposal,
+           case .line(let y, let minX, let maxX) = proposal.indicator {
             let ringSize: CGFloat = 7
             ZStack(alignment: .topLeading) {
                 Circle()
                     .strokeBorder(Color.accentColor, lineWidth: 2)
                     .frame(width: ringSize, height: ringSize)
-                    .offset(x: lineGeometry.minX, y: lineGeometry.y - ringSize / 2)
+                    .offset(x: minX, y: y - ringSize / 2)
                 RoundedRectangle(cornerRadius: 1)
                     .fill(Color.accentColor)
-                    .frame(
-                        width: max(lineGeometry.maxX - lineGeometry.minX - ringSize - 1, 2),
-                        height: 2
-                    )
-                    .offset(x: lineGeometry.minX + ringSize + 1, y: lineGeometry.y - 1)
+                    .frame(width: max(maxX - minX - ringSize - 1, 2), height: 2)
+                    .offset(x: minX + ringSize + 1, y: y - 1)
             }
             .allowsHitTesting(false)
         }
@@ -1198,32 +1170,7 @@ private struct SpacePage: View {
         autoExpandWork = nil
         autoExpandFolderID = nil
         autoExpandedDuringDrag = []
-        pluckedRowIDs = []
-        schedulePluck(for: payload)
         startDragWatch()
-    }
-
-    /// Plucks the dragged rows out of the flow a beat after the drag
-    /// starts — once AppKit has lifted the session and its preview — so the
-    /// remaining rows close ranks under the drag.
-    private func schedulePluck(for payload: SidebarDragPayload) {
-        var ids: Set<UUID>
-        switch payload {
-        case .tabs(let tabIDs):
-            ids = Set(tabIDs)
-        case .folder(let folderID):
-            ids = [folderID]
-            // The dragged folder's peeking tab leaves with it.
-            if let selection = store.selection,
-               space.pinnedFolders.first(where: { $0.id == folderID })?
-                   .sessions.contains(where: { $0.id == selection }) == true {
-                ids.insert(selection)
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            guard store.activeSidebarDrag == payload else { return }
-            pluckedRowIDs = ids
-        }
     }
 
     /// Hover: projects the pointer onto exactly one proposal. Returns
@@ -1257,39 +1204,18 @@ private struct SpacePage: View {
             scheduleAutoExpand(for: nil)
             return false
         }
-        // Resolve against gap-free geometry so the open drop gap can't
-        // feed back into the proposal that opened it. Plucked rows are out
-        // of the flow entirely.
-        let (frames, divider, y): ([UUID: CGRect], CGRect?, CGFloat) = {
-            guard let gapID = dropProposal?.gapRowID else {
-                return (rowFrames, dividerFrame, location.y)
-            }
-            return removingSidebarDropGap(
-                above: gapID,
-                gapHeight: SidebarRowFlowModifier.dropGap,
-                rowFrames: rowFrames,
-                dividerFrame: dividerFrame,
-                pointerY: location.y
-            )
-        }()
-
         let resolver = SidebarDropResolver(
-            rows: flatRows.filter { !pluckedRowIDs.contains($0.id) },
-            rowFrames: frames,
-            dividerFrame: divider
+            rows: flatRows,
+            rowFrames: rowFrames,
+            dividerFrame: dividerFrame
         )
         let resolution = resolver.resolve(
-            at: CGPoint(x: location.x, y: y),
+            at: location,
             dragging: payload,
             horizontalDelta: location.x - (dragReferenceX ?? location.x)
         )
-        let proposal = resolution.proposal
-        // Hysteresis: geometry wobbles while the gap and pluck animate, so
-        // the proposal only moves when the resolved slot actually changes.
-        if proposal?.target != dropProposal?.target {
-            dropProposal = proposal
-        }
-        scheduleAutoExpand(for: proposal)
+        dropProposal = resolution.proposal
+        scheduleAutoExpand(for: resolution.proposal)
         // A no-op slot shows nothing but keeps the move cursor; only truly
         // invalid positions read as forbidden.
         return !resolution.isInvalid
@@ -1331,12 +1257,6 @@ private struct SpacePage: View {
 
     private func endDragTracking() {
         dropProposal = nil
-        stopDragMachinery()
-    }
-
-    /// Stops timers and auto-scroll without touching the drop proposal:
-    /// the commit path keeps the gap open until the dropped rows land in it.
-    private func stopDragMachinery() {
         pointerInViewport = nil
         dragReferenceX = nil
         scrollDriver.onAutoScroll = nil
@@ -1385,7 +1305,6 @@ private struct SpacePage: View {
         }
         store.activeSidebarDrag = nil
         recollapseAutoExpandedFolders(except: nil)
-        pluckedRowIDs = []
         endDragTracking()
     }
 
@@ -1394,19 +1313,17 @@ private struct SpacePage: View {
     private func performDrop(_ info: DropInfo) -> Bool {
         stopDragWatch()
         let proposal = dropProposal
-        // The proposal (and its open gap) stays up through the commit; only
-        // the machinery stops here.
-        stopDragMachinery()
+        endDragTracking()
         // Cleared synchronously so any trailing dropUpdated resolves to no
         // payload — and therefore no indicator.
         store.activeSidebarDrag = nil
         guard let proposal else {
-            abandonDrop()
+            recollapseAutoExpandedFolders(except: nil)
             return false
         }
         let providers = info.itemProviders(for: [.text])
         guard !providers.isEmpty else {
-            abandonDrop()
+            recollapseAutoExpandedFolders(except: nil)
             return false
         }
         let spaceID = space.id
@@ -1418,15 +1335,13 @@ private struct SpacePage: View {
                 }
             }
             guard let payload = SidebarDragPayload.decode(items: items) else {
-                abandonDrop()
+                recollapseAutoExpandedFolders(except: nil)
                 return
             }
-            // Phase 1 — reorder while the dragged rows are still plucked:
-            // zero-height rows moving changes nothing on screen, and the
-            // suppressed animation keeps SwiftUI from sliding the row from
-            // its old slot to the drop point.
-            suppressLayoutAnimation = true
             store.applySidebarDrop(payload, target: proposal.target, inSpace: spaceID)
+            if case .folder(let folderID) = payload {
+                restoreDraggedFolderExpansion(folderID)
+            }
             // A tab that landed inside a collapsed folder must stay
             // visible: open the folder it ended up in.
             var landedFolderID: TerminalFolder.ID?
@@ -1436,32 +1351,12 @@ private struct SpacePage: View {
                     .first { $0.sessions.contains { $0.id == first } }?
                     .id
             }
-            let keepFolderID = landedFolderID
-            // Phase 2, next runloop pass — the gap closes and the rows
-            // expand in the same transaction, so the drop reads as the
-            // ghost settling into the space that was already open for it.
-            DispatchQueue.main.async {
-                suppressLayoutAnimation = false
-                dropProposal = nil
-                pluckedRowIDs = []
-                if case .folder(let folderID) = payload {
-                    restoreDraggedFolderExpansion(folderID)
-                }
-                if let keepFolderID {
-                    _ = store.collapsedFolderIDs.remove(keepFolderID)
-                }
-                recollapseAutoExpandedFolders(except: keepFolderID)
+            if let landedFolderID {
+                _ = store.collapsedFolderIDs.remove(landedFolderID)
             }
+            recollapseAutoExpandedFolders(except: landedFolderID)
         }
         return true
-    }
-
-    /// A drop that can't commit (no proposal, foreign payload): clear the
-    /// drag leftovers immediately.
-    private func abandonDrop() {
-        dropProposal = nil
-        recollapseAutoExpandedFolders(except: nil)
-        pluckedRowIDs = []
     }
 }
 

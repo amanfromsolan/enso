@@ -145,16 +145,6 @@ struct SidebarDropProposal: Equatable {
 
     var target: SidebarDropTarget
     var indicator: Indicator
-    /// The visible row sitting directly below the insertion line, if any:
-    /// the row that parts downward to open the drop gap. Nil for
-    /// end-of-zone lines and folder highlights.
-    var gapRowID: UUID?
-
-    init(target: SidebarDropTarget, indicator: Indicator, gapRowID: UUID? = nil) {
-        self.target = target
-        self.indicator = indicator
-        self.gapRowID = gapRowID
-    }
 }
 
 /// What a pointer position means for the drag in flight. `noOp` is a valid
@@ -171,45 +161,6 @@ enum SidebarDropResolution: Equatable {
     }
 
     var isInvalid: Bool { self == .invalid }
-}
-
-// MARK: - Gap-free geometry
-
-/// Reconstructs the gap-free geometry the resolver must see while a drop gap
-/// is open. The open gap shifts live row frames; resolving against shifted
-/// frames would move the gap, shift the frames again, and oscillate. So the
-/// gap row and everything below it slide back up by the gap height, and the
-/// pointer maps into the same space — a pointer inside the open gap pins to
-/// the slot boundary the gap represents.
-func removingSidebarDropGap(
-    above gapRowID: UUID,
-    gapHeight: CGFloat,
-    rowFrames: [UUID: CGRect],
-    dividerFrame: CGRect?,
-    pointerY: CGFloat
-) -> (rowFrames: [UUID: CGRect], dividerFrame: CGRect?, pointerY: CGFloat) {
-    guard let gapFrame = rowFrames[gapRowID] else {
-        return (rowFrames, dividerFrame, pointerY)
-    }
-    // The gap row's live top is the gap's bottom edge: the gap opens as
-    // padding directly above it.
-    let gapBottom = gapFrame.minY
-    var frames = rowFrames
-    for (id, frame) in frames where frame.minY >= gapBottom - 0.5 {
-        frames[id] = frame.offsetBy(dx: 0, dy: -gapHeight)
-    }
-    var divider = dividerFrame
-    if let dividerFrame, dividerFrame.minY >= gapBottom - 0.5 {
-        divider = dividerFrame.offsetBy(dx: 0, dy: -gapHeight)
-    }
-    var y = pointerY
-    if y >= gapBottom {
-        y -= gapHeight
-    } else if y > gapBottom - gapHeight {
-        // Inside the open gap: the slot boundary itself.
-        y = gapBottom - gapHeight - 1
-    }
-    return (frames, divider, y)
 }
 
 // MARK: - Resolver
@@ -293,8 +244,7 @@ struct SidebarDropResolver {
         if let hit = ephemeralRows.first(where: { y < $0.frame.midY }) {
             return SidebarDropProposal(
                 target: .insertBefore(hit.row.id),
-                indicator: line(at: hit.frame.minY, spanning: hit.frame),
-                gapRowID: hit.row.id
+                indicator: line(at: hit.frame.minY, spanning: hit.frame)
             )
         }
         if let last = ephemeralRows.last {
@@ -338,8 +288,7 @@ struct SidebarDropResolver {
             if fraction < 0.5 {
                 return SidebarDropProposal(
                     target: .insertBefore(hit.row.id),
-                    indicator: line(at: hit.frame.minY, spanning: hit.frame),
-                    gapRowID: hit.row.id
+                    indicator: line(at: hit.frame.minY, spanning: hit.frame)
                 )
             }
             return tabGapProposal(after: index, horizontalDelta: horizontalDelta)
@@ -351,8 +300,7 @@ struct SidebarDropResolver {
                     // Very top of the zone: loose, before this folder.
                     return SidebarDropProposal(
                         target: .insertLooseBefore(hit.row.id),
-                        indicator: line(at: hit.frame.minY, spanning: hit.frame),
-                        gapRowID: hit.row.id
+                        indicator: line(at: hit.frame.minY, spanning: hit.frame)
                     )
                 }
                 return tabGapProposal(after: index - 1, horizontalDelta: horizontalDelta)
@@ -364,8 +312,7 @@ struct SidebarDropResolver {
                 let child = pinnedRows[index + 1]
                 return SidebarDropProposal(
                     target: .insertBefore(child.row.id),
-                    indicator: line(at: child.frame.minY, spanning: child.frame),
-                    gapRowID: child.row.id
+                    indicator: line(at: child.frame.minY, spanning: child.frame)
                 )
             }
             return SidebarDropProposal(
@@ -399,8 +346,7 @@ struct SidebarDropResolver {
         if let folderID, let next, next.row.parentFolderID == folderID {
             return SidebarDropProposal(
                 target: .insertBefore(next.row.id),
-                indicator: line(at: next.frame.minY, spanning: next.frame),
-                gapRowID: next.row.id
+                indicator: line(at: next.frame.minY, spanning: next.frame)
             )
         }
 
@@ -411,8 +357,7 @@ struct SidebarDropResolver {
         if horizontalDelta >= Self.childIndent / 2 {
             return SidebarDropProposal(
                 target: .appendToFolder(folderID),
-                indicator: line(at: gapY, spanning: childSpan(of: folderFrame)),
-                gapRowID: next?.row.id
+                indicator: line(at: gapY, spanning: childSpan(of: folderFrame))
             )
         }
         return looseTabProposal(before: next, at: gapY, span: folderFrame)
@@ -434,16 +379,14 @@ struct SidebarDropResolver {
         case .folder:
             return SidebarDropProposal(
                 target: .insertLooseBefore(next.row.id),
-                indicator: line(at: y, spanning: next.frame),
-                gapRowID: next.row.id
+                indicator: line(at: y, spanning: next.frame)
             )
         case .tab:
             // Only a loose tab can follow here — a folder child would have
             // been the interior-gap case.
             return SidebarDropProposal(
                 target: .insertBefore(next.row.id),
-                indicator: line(at: y, spanning: next.frame),
-                gapRowID: next.row.id
+                indicator: line(at: y, spanning: next.frame)
             )
         }
     }
@@ -484,8 +427,7 @@ struct SidebarDropResolver {
             let target = groups[index]
             return .proposal(SidebarDropProposal(
                 target: .insertFolderBefore(target.id),
-                indicator: line(at: target.frame.minY, spanning: target.frame),
-                gapRowID: target.id
+                indicator: line(at: target.frame.minY, spanning: target.frame)
             ))
         }
         let last = groups[groups.count - 1]
