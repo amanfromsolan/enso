@@ -16,6 +16,8 @@
 		A10000122FD810C30001BF12 /* GhosttyTerminalHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */; };
 		A10000132FD810C30001BF12 /* TerminalSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000042FD810C30001BF12 /* TerminalSessionStore.swift */; };
 		A10000142FD810C30001BF12 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000052FD810C30001BF12 /* SidebarView.swift */; };
+		A1SDBDRP032FD810C30001BF12 /* SidebarDropModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SDBDRP012FD810C30001BF12 /* SidebarDropModel.swift */; };
+		A1SDBDRP042FD810C30001BF12 /* SidebarDropSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SDBDRP022FD810C30001BF12 /* SidebarDropSupport.swift */; };
 		A10000152FD810C30001BF12 /* TerminalHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000062FD810C30001BF12 /* TerminalHeaderView.swift */; };
 		A10000162FD810C30001BF12 /* TerminalRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000072FD810C30001BF12 /* TerminalRootView.swift */; };
 		A10000172FD810C30001BF12 /* TerminalWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */; };
@@ -74,6 +76,8 @@
 		A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyTerminalHostView.swift; sourceTree = "<group>"; };
 		A10000042FD810C30001BF12 /* TerminalSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStore.swift; sourceTree = "<group>"; };
 		A10000052FD810C30001BF12 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		A1SDBDRP012FD810C30001BF12 /* SidebarDropModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarDropModel.swift; sourceTree = "<group>"; };
+		A1SDBDRP022FD810C30001BF12 /* SidebarDropSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarDropSupport.swift; sourceTree = "<group>"; };
 		A10000062FD810C30001BF12 /* TerminalHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHeaderView.swift; sourceTree = "<group>"; };
 		A10000072FD810C30001BF12 /* TerminalRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRootView.swift; sourceTree = "<group>"; };
 		A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWorkspaceView.swift; sourceTree = "<group>"; };
@@ -245,11 +249,21 @@
 			path = Stores;
 			sourceTree = "<group>";
 		};
+		A1SDBDRP002FD810C30001BF12 /* SidebarDrop */ = {
+			isa = PBXGroup;
+			children = (
+				A1SDBDRP012FD810C30001BF12 /* SidebarDropModel.swift */,
+				A1SDBDRP022FD810C30001BF12 /* SidebarDropSupport.swift */,
+			);
+			path = SidebarDrop;
+			sourceTree = "<group>";
+		};
 		A10000242FD810C30001BF12 /* Views */ = {
 			isa = PBXGroup;
 			children = (
 				A1ROWBDG022FD810C30001BF12 /* RowProcessBadge.swift */,
 				A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */,
+				A1SDBDRP002FD810C30001BF12 /* SidebarDrop */,
 				A10000052FD810C30001BF12 /* SidebarView.swift */,
 				A10000062FD810C30001BF12 /* TerminalHeaderView.swift */,
 				A10000072FD810C30001BF12 /* TerminalRootView.swift */,
@@ -443,6 +457,8 @@
 				A10000322FD810C30001BF12 /* GhosttySurfaceManager.swift in Sources */,
 				A10000132FD810C30001BF12 /* TerminalSessionStore.swift in Sources */,
 				A10000142FD810C30001BF12 /* SidebarView.swift in Sources */,
+				A1SDBDRP032FD810C30001BF12 /* SidebarDropModel.swift in Sources */,
+				A1SDBDRP042FD810C30001BF12 /* SidebarDropSupport.swift in Sources */,
 				A1ROWBDG012FD810C30001BF12 /* RowProcessBadge.swift in Sources */,
 				A1SETPNL012FD810C30001BF12 /* SettingsPanelView.swift in Sources */,
 				A10000152FD810C30001BF12 /* TerminalHeaderView.swift in Sources */,

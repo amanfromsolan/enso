@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @ObservedObject var store: TerminalSessionStore
@@ -281,25 +282,44 @@ private struct SpacePage: View {
     let space: SidebarSpace
     let onEditSpace: (SidebarSpace) -> Void
 
-    @State private var dropTargetID: TerminalSession.ID?
     @State private var hoveredSessionID: TerminalSession.ID?
     @State private var renamingSessionID: TerminalSession.ID?
     @State private var draftTitle = ""
     @FocusState private var renameFieldFocused: Bool
 
     @State private var hoveredFolderID: TerminalFolder.ID?
-    /// Folder currently targeted by an in-flight drag (highlight or line).
-    @State private var folderDropTargetID: TerminalFolder.ID?
-    /// Folder whose end-of-children strip is targeted.
-    @State private var folderEndDropFolderID: TerminalFolder.ID?
-    @State private var headerDropTargeted = false
-    @State private var pinnedZoneTargeted = false
-    @State private var ephemeralZoneTargeted = false
-    /// Set at drag start so hover feedback knows a folder (not tabs) is in
-    /// flight; healed by the next drag start if a drag is cancelled.
-    @State private var draggedFolderID: TerminalFolder.ID?
-    /// Folders collapse for the flight; remember whether to reopen on drop.
-    @State private var draggedFolderWasExpanded = false
+    /// The one piece of drop-feedback state: the current projection of the
+    /// in-flight drag onto the sidebar, or nil when nothing valid is hovered.
+    @State private var dropProposal: SidebarDropProposal?
+    /// Row frames in the drop container's coordinate space, collected via
+    /// preferences; the resolver hit-tests against these.
+    @State private var rowFrames: [UUID: CGRect] = [:]
+    @State private var dividerFrame: CGRect?
+    /// Last drag pointer, viewport-relative, so auto-scroll ticks can keep
+    /// the proposal in sync while content slides under a still pointer.
+    @State private var pointerInViewport: CGPoint?
+    /// Pointer X where the drag entered; ambiguous gaps read the horizontal
+    /// travel from here to pick nest-into-folder vs loose.
+    @State private var dragReferenceX: CGFloat?
+    /// Collapsed folder pending hover-to-expand, and the scheduled work.
+    @State private var autoExpandFolderID: TerminalFolder.ID?
+    @State private var autoExpandWork: DispatchWorkItem?
+    /// Folders sprung open by hover during this drag; the ones that don't
+    /// receive the drop fold back when it ends.
+    @State private var autoExpandedDuringDrag: [TerminalFolder.ID] = []
+    /// Rows plucked out of the flow for the drag: they collapse to zero
+    /// height so the list closes ranks, and spring back at end-of-drag.
+    @State private var pluckedRowIDs: Set<UUID> = []
+    /// One-frame switch for the drop commit: the reorder moves zero-height
+    /// rows, so it must not animate — animating it would slide the dropped
+    /// row from its old slot instead of landing it at the drop point.
+    @State private var suppressLayoutAnimation = false
+    /// SwiftUI has no end-of-drag callback, so a slow watcher polls the
+    /// mouse button during a tracked drag; button-up with no drop delivered
+    /// means the drag was cancelled (ESC, or released outside any target).
+    @State private var dragWatchTimer: Timer?
+    @State private var dragReleaseTicks = 0
+    @State private var scrollDriver = SidebarScrollDriver()
     @State private var renamingFolderID: TerminalFolder.ID?
     @State private var draftFolderTitle = ""
     @FocusState private var folderRenameFocused: Bool
@@ -319,8 +339,10 @@ private struct SpacePage: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
-            .animation(.snappy(duration: 0.22), value: rowLayout)
+            .animation(suppressLayoutAnimation ? nil : .snappy(duration: 0.22), value: rowLayout)
             .animation(.snappy(duration: 0.22), value: store.collapsedFolderIDs)
+            .animation(.spring(duration: 0.25, bounce: 0), value: pluckedRowIDs)
+            .animation(.spring(duration: 0.25, bounce: 0), value: dropProposal?.gapRowID)
             // Behind the rows, so it only catches clicks on empty sidebar
             // space — row clicks never race it into cancelling a rename.
             .background(
@@ -328,6 +350,19 @@ private struct SpacePage: View {
                     .contentShape(Rectangle())
                     .onTapGesture { cancelRenames() }
             )
+            .background(SidebarScrollViewCapture(driver: scrollDriver))
+            .overlay(alignment: .topLeading) { dropIndicatorLine }
+            .contentShape(Rectangle())
+            // One drop target for the whole page: every pointer position
+            // resolves through the projection model, no per-zone strips.
+            .onDrop(of: [.text], delegate: SidebarSpaceDropDelegate(
+                onUpdate: { handleDragUpdate(at: $0) },
+                onExited: { endDragTracking() },
+                onPerform: { performDrop($0) }
+            ))
+            .coordinateSpace(name: Self.dropSpaceName)
+            .onPreferenceChange(SidebarRowFrameKey.self) { rowFrames = $0 }
+            .onPreferenceChange(SidebarDividerFrameKey.self) { dividerFrame = $0 }
         }
         .background(
             RenameClickAway(
@@ -362,10 +397,15 @@ private struct SpacePage: View {
     /// pin/unpin) without animating metadata-only updates — selecting a tab
     /// stamps its lastActivity, and that must not fade the highlight in.
     private var rowLayout: [UUID] {
-        var ids = space.pinnedSessions.map(\.id)
-        for folder in space.pinnedFolders {
-            ids.append(folder.id)
-            ids.append(contentsOf: folder.sessions.map(\.id))
+        var ids: [UUID] = []
+        for item in space.pinnedItems {
+            switch item {
+            case .tab(let session):
+                ids.append(session.id)
+            case .folder(let folder):
+                ids.append(folder.id)
+                ids.append(contentsOf: folder.sessions.map(\.id))
+            }
         }
         ids.append(contentsOf: space.ephemeralSessions.map(\.id))
         return ids
@@ -518,7 +558,8 @@ private struct SpacePage: View {
 
     private var pinnedZone: some View {
         // Zero list spacing: the row gap lives inside each row's vertical
-        // padding instead, so drag hit-areas stay contiguous.
+        // padding instead, so drag hit-areas stay contiguous. Drops anywhere
+        // in the zone resolve through the page-level projection.
         VStack(alignment: .leading, spacing: 0) {
             spaceHeader
                 .onChange(of: spaceNameFocused) { _, focused in
@@ -526,24 +567,8 @@ private struct SpacePage: View {
                         commitSpaceRename()
                     }
                 }
-                // Dropping on the header lands before the first pinned tab;
-                // the line hugs its bottom edge so it reads "list starts here".
-                .overlay(alignment: .bottom) {
-                    insertionLine(headerDropTargeted && draggedFolderID == nil)
-                }
-                .dropDestination(for: String.self) { items, _ in
-                    defer { clearDropFeedback() }
-                    guard folderID(from: items) == nil else { return false }
-                    let ids = sessionIDs(from: items)
-                    if let first = space.pinnedSessions.first {
-                        store.insert(ids, before: first.id)
-                    } else {
-                        store.pin(ids, inSpace: space.id)
-                    }
-                    return true
-                } isTargeted: { headerDropTargeted = $0 }
 
-            if space.pinnedSessions.isEmpty && space.pinnedFolders.isEmpty {
+            if space.pinnedItems.isEmpty {
                 Text("Drag tabs here to keep them")
                     .font(PaletteFont.text(12, .regular))
                     .tracking(PaletteFont.tracking)
@@ -552,41 +577,18 @@ private struct SpacePage: View {
                     .padding(.vertical, 8)
             }
 
-            ForEach(space.pinnedSessions) { session in
-                sessionRow(session)
+            // Loose tabs and folders render in one interleaved order — the
+            // same order the drop projection flattens.
+            ForEach(space.pinnedItems) { item in
+                switch item {
+                case .tab(let session):
+                    sessionRow(session)
+                case .folder(let folder):
+                    folderSection(folder)
+                }
             }
-
-            // No indicator for tab drops on the zone's leftover dead space:
-            // the landing spot (after the loose tabs, far from the pointer)
-            // reads as a glitch. Every intentional position has its own
-            // target — rows, header, folder strips.
-
-            ForEach(space.pinnedFolders) { folder in
-                // Breathing room between a folder and its neighbors comes
-                // entirely from the folder's own drop strip.
-                folderSection(folder)
-            }
-
-            // Where a folder dropped on the zone's empty space will land:
-            // after the last folder.
-            insertionLine(pinnedZoneTargeted && draggedFolderID != nil && folderEndDropFolderID == nil)
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .dropDestination(for: String.self) { items, _ in
-            defer { clearDropFeedback() }
-            if let dragged = folderID(from: items) {
-                store.moveFolder(dragged, toSpace: space.id)
-                restoreDraggedFolderExpansion(dragged)
-                return true
-            }
-            // With folders present, a tab landing here missed a strip by a
-            // few points; bounce it back rather than teleporting it to the
-            // top of the loose list.
-            guard space.pinnedFolders.isEmpty else { return false }
-            store.pin(sessionIDs(from: items), inSpace: space.id)
-            return true
-        } isTargeted: { pinnedZoneTargeted = $0 }
     }
 
     private var zoneDivider: some View {
@@ -595,6 +597,15 @@ private struct SpacePage: View {
             .frame(height: 1)
             .padding(.horizontal, 4)
             .padding(.vertical, 8)
+            // Its midline is the boundary between the two drop zones.
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: SidebarDividerFrameKey.self,
+                        value: geo.frame(in: .named(Self.dropSpaceName))
+                    )
+                }
+            )
     }
 
     private var ephemeralZone: some View {
@@ -602,10 +613,6 @@ private struct SpacePage: View {
             ForEach(space.ephemeralSessions) { session in
                 sessionRow(session)
             }
-
-            // Where a tab dropped on the zone's empty space will land: the
-            // end of the list.
-            insertionLine(ephemeralZoneTargeted && draggedFolderID == nil)
 
             Button {
                 store.createSession(inSpace: space.id)
@@ -633,25 +640,47 @@ private struct SpacePage: View {
 
             Spacer(minLength: 120)
         }
-        .contentShape(Rectangle())
-        .dropDestination(for: String.self) { items, _ in
-            defer { clearDropFeedback() }
-            // Folders are pinned-only; don't swallow their drops here.
-            guard folderID(from: items) == nil else { return false }
-            store.unpin(sessionIDs(from: items), inSpace: space.id)
-            return true
-        } isTargeted: { ephemeralZoneTargeted = $0 }
+    }
+
+    // In-flight drag image: a ghost of the row, translucent enough that the
+    // insertion line and folder highlights stay readable underneath it.
+    private func dragPreviewPill(icon: String, title: String) -> some View {
+        HStack(spacing: 8) {
+            Image(icon)
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Theme.ink.opacity(0.6))
+                .frame(width: 16, height: 16)
+            Text(title)
+                .font(PaletteFont.text(14, .regular))
+                .tracking(PaletteFont.tracking)
+                .foregroundStyle(Theme.text(0.9))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Theme.ink.opacity(0.12))
+        )
+        .opacity(0.45)
+    }
+
+    private func sessionDragPreview(_ session: TerminalSession) -> some View {
+        let targets = contextTargets(for: session)
+        return dragPreviewPill(
+            icon: "TerminalIdle16",
+            title: targets.count > 1 ? "\(targets.count) tabs" : session.title
+        )
     }
 
     private func folderSection(_ folder: TerminalFolder) -> some View {
         let isExpanded = !store.collapsedFolderIDs.contains(folder.id)
         let isHovered = hoveredFolderID == folder.id
         let isRenaming = renamingFolderID == folder.id
-        let isDropTarget = folderDropTargetID == folder.id
-        // A dragged folder lands before this one (line); dragged tabs land
-        // inside it (highlight).
-        let isFolderDragOver = isDropTarget && draggedFolderID != nil
-        let isSessionDragOver = isDropTarget && draggedFolderID == nil
+        // Dragged tabs hovering the row's middle land inside the folder.
+        let isDropInto = dropProposal?.indicator == .folderHighlight(folder.id)
         // A collapsed folder still shows its active tab: the selected row
         // peeks out under the folder so the current tab never vanishes from
         // the sidebar. Selecting a tab elsewhere retracts it.
@@ -721,17 +750,12 @@ private struct SpacePage: View {
             .background(
                 RoundedRectangle(cornerRadius: 7)
                     .fill(
-                        isSessionDragOver
+                        isDropInto
                             ? Color.accentColor.opacity(0.22)
                             : (isHovered ? Theme.ink.opacity(0.06) : Color.clear)
                     )
             )
             .contentShape(Rectangle())
-            // Insertion indicator while another folder is dragged over this
-            // one; an overlay so it costs no layout height.
-            .overlay(alignment: .top) {
-                insertionLine(isFolderDragOver)
-            }
             .onHover { hovering in
                 if hovering {
                     hoveredFolderID = folder.id
@@ -772,30 +796,22 @@ private struct SpacePage: View {
             .onDrag {
                 // Folders travel collapsed: one compact row in flight
                 // instead of a whole column of children.
-                draggedFolderWasExpanded = !store.collapsedFolderIDs.contains(folder.id)
+                store.sidebarDragFolderWasExpanded = !store.collapsedFolderIDs.contains(folder.id)
                 withAnimation(.easeOut(duration: 0.15)) {
                     store.collapsedFolderIDs.insert(folder.id)
                 }
-                draggedFolderID = folder.id
-                return NSItemProvider(object: folderDragPayload(for: folder) as NSString)
+                let payload = SidebarDragPayload.folder(folder.id)
+                beginDragTracking(payload)
+                return NSItemProvider(object: payload.stringValue as NSString)
+            } preview: {
+                dragPreviewPill(icon: "FolderClosed16", title: folder.title)
             }
-            .dropDestination(for: String.self) { items, _ in
-                defer { clearDropFeedback() }
-                if let dragged = folderID(from: items) {
-                    guard dragged != folder.id else { return false }
-                    store.insertFolder(dragged, before: folder.id)
-                    restoreDraggedFolderExpansion(dragged)
-                    return true
-                }
-                store.move(sessionIDs(from: items), toFolder: folder.id)
-                return true
-            } isTargeted: { targeted in
-                if targeted {
-                    folderDropTargetID = folder.id
-                } else if folderDropTargetID == folder.id {
-                    folderDropTargetID = nil
-                }
-            }
+            .background(rowFrameReporter(folder.id))
+            // The same uniform row gap (and drop-gap swell) as sessionRow.
+            .modifier(SidebarRowFlowModifier(
+                plucked: pluckedRowIDs.contains(folder.id),
+                gapOpen: dropProposal?.gapRowID == folder.id
+            ))
 
             // Children live in a container that collapses to zero height and
             // clips, so rows disappear into the folder instead of floating.
@@ -808,11 +824,10 @@ private struct SpacePage: View {
                 }
             }
             .padding(.leading, 14)
-            // Trailing/bottom breathing room so the selected row's drop shadow
-            // isn't clipped by this container's collapse clip (the clip is what
-            // lets rows vanish into the folder when it folds).
+            // Trailing breathing room so the selected row's drop shadow
+            // isn't clipped sideways by this container's collapse clip (the
+            // clip is what lets rows vanish into the folder when it folds).
             .padding(.trailing, 6)
-            .padding(.bottom, 5)
             .frame(height: isExpanded ? nil : 0, alignment: .top)
             .clipped()
             .allowsHitTesting(isExpanded)
@@ -824,78 +839,18 @@ private struct SpacePage: View {
                 sessionRow(peekingSession)
                     .padding(.leading, 14)
                     .padding(.trailing, 6)
-                    .padding(.bottom, 5)
             }
-
-            // The gap after a folder is its landing strip: a dragged tab
-            // becomes the folder's last item (short line at child depth),
-            // a dragged folder slots in between the folders (full line).
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor)
-                .frame(height: 2)
-                .padding(.leading, draggedFolderID == nil ? 18 : 4)
-                .padding(.trailing, 4)
-                .opacity(folderEndDropFolderID == folder.id ? 1 : 0)
-                .frame(maxWidth: .infinity)
-                // Swallows (nearly) the whole inter-folder gap; anything
-                // that slips past it hits the zone, which shows nothing.
-                // Collapsed folders sit tighter.
-                .frame(height: isExpanded ? 12 : 6)
-                .contentShape(Rectangle())
-                .dropDestination(for: String.self) { items, _ in
-                    defer { clearDropFeedback() }
-                    return handleFolderEndDrop(items, folder: folder)
-                } isTargeted: { targeted in
-                    if targeted {
-                        folderEndDropFolderID = folder.id
-                    } else if folderEndDropFolderID == folder.id {
-                        folderEndDropFolderID = nil
-                    }
-                }
         }
         .geometryGroup()
-    }
-
-    /// A drop on the strip after a folder: tabs append into the folder, a
-    /// dragged folder reorders to sit right after this one.
-    private func handleFolderEndDrop(_ items: [String], folder: TerminalFolder) -> Bool {
-        if let dragged = folderID(from: items) {
-            guard dragged != folder.id else { return false }
-            if let index = space.pinnedFolders.firstIndex(where: { $0.id == folder.id }),
-               index + 1 < space.pinnedFolders.count {
-                store.insertFolder(dragged, before: space.pinnedFolders[index + 1].id)
-            } else {
-                store.moveFolder(dragged, toSpace: space.id)
-            }
-            restoreDraggedFolderExpansion(dragged)
-            return true
-        }
-        let ids = sessionIDs(from: items)
-        guard !ids.isEmpty else { return false }
-        store.move(ids, toFolder: folder.id)
-        return true
     }
 
     /// A dropped folder reopens if it was expanded before its drag
     /// collapsed it.
     private func restoreDraggedFolderExpansion(_ folderID: TerminalFolder.ID) {
-        guard draggedFolderWasExpanded else { return }
+        guard store.sidebarDragFolderWasExpanded else { return }
         withAnimation(.easeOut(duration: 0.15)) {
             _ = store.collapsedFolderIDs.remove(folderID)
         }
-    }
-
-    /// One drop just ended (or a new drag just began): no indicator may
-    /// survive it. Individual isTargeted callbacks don't always fire after
-    /// a successful drop, so every handler resets the lot.
-    private func clearDropFeedback() {
-        dropTargetID = nil
-        folderDropTargetID = nil
-        folderEndDropFolderID = nil
-        headerDropTargeted = false
-        pinnedZoneTargeted = false
-        ephemeralZoneTargeted = false
-        draggedFolderID = nil
     }
 
     @ViewBuilder
@@ -904,130 +859,119 @@ private struct SpacePage: View {
         let isMultiSelected = store.multiSelection.contains(session.id)
         let isRenaming = renamingSessionID == session.id
 
-        VStack(spacing: 0) {
-            // Insertion indicator while another tab is dragged over this row.
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor)
-                .frame(height: 2)
-                .padding(.horizontal, 4)
-                .opacity(dropTargetID == session.id && draggedFolderID == nil ? 1 : 0)
-
-            HStack(spacing: 8) {
-                // Uniform slot: detected-process badge when something known
-                // is running, spinner while naming, accent dot otherwise.
-                // The badge outranks the spinner: auto-naming fires on a
-                // tab's first real command, and hiding the fresh badge
-                // behind the spinner read as the icon skipping that command.
-                Group {
-                    if let process = session.runningProcess {
-                        ProcessBadgeView(process: process, isSelected: isSelected)
-                    } else if namer.namingSessions.contains(session.id) {
-                        AutoNamingIndicator()
-                            .frame(width: 8, height: 8)
-                    } else {
-                        // Idle terminal glyph in the folder grey — a
-                        // template, so Theme.ink adapts it to the light/
-                        // dark sidebar. Unselected rows stay whisper-quiet.
-                        Image("TerminalIdle16")
-                            .resizable()
-                            .renderingMode(.template)
-                            .aspectRatio(contentMode: .fit)
-                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.85 : 0.4))
-                            .frame(width: 16, height: 16)
-                    }
-                }
-                .frame(width: 16, height: 16)
-
-                if isRenaming {
-                    TextField("", text: $draftTitle)
-                        .textFieldStyle(.plain)
-                        .font(PaletteFont.text(14, .regular))
-                        .foregroundStyle(Theme.text(1))
-                        .focused($renameFieldFocused)
-                        .onSubmit {
-                            commitRename(session)
-                            restoreTerminalFocus()
-                        }
-                        .onExitCommand {
-                            renamingSessionID = nil
-                            restoreTerminalFocus()
-                        }
+        HStack(spacing: 8) {
+            // Uniform slot: detected-process badge when something known
+            // is running, spinner while naming, accent dot otherwise.
+            // The badge outranks the spinner: auto-naming fires on a
+            // tab's first real command, and hiding the fresh badge
+            // behind the spinner read as the icon skipping that command.
+            Group {
+                if let process = session.runningProcess {
+                    ProcessBadgeView(process: process, isSelected: isSelected)
+                } else if namer.namingSessions.contains(session.id) {
+                    AutoNamingIndicator()
+                        .frame(width: 8, height: 8)
                 } else {
-                    Text(session.title)
-                        .font(PaletteFont.text(14, .regular))
-                        .tracking(PaletteFont.tracking)
-                        .foregroundStyle(Theme.text(isSelected ? 0.95 : 0.62))
-                        .lineLimit(1)
-                        .nameShimmer(namer.namingSessions.contains(session.id))
-                        // Rename only when the double-click lands on the
-                        // title itself, not anywhere in the row.
-                        .simultaneousGesture(TapGesture().onEnded {
-                            if NSApp.currentEvent?.clickCount == 2 {
-                                beginRename(session)
-                            }
-                        })
+                    // Idle terminal glyph in the folder grey — a
+                    // template, so Theme.ink adapts it to the light/
+                    // dark sidebar. Unselected rows stay whisper-quiet.
+                    Image("TerminalIdle16")
+                        .resizable()
+                        .renderingMode(.template)
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(Theme.ink.opacity(isSelected ? 0.85 : 0.4))
+                        .frame(width: 16, height: 16)
                 }
+            }
+            .frame(width: 16, height: 16)
 
-                Spacer(minLength: 0)
-                if hoveredSessionID == session.id && !isRenaming {
-                    SessionCloseButton {
-                        store.close(sessionID: session.id)
+            if isRenaming {
+                TextField("", text: $draftTitle)
+                    .textFieldStyle(.plain)
+                    .font(PaletteFont.text(14, .regular))
+                    .foregroundStyle(Theme.text(1))
+                    .focused($renameFieldFocused)
+                    .onSubmit {
+                        commitRename(session)
+                        restoreTerminalFocus()
                     }
-                } else if session.status == .attention {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 6, height: 6)
-                }
+                    .onExitCommand {
+                        renamingSessionID = nil
+                        restoreTerminalFocus()
+                    }
+            } else {
+                Text(session.title)
+                    .font(PaletteFont.text(14, .regular))
+                    .tracking(PaletteFont.tracking)
+                    .foregroundStyle(Theme.text(isSelected ? 0.95 : 0.62))
+                    .lineLimit(1)
+                    .nameShimmer(namer.namingSessions.contains(session.id))
+                    // Rename only when the double-click lands on the
+                    // title itself, not anywhere in the row.
+                    .simultaneousGesture(TapGesture().onEnded {
+                        if NSApp.currentEvent?.clickCount == 2 {
+                            beginRename(session)
+                        }
+                    })
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                selectedRowBackground(
-                    isSelected: isSelected,
-                    isMultiSelected: isMultiSelected,
-                    isHovered: hoveredSessionID == session.id
-                )
+
+            Spacer(minLength: 0)
+            if hoveredSessionID == session.id && !isRenaming {
+                SessionCloseButton {
+                    store.close(sessionID: session.id)
+                }
+            } else if session.status == .attention {
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            selectedRowBackground(
+                isSelected: isSelected,
+                isMultiSelected: isMultiSelected,
+                isHovered: hoveredSessionID == session.id
             )
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering {
-                    hoveredSessionID = session.id
-                } else if hoveredSessionID == session.id {
-                    hoveredSessionID = nil
-                }
-            }
-            // A single immediate gesture (no TapGesture(count: 2) sibling):
-            // pairing single+double tap makes SwiftUI hold every click for
-            // the double-click interval before selecting. Instead, select on
-            // every click instantly; rename lives on the title text itself.
-            .simultaneousGesture(TapGesture().onEnded {
-                if NSApp.currentEvent?.clickCount == 1 {
-                    handleTap(session)
-                }
-            })
-            .onDrag {
-                draggedFolderID = nil
-                return NSItemProvider(object: dragPayload(for: session) as NSString)
-            }
-            .contextMenu {
-                contextMenu(for: session)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                hoveredSessionID = session.id
+            } else if hoveredSessionID == session.id {
+                hoveredSessionID = nil
             }
         }
-        .dropDestination(for: String.self) { items, _ in
-            defer { clearDropFeedback() }
-            // Folders can't interleave with tabs; their drops land on
-            // folder headers or the pinned zone.
-            guard folderID(from: items) == nil else { return false }
-            store.insert(sessionIDs(from: items), before: session.id)
-            return true
-        } isTargeted: { targeted in
-            if targeted {
-                dropTargetID = session.id
-            } else if dropTargetID == session.id {
-                dropTargetID = nil
+        // A single immediate gesture (no TapGesture(count: 2) sibling):
+        // pairing single+double tap makes SwiftUI hold every click for
+        // the double-click interval before selecting. Instead, select on
+        // every click instantly; rename lives on the title text itself.
+        .simultaneousGesture(TapGesture().onEnded {
+            if NSApp.currentEvent?.clickCount == 1 {
+                handleTap(session)
             }
+        })
+        .onDrag {
+            let payload = SidebarDragPayload.tabs(Array(contextTargets(for: session)))
+            beginDragTracking(payload)
+            return NSItemProvider(object: payload.stringValue as NSString)
+        } preview: {
+            sessionDragPreview(session)
         }
+        .contextMenu {
+            contextMenu(for: session)
+        }
+        .background(rowFrameReporter(session.id))
+        // Every sidebar row spaces itself with the same top gap, so the
+        // rhythm is uniform across tabs and folders and drag hit-areas stay
+        // contiguous. The gap sits outside the reported frame, and swells
+        // to make space when the drop gap opens above this row.
+        .modifier(SidebarRowFlowModifier(
+            plucked: pluckedRowIDs.contains(session.id),
+            gapOpen: dropProposal?.gapRowID == session.id
+        ))
         .onChange(of: renameFieldFocused) { _, focused in
             if !focused, renamingSessionID == session.id {
                 commitRename(session)
@@ -1178,49 +1122,347 @@ private struct SpacePage: View {
             : [session.id]
     }
 
+    /// Visible tab order for shift-click ranges; derived from the same
+    /// flatten as drop projection, so the two can never drift.
     private func visibleOrder() -> [TerminalSession.ID] {
-        var order = space.pinnedSessions.map(\.id)
-        for folder in space.pinnedFolders {
-            if !store.collapsedFolderIDs.contains(folder.id) {
-                order += folder.sessions.map(\.id)
-            } else if let selection = store.selection,
-                      folder.sessions.contains(where: { $0.id == selection }) {
-                // The active tab peeks out of its collapsed folder, so it
-                // participates in shift-click ranges like any visible row.
-                order.append(selection)
+        flatRows.filter { $0.kind == .tab }.map(\.id)
+    }
+
+    // MARK: - Drag and drop
+
+    private static let dropSpaceName = "sidebarDropSpace"
+
+    /// The sidebar's visual order, flattened; shared by drop projection and
+    /// selection ranges.
+    private var flatRows: [SidebarFlatRow] {
+        flattenSidebar(
+            space: space,
+            collapsedFolderIDs: store.collapsedFolderIDs,
+            selection: store.selection
+        )
+    }
+
+    private func rowFrameReporter(_ id: UUID) -> some View {
+        GeometryReader { geo in
+            Color.clear.preference(
+                key: SidebarRowFrameKey.self,
+                value: [id: geo.frame(in: .named(Self.dropSpaceName))]
+            )
+        }
+    }
+
+    /// Where the insertion line renders, in live coordinates. Proposals are
+    /// resolved in gap-free space; when a drop gap is open, the line sits
+    /// centered in it, riding the gap row's live frame as it animates.
+    private var indicatorLineGeometry: (y: CGFloat, minX: CGFloat, maxX: CGFloat)? {
+        guard let proposal = dropProposal,
+              case .line(let y, let minX, let maxX) = proposal.indicator else { return nil }
+        if let gapID = proposal.gapRowID, let gapFrame = rowFrames[gapID] {
+            let gapHeight = SidebarRowFlowModifier.dropGap + SidebarRowFlowModifier.rowGap
+            return (gapFrame.minY - gapHeight / 2, minX, maxX)
+        }
+        return (y, minX, maxX)
+    }
+
+    /// The single insertion indicator: a small open ring at the leading
+    /// edge with the line running from its right edge — both following the
+    /// proposal's depth indent.
+    @ViewBuilder
+    private var dropIndicatorLine: some View {
+        if let lineGeometry = indicatorLineGeometry {
+            let ringSize: CGFloat = 7
+            ZStack(alignment: .topLeading) {
+                Circle()
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .frame(width: ringSize, height: ringSize)
+                    .offset(x: lineGeometry.minX, y: lineGeometry.y - ringSize / 2)
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.accentColor)
+                    .frame(
+                        width: max(lineGeometry.maxX - lineGeometry.minX - ringSize - 1, 2),
+                        height: 2
+                    )
+                    .offset(x: lineGeometry.minX + ringSize + 1, y: lineGeometry.y - 1)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Records the in-flight payload at drag start and resets any state a
+    /// previous drag left behind.
+    private func beginDragTracking(_ payload: SidebarDragPayload) {
+        store.activeSidebarDrag = payload
+        dropProposal = nil
+        dragReferenceX = nil
+        autoExpandWork?.cancel()
+        autoExpandWork = nil
+        autoExpandFolderID = nil
+        autoExpandedDuringDrag = []
+        pluckedRowIDs = []
+        schedulePluck(for: payload)
+        startDragWatch()
+    }
+
+    /// Plucks the dragged rows out of the flow a beat after the drag
+    /// starts — once AppKit has lifted the session and its preview — so the
+    /// remaining rows close ranks under the drag.
+    private func schedulePluck(for payload: SidebarDragPayload) {
+        var ids: Set<UUID>
+        switch payload {
+        case .tabs(let tabIDs):
+            ids = Set(tabIDs)
+        case .folder(let folderID):
+            ids = [folderID]
+            // The dragged folder's peeking tab leaves with it.
+            if let selection = store.selection,
+               space.pinnedFolders.first(where: { $0.id == folderID })?
+                   .sessions.contains(where: { $0.id == selection }) == true {
+                ids.insert(selection)
             }
         }
-        order += space.ephemeralSessions.map(\.id)
-        return order
-    }
-
-    private func dragPayload(for session: TerminalSession) -> String {
-        contextTargets(for: session).map(\.uuidString).joined(separator: ",")
-    }
-
-    private func sessionIDs(from items: [String]) -> Set<TerminalSession.ID> {
-        Set(items.flatMap { $0.split(separator: ",") }.compactMap { UUID(uuidString: String($0)) })
-    }
-
-    private func insertionLine(_ visible: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 1)
-            .fill(Color.accentColor)
-            .frame(height: 2)
-            .padding(.horizontal, 4)
-            .opacity(visible ? 1 : 0)
-    }
-
-    private func folderDragPayload(for folder: TerminalFolder) -> String {
-        "folder:" + folder.id.uuidString
-    }
-
-    private func folderID(from items: [String]) -> TerminalFolder.ID? {
-        for item in items where item.hasPrefix("folder:") {
-            return UUID(uuidString: String(item.dropFirst("folder:".count)))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard store.activeSidebarDrag == payload else { return }
+            pluckedRowIDs = ids
         }
-        return nil
     }
 
+    /// Hover: projects the pointer onto exactly one proposal. Returns
+    /// whether the position is valid, for the drop operation cursor.
+    private func handleDragUpdate(at location: CGPoint) -> Bool {
+        if dragReferenceX == nil {
+            dragReferenceX = location.x
+        }
+        startDragWatch()
+        pointerInViewport = CGPoint(
+            x: location.x,
+            y: scrollDriver.viewportY(forContentY: location.y)
+        )
+        // While auto-scroll slides content under a still pointer, keep the
+        // proposal tracking the row that is actually underneath it.
+        scrollDriver.onAutoScroll = { offset in
+            guard let pointer = pointerInViewport else { return }
+            _ = updateProposal(at: CGPoint(x: pointer.x, y: pointer.y + offset))
+        }
+        scrollDriver.updateAutoScroll(pointerViewportY: pointerInViewport?.y ?? location.y)
+        return updateProposal(at: location)
+    }
+
+    private func updateProposal(at location: CGPoint) -> Bool {
+        // No recorded payload: either a foreign drag (text from outside —
+        // the drop would no-op, so promise nothing) or a trailing
+        // dropUpdated after a completed drop, which must not resurrect the
+        // indicator (dropExited doesn't reliably fire after a drop).
+        guard let payload = store.activeSidebarDrag else {
+            if dropProposal != nil { dropProposal = nil }
+            scheduleAutoExpand(for: nil)
+            return false
+        }
+        // Resolve against gap-free geometry so the open drop gap can't
+        // feed back into the proposal that opened it. Plucked rows are out
+        // of the flow entirely.
+        let (frames, divider, y): ([UUID: CGRect], CGRect?, CGFloat) = {
+            guard let gapID = dropProposal?.gapRowID else {
+                return (rowFrames, dividerFrame, location.y)
+            }
+            return removingSidebarDropGap(
+                above: gapID,
+                gapHeight: SidebarRowFlowModifier.dropGap,
+                rowFrames: rowFrames,
+                dividerFrame: dividerFrame,
+                pointerY: location.y
+            )
+        }()
+
+        let resolver = SidebarDropResolver(
+            rows: flatRows.filter { !pluckedRowIDs.contains($0.id) },
+            rowFrames: frames,
+            dividerFrame: divider
+        )
+        let resolution = resolver.resolve(
+            at: CGPoint(x: location.x, y: y),
+            dragging: payload,
+            horizontalDelta: location.x - (dragReferenceX ?? location.x)
+        )
+        let proposal = resolution.proposal
+        // Hysteresis: geometry wobbles while the gap and pluck animate, so
+        // the proposal only moves when the resolved slot actually changes.
+        if proposal?.target != dropProposal?.target {
+            dropProposal = proposal
+        }
+        scheduleAutoExpand(for: proposal)
+        // A no-op slot shows nothing but keeps the move cursor; only truly
+        // invalid positions read as forbidden.
+        return !resolution.isInvalid
+    }
+
+    /// Hovering a collapsed folder with drop-into intent springs it open
+    /// after a beat. Folders opened this way fold back at end-of-drag
+    /// unless they received the drop.
+    private func scheduleAutoExpand(for proposal: SidebarDropProposal?) {
+        let target: TerminalFolder.ID? = {
+            if case .folderHighlight(let id) = proposal?.indicator,
+               store.collapsedFolderIDs.contains(id) {
+                return id
+            }
+            return nil
+        }()
+        guard target != autoExpandFolderID else { return }
+        autoExpandWork?.cancel()
+        autoExpandWork = nil
+        autoExpandFolderID = target
+        guard let target else { return }
+        let work = DispatchWorkItem {
+            if store.collapsedFolderIDs.remove(target) != nil {
+                autoExpandedDuringDrag.append(target)
+            }
+        }
+        autoExpandWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Folds back every folder that hover sprang open, except the one that
+    /// received the drop (Finder behavior).
+    private func recollapseAutoExpandedFolders(except keepID: TerminalFolder.ID?) {
+        for folderID in autoExpandedDuringDrag where folderID != keepID {
+            store.collapsedFolderIDs.insert(folderID)
+        }
+        autoExpandedDuringDrag = []
+    }
+
+    private func endDragTracking() {
+        dropProposal = nil
+        stopDragMachinery()
+    }
+
+    /// Stops timers and auto-scroll without touching the drop proposal:
+    /// the commit path keeps the gap open until the dropped rows land in it.
+    private func stopDragMachinery() {
+        pointerInViewport = nil
+        dragReferenceX = nil
+        scrollDriver.onAutoScroll = nil
+        scrollDriver.stop()
+        autoExpandWork?.cancel()
+        autoExpandWork = nil
+        autoExpandFolderID = nil
+    }
+
+    // MARK: End-of-drag watch
+
+    private func startDragWatch() {
+        guard dragWatchTimer == nil else { return }
+        dragReleaseTicks = 0
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor in dragWatchTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        dragWatchTimer = timer
+    }
+
+    private func stopDragWatch() {
+        dragWatchTimer?.invalidate()
+        dragWatchTimer = nil
+        dragReleaseTicks = 0
+    }
+
+    private func dragWatchTick() {
+        guard NSEvent.pressedMouseButtons == 0 else {
+            dragReleaseTicks = 0
+            return
+        }
+        // Grace ticks: a release over a drop target delivers performDrop
+        // within the first beat and stops the watch before we get here.
+        dragReleaseTicks += 1
+        guard dragReleaseTicks >= 2 else { return }
+        cancelDrag()
+    }
+
+    /// The drag ended without a drop (ESC, or released outside every
+    /// target): undo everything the flight changed.
+    private func cancelDrag() {
+        stopDragWatch()
+        if case .folder(let folderID) = store.activeSidebarDrag {
+            restoreDraggedFolderExpansion(folderID)
+        }
+        store.activeSidebarDrag = nil
+        recollapseAutoExpandedFolders(except: nil)
+        pluckedRowIDs = []
+        endDragTracking()
+    }
+
+    /// Commit: decodes the real payload (the recorded one may be stale for
+    /// foreign drags) and maps the final proposal onto store mutations.
+    private func performDrop(_ info: DropInfo) -> Bool {
+        stopDragWatch()
+        let proposal = dropProposal
+        // The proposal (and its open gap) stays up through the commit; only
+        // the machinery stops here.
+        stopDragMachinery()
+        // Cleared synchronously so any trailing dropUpdated resolves to no
+        // payload — and therefore no indicator.
+        store.activeSidebarDrag = nil
+        guard let proposal else {
+            abandonDrop()
+            return false
+        }
+        let providers = info.itemProviders(for: [.text])
+        guard !providers.isEmpty else {
+            abandonDrop()
+            return false
+        }
+        let spaceID = space.id
+        Task { @MainActor in
+            var items: [String] = []
+            for provider in providers {
+                if let item = await provider.sidebarDragString() {
+                    items.append(item)
+                }
+            }
+            guard let payload = SidebarDragPayload.decode(items: items) else {
+                abandonDrop()
+                return
+            }
+            // Phase 1 — reorder while the dragged rows are still plucked:
+            // zero-height rows moving changes nothing on screen, and the
+            // suppressed animation keeps SwiftUI from sliding the row from
+            // its old slot to the drop point.
+            suppressLayoutAnimation = true
+            store.applySidebarDrop(payload, target: proposal.target, inSpace: spaceID)
+            // A tab that landed inside a collapsed folder must stay
+            // visible: open the folder it ended up in.
+            var landedFolderID: TerminalFolder.ID?
+            if case .tabs(let ids) = payload, let first = ids.first {
+                landedFolderID = store.spaces
+                    .flatMap(\.pinnedFolders)
+                    .first { $0.sessions.contains { $0.id == first } }?
+                    .id
+            }
+            let keepFolderID = landedFolderID
+            // Phase 2, next runloop pass — the gap closes and the rows
+            // expand in the same transaction, so the drop reads as the
+            // ghost settling into the space that was already open for it.
+            DispatchQueue.main.async {
+                suppressLayoutAnimation = false
+                dropProposal = nil
+                pluckedRowIDs = []
+                if case .folder(let folderID) = payload {
+                    restoreDraggedFolderExpansion(folderID)
+                }
+                if let keepFolderID {
+                    _ = store.collapsedFolderIDs.remove(keepFolderID)
+                }
+                recollapseAutoExpandedFolders(except: keepFolderID)
+            }
+        }
+        return true
+    }
+
+    /// A drop that can't commit (no proposal, foreign payload): clear the
+    /// drag leftovers immediately.
+    private func abandonDrop() {
+        dropProposal = nil
+        recollapseAutoExpandedFolders(except: nil)
+        pluckedRowIDs = []
+    }
 }
 
 /// 18×18 icon button with its own hover wash so the click target reads
@@ -1479,6 +1721,9 @@ private struct SpaceIndicatorBar: View {
 
     @State private var hoveredSpaceID: SidebarSpace.ID?
     @State private var plusHovered = false
+    /// Spring-loading: a drag hovering a space dot switches to that space
+    /// after a beat, so mouse drags can cross spaces.
+    @State private var springLoadWork: DispatchWorkItem?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1517,6 +1762,11 @@ private struct SpaceIndicatorBar: View {
                     }
                     .disabled(store.spaces.count == 1)
                 }
+                .onDrop(of: [.text], delegate: SpaceDotSpringDelegate(
+                    onEnter: { scheduleSpringLoad(to: space.id) },
+                    onExit: { cancelSpringLoad() },
+                    onPerform: { handleDotDrop($0, spaceID: space.id) }
+                ))
             }
 
             Button(action: onCreate) {
@@ -1538,6 +1788,65 @@ private struct SpaceIndicatorBar: View {
         .frame(height: 30)
         .padding(.bottom, 6)
     }
+
+    private func scheduleSpringLoad(to spaceID: SidebarSpace.ID) {
+        springLoadWork?.cancel()
+        springLoadWork = nil
+        guard spaceID != store.activeSpaceID else { return }
+        let work = DispatchWorkItem {
+            withAnimation(.spring(duration: 0.32, bounce: 0.12)) {
+                store.setActiveSpace(spaceID)
+            }
+        }
+        springLoadWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func cancelSpringLoad() {
+        springLoadWork?.cancel()
+        springLoadWork = nil
+    }
+
+    /// Releasing on a dot moves the payload to that space outright — the
+    /// same semantics as the "Move to Space" context menu.
+    private func handleDotDrop(_ info: DropInfo, spaceID: SidebarSpace.ID) -> Bool {
+        cancelSpringLoad()
+        let providers = info.itemProviders(for: [.text])
+        guard !providers.isEmpty else { return false }
+        Task { @MainActor in
+            var items: [String] = []
+            for provider in providers {
+                if let item = await provider.sidebarDragString() {
+                    items.append(item)
+                }
+            }
+            guard let payload = SidebarDragPayload.decode(items: items) else { return }
+            switch payload {
+            case .tabs(let ids):
+                store.unpin(Set(ids), inSpace: spaceID)
+            case .folder(let folderID):
+                store.moveFolder(folderID, toSpace: spaceID)
+                if store.sidebarDragFolderWasExpanded {
+                    _ = store.collapsedFolderIDs.remove(folderID)
+                }
+            }
+            store.activeSidebarDrag = nil
+        }
+        return true
+    }
+}
+
+/// Spring-load delegate for one space dot: entering starts the delayed
+/// switch, leaving cancels it, releasing moves the payload to the space.
+private struct SpaceDotSpringDelegate: DropDelegate {
+    let onEnter: () -> Void
+    let onExit: () -> Void
+    let onPerform: (DropInfo) -> Bool
+
+    func dropEntered(info: DropInfo) { onEnter() }
+    func dropExited(info: DropInfo) { onExit() }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func performDrop(info: DropInfo) -> Bool { onPerform(info) }
 }
 
 private struct SpaceIndicatorIcon: View {

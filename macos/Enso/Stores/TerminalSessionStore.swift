@@ -230,17 +230,18 @@ final class TerminalSessionStore: ObservableObject {
             var inserted = false
             var revealFolderID: TerminalFolder.ID?
 
-            if let index = spaces[spaceIndex].pinnedSessions.firstIndex(where: { $0.id == selectedID }) {
-                spaces[spaceIndex].pinnedSessions.insert(session, at: index + 1)
+            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == selectedID }) {
+                spaces[spaceIndex].pinnedItems.insert(.tab(session), at: itemIndex + 1)
                 inserted = true
             } else {
-                for folderIndex in spaces[spaceIndex].pinnedFolders.indices {
-                    if let index = spaces[spaceIndex].pinnedFolders[folderIndex].sessions.firstIndex(where: { $0.id == selectedID }) {
-                        spaces[spaceIndex].pinnedFolders[folderIndex].sessions.insert(session, at: index + 1)
-                        revealFolderID = spaces[spaceIndex].pinnedFolders[folderIndex].id
-                        inserted = true
-                        break
+                spaces[spaceIndex].modifyFolders { folder in
+                    guard !inserted,
+                          let index = folder.sessions.firstIndex(where: { $0.id == selectedID }) else {
+                        return
                     }
+                    folder.sessions.insert(session, at: index + 1)
+                    revealFolderID = folder.id
+                    inserted = true
                 }
                 if !inserted, let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == selectedID }) {
                     spaces[spaceIndex].ephemeralSessions.insert(session, at: index + 1)
@@ -275,15 +276,14 @@ final class TerminalSessionStore: ObservableObject {
     /// shouldn't lose the project.
     func createSession(inFolder folderID: TerminalFolder.ID, workingDirectory: String? = nil) {
         for spaceIndex in spaces.indices {
-            guard let folderIndex = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == folderID }) else {
+            guard let folder = spaces[spaceIndex].pinnedFolders.first(where: { $0.id == folderID }) else {
                 continue
             }
-            let folder = spaces[spaceIndex].pinnedFolders[folderIndex]
             let cwd = workingDirectory
                 ?? folder.sessions.max(by: { $0.lastActivity < $1.lastActivity })?.workingDirectory
                 ?? Self.existingDirectory(folder.lastWorkingDirectory)
             let session = Self.makeSession(workingDirectory: cwd, accentIndex: sessions.count)
-            spaces[spaceIndex].pinnedFolders[folderIndex].sessions.append(session)
+            spaces[spaceIndex].modifyFolder(folderID) { $0.sessions.append(session) }
             if spaces[spaceIndex].id != activeSpaceID {
                 setActiveSpace(spaces[spaceIndex].id)
             }
@@ -298,7 +298,9 @@ final class TerminalSessionStore: ObservableObject {
 
     func createFolder(inSpace spaceID: SidebarSpace.ID? = nil) {
         withSpace(spaceID ?? activeSpaceID) { space in
-            space.pinnedFolders.append(TerminalFolder(title: "Folder \(space.pinnedFolders.count + 1)"))
+            space.pinnedItems.append(
+                .folder(TerminalFolder(title: "Folder \(space.pinnedFolders.count + 1)"))
+            )
         }
         save()
     }
@@ -308,8 +310,8 @@ final class TerminalSessionStore: ObservableObject {
         let moved = removeSessions(with: sessionIDs)
         guard !moved.isEmpty else { return }
         withSpace(spaceID) { space in
-            space.pinnedFolders.append(
-                TerminalFolder(title: "Folder \(space.pinnedFolders.count + 1)", sessions: moved)
+            space.pinnedItems.append(
+                .folder(TerminalFolder(title: "Folder \(space.pinnedFolders.count + 1)", sessions: moved))
             )
         }
         save()
@@ -343,7 +345,7 @@ final class TerminalSessionStore: ObservableObject {
         let moved = removeSessions(with: sessionIDs)
         guard !moved.isEmpty else { return }
         withSpace(spaceID) { space in
-            space.pinnedSessions.append(contentsOf: moved)
+            space.pinnedItems.append(contentsOf: moved.map(SidebarPinnedItem.tab))
         }
         save()
     }
@@ -362,8 +364,7 @@ final class TerminalSessionStore: ObservableObject {
         let moved = removeSessions(with: sessionIDs)
         guard !moved.isEmpty else { return }
         for spaceIndex in spaces.indices {
-            if let folderIndex = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == folderID }) {
-                spaces[spaceIndex].pinnedFolders[folderIndex].sessions.append(contentsOf: moved)
+            if spaces[spaceIndex].modifyFolder(folderID, { $0.sessions.append(contentsOf: moved) }) {
                 break
             }
         }
@@ -378,17 +379,25 @@ final class TerminalSessionStore: ObservableObject {
         guard !moved.isEmpty else { return }
 
         for spaceIndex in spaces.indices {
-            if let index = spaces[spaceIndex].pinnedSessions.firstIndex(where: { $0.id == targetID }) {
-                spaces[spaceIndex].pinnedSessions.insert(contentsOf: moved, at: index)
+            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == targetID }) {
+                spaces[spaceIndex].pinnedItems.insert(
+                    contentsOf: moved.map(SidebarPinnedItem.tab), at: itemIndex
+                )
                 save()
                 return
             }
-            for folderIndex in spaces[spaceIndex].pinnedFolders.indices {
-                if let index = spaces[spaceIndex].pinnedFolders[folderIndex].sessions.firstIndex(where: { $0.id == targetID }) {
-                    spaces[spaceIndex].pinnedFolders[folderIndex].sessions.insert(contentsOf: moved, at: index)
-                    save()
+            var insertedInFolder = false
+            spaces[spaceIndex].modifyFolders { folder in
+                guard !insertedInFolder,
+                      let index = folder.sessions.firstIndex(where: { $0.id == targetID }) else {
                     return
                 }
+                folder.sessions.insert(contentsOf: moved, at: index)
+                insertedInFolder = true
+            }
+            if insertedInFolder {
+                save()
+                return
             }
             if let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == targetID }) {
                 spaces[spaceIndex].ephemeralSessions.insert(contentsOf: moved, at: index)
@@ -404,25 +413,55 @@ final class TerminalSessionStore: ObservableObject {
         save()
     }
 
+    /// Reorders: moves sessions so they sit as loose pinned tabs immediately
+    /// before the given folder, in whatever space that folder lives.
+    func insertLoosePinned(_ sessionIDs: Set<TerminalSession.ID>, beforeFolder folderID: TerminalFolder.ID) {
+        let moved = removeSessions(with: sessionIDs)
+        guard !moved.isEmpty else { return }
+        for spaceIndex in spaces.indices {
+            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == folderID }) {
+                spaces[spaceIndex].pinnedItems.insert(
+                    contentsOf: moved.map(SidebarPinnedItem.tab), at: itemIndex
+                )
+                save()
+                return
+            }
+        }
+        // Anchor vanished mid-drag; don't lose the sessions.
+        withSpace(activeSpaceID) { space in
+            space.ephemeralSessions.append(contentsOf: moved)
+        }
+        save()
+    }
+
     /// Removes matching sessions from every space and returns them in display order.
     private func removeSessions(with sessionIDs: Set<TerminalSession.ID>) -> [TerminalSession] {
         var moved: [TerminalSession] = []
         for index in spaces.indices {
-            moved += spaces[index].pinnedSessions.filter { sessionIDs.contains($0.id) }
-            spaces[index].pinnedSessions.removeAll { sessionIDs.contains($0.id) }
-
-            for folderIndex in spaces[index].pinnedFolders.indices {
-                let folderSessions = spaces[index].pinnedFolders[folderIndex].sessions
-                let leaving = folderSessions.filter { sessionIDs.contains($0.id) }
-                guard !leaving.isEmpty else { continue }
-                // A folder losing tabs remembers its most recently active
-                // tab's cwd, so even the last tab leaving (close, expiry,
-                // move-out) keeps the folder's project directory.
-                if let lastActive = folderSessions.max(by: { $0.lastActivity < $1.lastActivity }) {
-                    spaces[index].pinnedFolders[folderIndex].lastWorkingDirectory = lastActive.workingDirectory
+            // One pass over the interleaved pinned list keeps display order.
+            for itemIndex in spaces[index].pinnedItems.indices {
+                switch spaces[index].pinnedItems[itemIndex] {
+                case .tab(let session):
+                    if sessionIDs.contains(session.id) {
+                        moved.append(session)
+                    }
+                case .folder(var folder):
+                    let leaving = folder.sessions.filter { sessionIDs.contains($0.id) }
+                    guard !leaving.isEmpty else { continue }
+                    // A folder losing tabs remembers its most recently active
+                    // tab's cwd, so even the last tab leaving (close, expiry,
+                    // move-out) keeps the folder's project directory.
+                    if let lastActive = folder.sessions.max(by: { $0.lastActivity < $1.lastActivity }) {
+                        folder.lastWorkingDirectory = lastActive.workingDirectory
+                    }
+                    moved += leaving
+                    folder.sessions.removeAll { sessionIDs.contains($0.id) }
+                    spaces[index].pinnedItems[itemIndex] = .folder(folder)
                 }
-                moved += leaving
-                spaces[index].pinnedFolders[folderIndex].sessions.removeAll { sessionIDs.contains($0.id) }
+            }
+            spaces[index].pinnedItems.removeAll { item in
+                if case .tab(let session) = item { return sessionIDs.contains(session.id) }
+                return false
             }
 
             moved += spaces[index].ephemeralSessions.filter { sessionIDs.contains($0.id) }
@@ -467,32 +506,35 @@ final class TerminalSessionStore: ObservableObject {
         save()
     }
 
-    /// Reorders: moves a folder so it sits immediately before the target
-    /// folder, in whatever space the target lives.
-    func insertFolder(_ folderID: TerminalFolder.ID, before targetID: TerminalFolder.ID) {
-        guard folderID != targetID, let folder = removeFolder(folderID) else { return }
+    /// Reorders: moves a folder so it sits immediately before the given
+    /// pinned item (a loose tab or another folder), in whatever space that
+    /// item lives.
+    func insertFolder(_ folderID: TerminalFolder.ID, beforeItem itemID: UUID) {
+        guard folderID != itemID, let folder = removeFolder(folderID) else { return }
         for spaceIndex in spaces.indices {
-            if let index = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == targetID }) {
-                spaces[spaceIndex].pinnedFolders.insert(folder, at: index)
+            if let index = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == itemID }) {
+                spaces[spaceIndex].pinnedItems.insert(.folder(folder), at: index)
                 save()
                 return
             }
         }
-        // Target vanished mid-drag; don't lose the folder.
-        withSpace(activeSpaceID) { $0.pinnedFolders.append(folder) }
+        // Anchor vanished mid-drag; don't lose the folder.
+        withSpace(activeSpaceID) { $0.pinnedItems.append(.folder(folder)) }
         save()
     }
 
     func moveFolder(_ folderID: TerminalFolder.ID, toSpace spaceID: SidebarSpace.ID) {
         guard let folder = removeFolder(folderID) else { return }
-        withSpace(spaceID) { $0.pinnedFolders.append(folder) }
+        withSpace(spaceID) { $0.pinnedItems.append(.folder(folder)) }
         save()
     }
 
     private func removeFolder(_ folderID: TerminalFolder.ID) -> TerminalFolder? {
         for spaceIndex in spaces.indices {
-            if let index = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == folderID }) {
-                return spaces[spaceIndex].pinnedFolders.remove(at: index)
+            if let index = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == folderID }),
+               case .folder(let folder) = spaces[spaceIndex].pinnedItems[index] {
+                spaces[spaceIndex].pinnedItems.remove(at: index)
+                return folder
             }
         }
         return nil
@@ -500,15 +542,60 @@ final class TerminalSessionStore: ObservableObject {
 
     func deleteFolder(_ folderID: TerminalFolder.ID) {
         for spaceIndex in spaces.indices {
-            guard let index = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == folderID }) else {
+            guard let index = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == folderID }),
+                  case .folder(let folder) = spaces[spaceIndex].pinnedItems[index] else {
                 continue
             }
-            // Folder rows disappear but their tabs survive as loose pinned tabs.
-            spaces[spaceIndex].pinnedSessions.append(contentsOf: spaces[spaceIndex].pinnedFolders[index].sessions)
-            spaces[spaceIndex].pinnedFolders.remove(at: index)
+            // The folder row disappears but its tabs survive, in place, as
+            // loose pinned tabs.
+            spaces[spaceIndex].pinnedItems.replaceSubrange(
+                index...index, with: folder.sessions.map(SidebarPinnedItem.tab)
+            )
             break
         }
         save()
+    }
+
+    // MARK: - Sidebar drag and drop
+
+    /// The payload of the sidebar drag currently in flight, recorded at drag
+    /// start. Hover-time drop projection needs to know what's being dragged,
+    /// but AppKit only hands over item providers at drop time. Store-level so
+    /// it survives space switches mid-drag. A cancelled drag leaves it stale
+    /// (there's no end-of-drag hook); the next drag start overwrites it.
+    var activeSidebarDrag: SidebarDragPayload?
+    /// Whether the folder in flight was expanded before its drag collapsed it.
+    var sidebarDragFolderWasExpanded = false
+
+    /// The single commit point for sidebar drops: maps a resolved drop target
+    /// onto the store's mutations. Every target is anchor-based, so nothing
+    /// here depends on the dragged rows' old positions.
+    func applySidebarDrop(
+        _ payload: SidebarDragPayload,
+        target: SidebarDropTarget,
+        inSpace spaceID: SidebarSpace.ID
+    ) {
+        switch (payload, target) {
+        case (.tabs(let ids), .insertBefore(let anchor)):
+            insert(Set(ids), before: anchor)
+        case (.tabs(let ids), .insertLooseBefore(let folderID)):
+            insertLoosePinned(Set(ids), beforeFolder: folderID)
+        case (.tabs(let ids), .appendToPinned):
+            pin(Set(ids), inSpace: spaceID)
+        case (.tabs(let ids), .appendToFolder(let folderID)),
+             (.tabs(let ids), .intoFolder(let folderID)):
+            move(Set(ids), toFolder: folderID)
+        case (.tabs(let ids), .appendToEphemeral):
+            unpin(Set(ids), inSpace: spaceID)
+        case (.folder(let folderID), .insertFolderBefore(let anchor)):
+            insertFolder(folderID, beforeItem: anchor)
+        case (.folder(let folderID), .appendFolder):
+            moveFolder(folderID, toSpace: spaceID)
+        default:
+            // The resolver never pairs a folder payload with a tab target or
+            // vice versa; a mismatch means a stale/foreign drop. Ignore it.
+            break
+        }
     }
 
     // MARK: - Renaming / status
@@ -629,8 +716,7 @@ final class TerminalSessionStore: ObservableObject {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         for spaceIndex in spaces.indices {
-            if let index = spaces[spaceIndex].pinnedFolders.firstIndex(where: { $0.id == folder.id }) {
-                spaces[spaceIndex].pinnedFolders[index].title = trimmed
+            if spaces[spaceIndex].modifyFolder(folder.id, { $0.title = trimmed }) {
                 break
             }
         }
@@ -655,11 +741,13 @@ final class TerminalSessionStore: ObservableObject {
     /// lose the value if the app quits uncleanly.
     private func rememberWorkingDirectory(_ path: String, forFolderContaining sessionID: TerminalSession.ID) {
         for spaceIndex in spaces.indices {
-            for folderIndex in spaces[spaceIndex].pinnedFolders.indices
-            where spaces[spaceIndex].pinnedFolders[folderIndex].sessions.contains(where: { $0.id == sessionID }) {
-                spaces[spaceIndex].pinnedFolders[folderIndex].lastWorkingDirectory = path
-                return
+            var found = false
+            spaces[spaceIndex].modifyFolders { folder in
+                guard !found, folder.sessions.contains(where: { $0.id == sessionID }) else { return }
+                folder.lastWorkingDirectory = path
+                found = true
             }
+            if found { return }
         }
     }
 
@@ -788,13 +876,16 @@ final class TerminalSessionStore: ObservableObject {
 
     private func update(_ id: TerminalSession.ID, mutate: (inout TerminalSession) -> Void) {
         for spaceIndex in spaces.indices {
-            if let index = spaces[spaceIndex].pinnedSessions.firstIndex(where: { $0.id == id }) {
-                mutate(&spaces[spaceIndex].pinnedSessions[index])
-                return
-            }
-            for folderIndex in spaces[spaceIndex].pinnedFolders.indices {
-                if let index = spaces[spaceIndex].pinnedFolders[folderIndex].sessions.firstIndex(where: { $0.id == id }) {
-                    mutate(&spaces[spaceIndex].pinnedFolders[folderIndex].sessions[index])
+            for itemIndex in spaces[spaceIndex].pinnedItems.indices {
+                if case .tab(var session) = spaces[spaceIndex].pinnedItems[itemIndex], session.id == id {
+                    mutate(&session)
+                    spaces[spaceIndex].pinnedItems[itemIndex] = .tab(session)
+                    return
+                }
+                if case .folder(var folder) = spaces[spaceIndex].pinnedItems[itemIndex],
+                   let index = folder.sessions.firstIndex(where: { $0.id == id }) {
+                    mutate(&folder.sessions[index])
+                    spaces[spaceIndex].pinnedItems[itemIndex] = .folder(folder)
                     return
                 }
             }
