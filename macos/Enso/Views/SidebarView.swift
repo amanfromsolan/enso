@@ -735,20 +735,30 @@ private struct SpacePage: View {
                 // Inserted only on hover so the title gets the full row width
                 // when idle — see spaceHeader. Gated off during rename too,
                 // so hovering can't resize the focused rename field.
+                // A flush cluster: 24pt frames touching each other, filling
+                // the content box so the row's 4pt insets are what set their
+                // distance from the edges.
                 if isHovered && !isRenaming {
-                    HoverIconButton(systemName: "plus", help: "New Terminal in Folder") {
-                        store.createSession(inFolder: folder.id)
-                    }
+                    HStack(spacing: 0) {
+                        HoverIconButton(systemName: "plus", help: "New Terminal in Folder", size: 24, washOpacity: 0.09) {
+                            store.createSession(inFolder: folder.id)
+                        }
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Theme.text(0.4))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.text(0.4))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .frame(width: 24, height: 24)
+                    }
                 }
             }
-            .frame(minHeight: 18)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
+            // 24pt content box in 4pt vertical insets: same 32pt row as the
+            // old 18-in-7, but the hover icons reach to 4pt off every edge.
+            // The extra leading keeps the text block where it always was.
+            .frame(minHeight: 24)
+            .padding(.leading, 9)
+            .padding(.trailing, 4)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7)
@@ -922,25 +932,33 @@ private struct SpacePage: View {
 
             Spacer(minLength: 0)
             if hoveredSessionID == session.id && !isRenaming {
-                // Hover-revealed × on the tab row.
+                // Hover-revealed × on the tab row; same frame and insets as
+                // the folder header's trailing icons.
                 HoverIconButton(
                     help: "Close Tab",
-                    size: 16,
+                    size: 24,
                     idleTint: 0.5,
-                    washOpacity: 0.14,
+                    washOpacity: 0.09,
                     action: { store.close(sessionID: session.id) }
                 ) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                 }
             } else if session.status == .attention {
                 Circle()
                     .fill(Color.orange)
                     .frame(width: 6, height: 6)
+                    // The dot keeps its pre-icon-inset spot (9pt optical)
+                    // instead of following the icons out to the 4pt inset.
+                    .padding(.trailing, 5)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
+        // 24pt content box in 4pt insets — see the folder header: same 32pt
+        // row, hover × reaches to 4pt off the edges, text stays put.
+        .frame(minHeight: 24)
+        .padding(.leading, 9)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             selectedRowBackground(
@@ -1379,11 +1397,11 @@ private struct HoverIconButton<Label: View>: View {
 
 extension HoverIconButton where Label == AnyView {
     /// SF Symbol shorthand at the shared header glyph size.
-    init(systemName: String, help: String, action: @escaping () -> Void) {
-        self.init(help: help, action: action) {
+    init(systemName: String, help: String, size: CGFloat = 18, washOpacity: Double = 0.12, action: @escaping () -> Void) {
+        self.init(help: help, size: size, washOpacity: washOpacity, action: action) {
             AnyView(
                 Image(systemName: systemName)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
             )
         }
     }
