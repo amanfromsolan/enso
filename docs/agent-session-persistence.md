@@ -285,6 +285,20 @@ One toggle in SettingsPanelView: "Resume agent sessions on relaunch"
 injection on new surfaces, no restore at launch. Recording costs nothing and follows
 the same gate (env vars absent → wrappers pass through inertly even if still on PATH).
 
+## Live attention events (#30)
+
+The map files carry more than restore state. The claude wrapper also registers
+`Notification` (claude is waiting on a permission prompt or input; payload has a
+human-readable `message`) and `Stop` (claude finished responding) hooks through the
+same relay, and the codex wrapper's existing `hooks.Stop` serves the same role.
+`AgentAttentionWatcher` tails the map files while the app runs — a 1s stat-and-offset
+poll that reads only appended bytes — and surfaces these events for tabs the user
+isn't looking at as the sidebar's attention dot plus a clickable system notification
+(`AgentNotificationCenter`); selecting the tab clears the dot. Restore compaction is
+untouched: unknown hook names only refresh session id/cwd/timestamps, so recording
+and restore semantics are unchanged, and the extra few lines per turn keep map files
+well within the small-file envelope.
+
 ## Cleanup
 
 - App launch: rewrite shims dir (version stamp), orphan-GC map files, delete stale

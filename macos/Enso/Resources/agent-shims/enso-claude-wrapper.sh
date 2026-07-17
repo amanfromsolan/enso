@@ -275,8 +275,11 @@ if [[ "$enso_user_settings" == true || ! -x "$enso_relay" ]]; then
 fi
 
 # claude merges hooks from different settings sources, so injecting ours
-# never disables the user's own hooks.
+# never disables the user's own hooks. SessionStart/SessionEnd feed restore;
+# Notification (claude is waiting on a permission prompt or input) and Stop
+# (claude finished responding) feed the app's live attention watcher.
 enso_relay_json="$(enso_json_escape "$enso_relay")"
-ENSO_HOOKS_JSON='{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"\"'"$enso_relay_json"'\" claude","timeout":10}]}],"SessionEnd":[{"matcher":"","hooks":[{"type":"command","command":"\"'"$enso_relay_json"'\" claude","timeout":10}]}]}}'
+enso_hook_entry='[{"matcher":"","hooks":[{"type":"command","command":"\"'"$enso_relay_json"'\" claude","timeout":10}]}]'
+ENSO_HOOKS_JSON='{"hooks":{"SessionStart":'"$enso_hook_entry"',"SessionEnd":'"$enso_hook_entry"',"Notification":'"$enso_hook_entry"',"Stop":'"$enso_hook_entry"'}}'
 
 exec "$REAL" --session-id "$ENSO_SESSION_ID" --settings "$ENSO_HOOKS_JSON" "$@"

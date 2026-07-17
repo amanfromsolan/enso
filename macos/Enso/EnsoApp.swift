@@ -122,6 +122,12 @@ struct EnsoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var sessionStore: TerminalSessionStore
 
+    /// Agent-attention plumbing (#30), held for the app's lifetime. Static
+    /// because App structs can be recreated by SwiftUI, and the watcher's
+    /// timer must start exactly once.
+    private static var attentionWatcher: AgentAttentionWatcher?
+    private static var attentionNotifier: AgentNotificationCenter?
+
     init() {
         // macOS ships with font smoothing off since Big Sur, which renders
         // small light-on-dark UI text thin and brittle. Opt this app back in
@@ -143,6 +149,32 @@ struct EnsoApp: App {
         _sessionStore = StateObject(wrappedValue: store)
         AgentShimInstaller.installIfNeeded()
         AgentSessionStore.shared.bootstrap(knownTabIDs: Set(store.sessions.map(\.id)))
+
+        // Agent attention (#30): tail the map files for the Notification and
+        // Stop hooks the wrappers register, mark the tab's sidebar row, and
+        // post a clickable system notification when the user isn't already
+        // looking at that tab. Gated like recording itself — with the setting
+        // off no surface gets the shim env, so no events can ever arrive and
+        // the poll timer would be pure waste.
+        if AgentSessionStore.shared.isEnabled, Self.attentionWatcher == nil {
+            let notifier = AgentNotificationCenter()
+            notifier.activate()
+            notifier.onSelectTab = { tabID in
+                store.reveal(tabID)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            let watcher = AgentAttentionWatcher(
+                directory: AgentSessionStore.defaultDirectory
+            ) { tabID, event in
+                guard let title = store.handleAgentAttention(
+                    tabID: tabID, isAppActive: NSApp.isActive
+                ) else { return }
+                notifier.post(tabID: tabID, title: title, body: event.notificationBody)
+            }
+            watcher.start()
+            Self.attentionWatcher = watcher
+            Self.attentionNotifier = notifier
+        }
     }
 
     var body: some Scene {

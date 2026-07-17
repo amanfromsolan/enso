@@ -11,6 +11,7 @@ final class TerminalSessionStore: ObservableObject {
         didSet {
             touch(selection)
             recordRecency(selection)
+            clearAttention(selection)
         }
     }
     /// Rows highlighted for multi-select actions (folder creation, bulk close).
@@ -830,6 +831,35 @@ final class TerminalSessionStore: ObservableObject {
         }
     }
 
+    /// An agent in the tab asked for the user (Notification hook) or
+    /// finished a response (Stop hook). Marks the tab's row with the
+    /// attention dot and returns its title when the caller should also post
+    /// a system notification — nil means stay silent: the tab is unknown,
+    /// the user is already looking at it (selected while the app is active),
+    /// or it is already marked (one notification per attention episode; the
+    /// dot persists until the tab is selected). AppKit-free on purpose: the
+    /// caller passes app activity, and EnsoApp owns the UserNotifications
+    /// side, so this stays testable without a signed bundle.
+    func handleAgentAttention(tabID: TerminalSession.ID, isAppActive: Bool) -> String? {
+        guard let session = sessions.first(where: { $0.id == tabID }) else { return nil }
+        if tabID == selection, isAppActive { return nil }
+        let alreadyMarked = session.status == .attention
+        update(tabID) { item in
+            item.status = .attention
+            item.lastActivity = .now
+        }
+        return alreadyMarked ? nil : session.title
+    }
+
+    /// Selecting a tab acknowledges its attention dot. Guarded like recency
+    /// recording: Ctrl-Tab previews pass through tabs the user never chose,
+    /// so only the committed pick (via recordSelectionRecency) clears.
+    private func clearAttention(_ sessionID: TerminalSession.ID?) {
+        guard let sessionID, !isCyclingSelection else { return }
+        guard sessions.first(where: { $0.id == sessionID })?.status == .attention else { return }
+        update(sessionID) { $0.status = .running }
+    }
+
     // MARK: - Focus navigation (within the active space)
 
     func focusNextSession() {
@@ -888,9 +918,11 @@ final class TerminalSessionStore: ObservableObject {
         return ranked + rest
     }
 
-    /// Called by the switcher on commit, after cycling suppressed recording.
+    /// Called by the switcher on commit, after cycling suppressed recording
+    /// (and attention clearing — the committed pick is the acknowledgment).
     func recordSelectionRecency() {
         recordRecency(selection)
+        clearAttention(selection)
     }
 
     /// Every session in recency order across spaces (active space first),
