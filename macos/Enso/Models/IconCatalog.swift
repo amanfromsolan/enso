@@ -62,11 +62,13 @@ struct IconCatalog {
     }
 
     /// Every icon the shuffle button may land on: all curated symbols (minus
-    /// the dot stand-in) plus all emoji. The plain dot is intentionally left
-    /// out — shuffle is for serendipity, not the default.
+    /// the dot stand-in) plus all emoji except the Flags category. The plain
+    /// dot is intentionally left out — shuffle is for serendipity, not the
+    /// default; flags are excluded because a random country flag is rarely a
+    /// meaningful space icon.
     var shuffleChoices: [SidebarSpace.Icon] {
         symbols.dropFirst().map { SidebarSpace.Icon.symbol($0.symbol) }
-            + emoji.map { SidebarSpace.Icon.emoji($0.emoji) }
+            + emoji.filter { $0.category != "Flags" }.map { SidebarSpace.Icon.emoji($0.emoji) }
     }
 
     static func load(from bundle: Bundle = .main) -> IconCatalog {

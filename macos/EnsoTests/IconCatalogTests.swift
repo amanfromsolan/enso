@@ -29,9 +29,21 @@ struct IconCatalogTests {
     }
 
     @Test func shuffleDrawsFromSymbolsAndEmoji() {
-        // Full curated set, minus the dot stand-in, plus every emoji.
-        let expected = (catalog.symbols.count - 1) + catalog.emoji.count
+        // Full curated set, minus the dot stand-in, plus every emoji outside
+        // the Flags category.
+        let nonFlagEmoji = catalog.emoji.filter { $0.category != "Flags" }
+        let expected = (catalog.symbols.count - 1) + nonFlagEmoji.count
         #expect(catalog.shuffleChoices.count == expected)
         #expect(!catalog.shuffleChoices.contains(.dot))
+    }
+
+    @Test func shuffleExcludesFlagEmoji() {
+        let flagIcons = Set(
+            catalog.emoji
+                .filter { $0.category == "Flags" }
+                .map { SidebarSpace.Icon.emoji($0.emoji) }
+        )
+        #expect(!flagIcons.isEmpty)
+        #expect(catalog.shuffleChoices.allSatisfy { !flagIcons.contains($0) })
     }
 }
