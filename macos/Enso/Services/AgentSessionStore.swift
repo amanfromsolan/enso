@@ -20,6 +20,12 @@ final class AgentSessionStore {
     private(set) var quitSnapshot: QuitSnapshot?
     /// Restore is offered at most once per tab per app run.
     private var consumedTabIDs: Set<UUID> = []
+    /// Tabs whose adapter said "restorable" when bootstrap ran the full
+    /// policy once, disk checks included. Valid for the whole run: the
+    /// transcript/rollout files and the quit snapshot don't change meaning
+    /// mid-run — only consumption and the Settings toggle do, and the
+    /// accessors layer those on top.
+    private(set) var restorableAtLaunch: Set<UUID> = []
 
     /// The Settings gate: off → no shim environment on new surfaces —
     /// ENSO_SESSIONS_DIR is what the wrappers key their recording on, so
@@ -75,6 +81,12 @@ final class AgentSessionStore {
                 records[tabID] = record
             }
         }
+        restorableAtLaunch = Set(records.compactMap { tabID, record in
+            guard let adapter = adapters[record.agent],
+                  adapter.restoreCommand(for: record, quitSnapshot: quitSnapshot, now: .now) != nil
+            else { return nil }
+            return tabID
+        })
     }
 
     private func consumeQuitSnapshot() -> QuitSnapshot? {
@@ -143,13 +155,26 @@ final class AgentSessionStore {
         pendingRestore(forTab: tabID) != nil
     }
 
-    /// Cheap superset of hasPendingRestore: the in-memory gates only, no
-    /// adapter policy — the adapters' transcript/rollout existence checks
-    /// hit the disk. The eager sweep uses this to pick and rank candidates
-    /// without paying per-tab I/O up front; the full gate chain still runs
-    /// at each staggered tick.
+    /// hasPendingRestore without the per-call disk I/O: adapter policy is
+    /// the bootstrap-time snapshot, the run-time gates (toggle, consumption)
+    /// are live. The eager sweep uses this to pick and rank candidates —
+    /// counting only tabs that will actually restore, so none of the capped
+    /// warm slots is wasted on a cleanly-ended session — and the sidebar's
+    /// dormant badge reads it per row. The full gate chain still runs at
+    /// each staggered tick.
     func mayRestore(forTab tabID: UUID) -> Bool {
-        isEnabled && !consumedTabIDs.contains(tabID) && records[tabID] != nil
+        isEnabled && !consumedTabIDs.contains(tabID) && restorableAtLaunch.contains(tabID)
+    }
+
+    /// The agent mark a dormant tab should wear in the sidebar — the tab
+    /// holds a session that will resume on first visit (or when the eager
+    /// sweep reaches it), but no process is running yet. Nil once the
+    /// restore is consumed or when nothing would restore. Agent IDs are
+    /// TabProcess raw values ("claude", "codex"), the same identity the
+    /// quit snapshot uses.
+    func dormantAgent(forTab tabID: UUID) -> TabProcess? {
+        guard mayRestore(forTab: tabID) else { return nil }
+        return records[tabID].flatMap { TabProcess(rawValue: $0.agent) }
     }
 
     /// The text typed into the fresh PTY (the trailing newline runs it).

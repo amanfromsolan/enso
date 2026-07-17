@@ -572,38 +572,48 @@ struct AgentSessionStoreTests {
         #expect(!store.hasPendingRestore(forTab: restorableTab))
     }
 
-    @Test func mayRestoreIsACheapSupersetOfPending() throws {
+    @Test func mayRestoreTracksLaunchTimeRestorability() throws {
         let root = try makeRoot()
         defer { try? fm.removeItem(at: root) }
         let restorableTab = UUID()
+        let untouchedTab = UUID()
         let cleanTab = UUID()
         let sessionID = "77777777-7777-7777-7777-777777777777"
         try writeClaudeTranscript(root: root, sessionID: sessionID)
-        try writeMapFile(root: root, tabID: restorableTab, lines: [
-            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
-        ])
-        // Cleanly ended session: adapter policy says no restore, but the
-        // record exists — mayRestore stays true (it's the cheap superset;
-        // the fire-time pending check is what rules this tab out).
+        for tabID in [restorableTab, untouchedTab] {
+            try writeMapFile(root: root, tabID: tabID, lines: [
+                launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+            ])
+        }
+        // Cleanly ended session: the record exists but adapter policy says
+        // no restore — bootstrap's one-time policy pass rules it out, so it
+        // never occupies a warm slot or wears the dormant badge.
         try writeMapFile(root: root, tabID: cleanTab, lines: [
             launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
             hookLine(agent: "claude", name: "SessionEnd", sessionID: sessionID, extra: #","reason":"logout""#, ts: Date.now.timeIntervalSince1970),
         ])
 
         let store = makeStore(root: root)
-        store.bootstrap(knownTabIDs: [restorableTab, cleanTab])
+        store.bootstrap(knownTabIDs: [restorableTab, untouchedTab, cleanTab])
         #expect(store.mayRestore(forTab: restorableTab))
-        #expect(store.mayRestore(forTab: cleanTab))
+        #expect(!store.mayRestore(forTab: cleanTab))
         #expect(!store.mayRestore(forTab: UUID()))
 
-        // Consuming closes the gate…
+        // The dormant badge follows the same gates and knows the agent.
+        #expect(store.dormantAgent(forTab: restorableTab) == .claude)
+        #expect(store.dormantAgent(forTab: cleanTab) == nil)
+
+        // Consuming closes the gate (the tab is warming, badge hands over
+        // to live process detection)…
         _ = store.consumeRestore(forTab: restorableTab)
         #expect(!store.mayRestore(forTab: restorableTab))
+        #expect(store.dormantAgent(forTab: restorableTab) == nil)
 
-        // …and so does the Settings toggle.
+        // …and so does the Settings toggle, for tabs never consumed.
+        #expect(store.mayRestore(forTab: untouchedTab))
         UserDefaults(suiteName: "AgentSessionStoreTests")!
             .set(false, forKey: AgentSessionStore.restoreEnabledDefaultsKey)
-        #expect(!store.mayRestore(forTab: cleanTab))
+        #expect(!store.mayRestore(forTab: untouchedTab))
     }
 
     @Test func closeRemovesMapFile() throws {

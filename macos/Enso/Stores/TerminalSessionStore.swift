@@ -621,17 +621,19 @@ final class TerminalSessionStore: ObservableObject {
     private static let eagerRestoreStagger: TimeInterval = 1.0
 
     /// Ceiling on background restores per launch; tabs beyond it stay lazy
-    /// and restore on first switch, as before #45. Bounds the launch cost —
-    /// each eager restore is a live surface plus an agent process — for
-    /// sessions with dozens of agent tabs.
-    static let maxEagerRestores = 8
+    /// and restore on first switch, as before #45 — wearing the sidebar's
+    /// dormant badge so the pending resume is visible. Bounds the launch
+    /// cost: each eager restore is a live surface plus an agent process
+    /// (the agent dominates — a resumed claude is a full Node process).
+    static let maxEagerRestores = 5
 
     /// The tabs the launch sweep will warm, most recently used first.
     /// lastActivity persists across launches, so the ordering favors the
     /// tabs the user is most likely to switch to right after the selected
-    /// one. The pre-filter (injectable for tests) is the cheap in-memory
-    /// check — plain shell tabs don't occupy stagger slots or count against
-    /// the ceiling, and no transcript I/O happens at scheduling time.
+    /// one. The pre-filter (injectable for tests) is cheap and precise —
+    /// restorability was resolved once at bootstrap, so no transcript I/O
+    /// happens here and no warm slot is spent on a tab that wouldn't
+    /// actually resume.
     func eagerRestoreCandidates(
         mayRestore: (TerminalSession.ID) -> Bool = { AgentSessionStore.shared.mayRestore(forTab: $0) }
     ) -> [TerminalSession] {

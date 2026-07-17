@@ -883,6 +883,13 @@ private struct SpacePage: View {
             Group {
                 if let process = session.runningProcess {
                     ProcessBadgeView(process: process, isSelected: isSelected)
+                } else if let dormant = AgentSessionStore.shared.dormantAgent(forTab: session.id) {
+                    // An agent session lives here but isn't running yet
+                    // (eager sweep hasn't reached it, or it's past the warm
+                    // cap). AgentSessionStore isn't observed; the flip to
+                    // the full-color badge rides on process detection
+                    // updating the session once the resume command runs.
+                    DormantAgentBadgeView(process: dormant, isSelected: isSelected)
                 } else if namer.namingSessions.contains(session.id) {
                     AutoNamingIndicator()
                         .frame(width: 8, height: 8)
@@ -1421,8 +1428,8 @@ private struct ProcessBadgeView: View {
             // badge slot) so pixel edges land on whole pixels. Full-color
             // mark on every tab — its light/dark appearance variants track
             // the app theme via the asset catalog. (The "<base>16Tinted"
-            // template glyphs stay in the catalog as an alternative
-            // inactive treatment.)
+            // template glyphs are the dormant treatment; see
+            // DormantAgentBadgeView.)
             Image("\(base)16")
                 .resizable()
                 .renderingMode(.original)
@@ -1444,6 +1451,27 @@ private struct ProcessBadgeView: View {
                 .renderingMode(.template)
                 .aspectRatio(contentMode: .fit)
                 .foregroundStyle(Color.blue.opacity(isSelected ? 0.95 : 0.45))
+                .frame(width: 16, height: 16)
+        }
+    }
+}
+
+/// Tinted agent mark for a tab whose agent session will resume on first
+/// visit (or when the eager sweep reaches it). Quiet ink instead of the
+/// full-color mark, so "an agent lives here but isn't running" reads at a
+/// glance without claiming the active treatment — the row flips to
+/// ProcessBadgeView once the resume runs and detection sees the agent.
+private struct DormantAgentBadgeView: View {
+    let process: TabProcess
+    let isSelected: Bool
+
+    var body: some View {
+        if case .agent(let base) = process.badge {
+            Image("\(base)16Tinted")
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.45))
                 .frame(width: 16, height: 16)
         }
     }
