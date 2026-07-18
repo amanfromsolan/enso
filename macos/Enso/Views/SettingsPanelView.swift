@@ -543,36 +543,43 @@ private struct AppearanceThumbnail: View {
             // pinned to its own left edge; the bars bleed past the half and
             // each side clips its own overflow at the split.
             HStack(spacing: 0) {
-                pane(dark: false).clipped()
-                pane(dark: true).clipped()
+                pane(dark: false, compact: true)
+                pane(dark: true, compact: true)
             }
         }
     }
 
-    private func pane(dark: Bool) -> some View {
-        ZStack(alignment: .topLeading) {
-            dark ? Color(white: 0.14) : Color(white: 0.94)
+    private func pane(dark: Bool, compact: Bool = false) -> some View {
+        // The color alone owns layout (each Auto half sizes purely from its
+        // proposal); the drawing rides on top at fixed natural size, its
+        // top-leading corner nailed to the pane's — so it can never be
+        // re-centered by a narrow container. Compact bars fit a half's
+        // 20pt of usable width.
+        (dark ? Color(white: 0.14) : Color(white: 0.94))
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 2.5) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Circle()
+                                .fill(dark ? Color(white: 0.5) : Color(white: 0.68))
+                                .frame(width: 3.5, height: 3.5)
+                        }
+                    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 2.5) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        Circle()
-                            .fill(dark ? Color(white: 0.5) : Color(white: 0.68))
-                            .frame(width: 3.5, height: 3.5)
+                    ForEach(0..<3, id: \.self) { line in
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(dark ? Color(white: 0.55) : Color(white: 0.62))
+                            .frame(
+                                width: compact
+                                    ? (line == 2 ? 13 : 20)
+                                    : (line == 2 ? 22 : 34),
+                                height: 3
+                            )
                     }
                 }
-
-                ForEach(0..<3, id: \.self) { line in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(dark ? Color(white: 0.55) : Color(white: 0.62))
-                        .frame(width: line == 2 ? 22 : 34, height: 3)
-                }
+                .padding(6)
+                .fixedSize()
             }
-            .padding(6)
-            // Content wider than the container (the Auto halves) must hang
-            // off the trailing edge, not center itself in the squeeze.
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
     }
 }
 
