@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds and launches the Debug build ("Enso Nightly", bundle id
+# Builds and launches the Debug build ("Enso Dev", bundle id
 # com.amanchaudhary.enso.debug) alongside the installed release Enso.
 # Everything here is scoped to the DerivedData copy by full executable
 # path — never by process name, which the installed Enso shares.
 
 MODE="${1:-run}"
-# Debug PRODUCT_NAME is "Enso Nightly" so the Dock and app menu carry the
+# Debug PRODUCT_NAME is "Enso Dev" so the Dock and app menu carry the
 # nightly name; the Xcode target and scheme are still "Enso".
-APP_NAME="Enso Nightly"
+APP_NAME="Enso Dev"
 PROJECT="macos/Enso.xcodeproj"
 SCHEME="Enso"
 CONFIGURATION="Debug"
