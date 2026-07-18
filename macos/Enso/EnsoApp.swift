@@ -149,6 +149,15 @@ struct EnsoApp: App {
         let store = TerminalSessionStore()
         _sessionStore = StateObject(wrappedValue: store)
         AgentShimInstaller.installIfNeeded()
+        // Bootstrap resolves restorability on a background task (transcript
+        // reads and rollout scans must not block the first render), and
+        // until it lands the eager sweep sees no candidates — so when it
+        // does, re-aim the sweep or the launch-time pass stays starved.
+        // Wired here, not inside either store, to keep the dependency
+        // one-way: the tab store calls into AgentSessionStore, never back.
+        AgentSessionStore.shared.onRestorabilityResolved = { [weak store] in
+            store?.eagerlyRestoreAgentSessions()
+        }
         AgentSessionStore.shared.bootstrap(knownTabIDs: Set(store.sessions.map(\.id)))
 
         // Agent attention (#30): tail the map files for the Notification and

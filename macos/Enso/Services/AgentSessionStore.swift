@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// The restore layer of agent-session persistence (see
@@ -6,8 +7,14 @@ import Foundation
 /// each map file to its latest session and decides — per agent adapter,
 /// gated by the quit snapshot and the Settings toggle — whether the tab's
 /// new surface should resume the conversation.
+///
+/// ObservableObject so the sidebar's dormant badges track the store live:
+/// objectWillChange fires exactly when a mayRestore/dormantAgent answer can
+/// flip — restorability resolution landing, a restore being consumed, a
+/// tab's records being dropped, or the Settings toggle changing. Non-UI
+/// callers keep using the plain accessors; nothing about the API changed.
 @MainActor
-final class AgentSessionStore {
+final class AgentSessionStore: ObservableObject {
     static let shared = AgentSessionStore()
 
     static let restoreEnabledDefaultsKey = "agentSessionRestoreEnabled"
@@ -20,6 +27,24 @@ final class AgentSessionStore {
     private(set) var quitSnapshot: QuitSnapshot?
     /// Restore is offered at most once per tab per app run.
     private var consumedTabIDs: Set<UUID> = []
+    /// Tabs whose adapter said "restorable" when bootstrap ran the full
+    /// policy once, disk checks included. Resolved on a background task —
+    /// the adapters' policies read transcripts and scan rollout trees, I/O
+    /// that must not block the first render — so this stays EMPTY (and
+    /// mayRestore answers false) until the resolution lands. Valid for the
+    /// rest of the run once resolved: the transcript/rollout files and the
+    /// quit snapshot don't change meaning mid-run — only consumption and
+    /// the Settings toggle do, and the accessors layer those on top.
+    private(set) var restorableAtLaunch: Set<UUID> = []
+    /// Guards the async resolution against a bootstrap that re-ran while a
+    /// previous resolution was still in flight: only the latest wins.
+    private var resolutionGeneration = 0
+    /// Fired on the main actor each time restorability resolution lands.
+    /// EnsoApp points this at the tab store's eager sweep, so a launch
+    /// whose first sweep ran before resolution isn't permanently starved of
+    /// candidates. Wired from the app layer to keep the dependency
+    /// direction clean — this store never imports the tab store.
+    var onRestorabilityResolved: (() -> Void)?
 
     /// The Settings gate: off → no shim environment on new surfaces —
     /// ENSO_SESSIONS_DIR is what the wrappers key their recording on, so
@@ -29,6 +54,14 @@ final class AgentSessionStore {
     var isEnabled: Bool {
         defaults.object(forKey: Self.restoreEnabledDefaultsKey) as? Bool ?? true
     }
+
+    /// The Settings toggle writes its key through @AppStorage — straight to
+    /// UserDefaults, never through this store — so watching defaults is the
+    /// only way a flip can reach objectWillChange (and un-badge every
+    /// dormant row at once). The notification fires for ANY defaults write;
+    /// the cached value keeps unrelated writes from publishing.
+    private var lastPublishedIsEnabled: Bool
+    private var defaultsObserver: (any NSObjectProtocol)?
 
     init(
         directory: URL? = nil,
@@ -40,6 +73,37 @@ final class AgentSessionStore {
             uniqueKeysWithValues: (adapters ?? AgentSessionAdapterRegistry.all).map { ($0.agentID, $0) }
         )
         self.defaults = defaults
+        self.lastPublishedIsEnabled = defaults.object(forKey: Self.restoreEnabledDefaultsKey) as? Bool ?? true
+        // object nil, not `defaults`: the notification is posted by the
+        // UserDefaults INSTANCE that wrote, and @AppStorage writes through
+        // its own instance of the same domain — identity filtering would
+        // miss every Settings flip. The cached-value guard above keeps the
+        // broad subscription from publishing on unrelated writes. queue nil
+        // = delivered synchronously on the writing thread; the Settings
+        // toggle writes on the main thread, so its badge update is
+        // synchronous, and a write from anywhere else hops first.
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { self?.publishIfEnabledFlipped() }
+            } else {
+                Task { @MainActor [weak self] in self?.publishIfEnabledFlipped() }
+            }
+        }
+    }
+
+    deinit {
+        if let defaultsObserver {
+            NotificationCenter.default.removeObserver(defaultsObserver)
+        }
+    }
+
+    private func publishIfEnabledFlipped() {
+        let enabled = isEnabled
+        guard enabled != lastPublishedIsEnabled else { return }
+        lastPublishedIsEnabled = enabled
+        objectWillChange.send()
     }
 
     /// agent-sessions/ beside state.json (per build identity). Deliberately
@@ -73,6 +137,40 @@ final class AgentSessionStore {
             }
             if let record = Self.compactRecord(tabID: tabID, mapFileAt: file) {
                 records[tabID] = record
+            }
+        }
+        resolveRestorability()
+    }
+
+    /// Runs every adapter's full restore policy once — transcript reads,
+    /// rollout scans — on a background task, because bootstrap happens on
+    /// the main actor before the first render and that I/O scales with the
+    /// number of agent tabs. Until the result lands, mayRestore answers
+    /// false everywhere: the eager sweep sees no candidates and the sidebar
+    /// shows no dormant badges, which is why the completion both publishes
+    /// and pings onRestorabilityResolved to re-run the sweep. The per-tick
+    /// gate chain (hasPendingRestore) never consults this snapshot, so the
+    /// staggered fire-time checks work the same whichever side of the
+    /// resolution they land on.
+    private func resolveRestorability() {
+        restorableAtLaunch = []
+        resolutionGeneration += 1
+        let generation = resolutionGeneration
+        let records = records
+        let quitSnapshot = quitSnapshot
+        let adapters = adapters
+        Task.detached(priority: .userInitiated) {
+            let resolved = Set(records.compactMap { tabID, record -> UUID? in
+                guard let adapter = adapters[record.agent],
+                      adapter.restoreCommand(for: record, quitSnapshot: quitSnapshot, now: .now) != nil
+                else { return nil }
+                return tabID
+            })
+            await MainActor.run { [weak self] in
+                guard let self, self.resolutionGeneration == generation else { return }
+                self.objectWillChange.send()
+                self.restorableAtLaunch = resolved
+                self.onRestorabilityResolved?()
             }
         }
     }
@@ -128,9 +226,12 @@ final class AgentSessionStore {
     }
 
     /// The restore the tab's new surface should run, at most once per tab
-    /// per app run.
+    /// per app run. Consumption flips mayRestore/dormantAgent for the tab,
+    /// so it publishes: the sidebar's dormant badge hands over to live
+    /// process detection the moment the tab starts warming.
     func consumeRestore(forTab tabID: UUID) -> AgentRestore? {
         guard let restore = pendingRestore(forTab: tabID) else { return nil }
+        objectWillChange.send()
         consumedTabIDs.insert(tabID)
         return restore
     }
@@ -141,6 +242,28 @@ final class AgentSessionStore {
     /// its tab lazy instead of spawning a surface for nothing.
     func hasPendingRestore(forTab tabID: UUID) -> Bool {
         pendingRestore(forTab: tabID) != nil
+    }
+
+    /// hasPendingRestore without the per-call disk I/O: adapter policy is
+    /// the bootstrap-time snapshot, the run-time gates (toggle, consumption)
+    /// are live. The eager sweep uses this to pick and rank candidates —
+    /// counting only tabs that will actually restore, so none of the capped
+    /// warm slots is wasted on a cleanly-ended session — and the sidebar's
+    /// dormant badge reads it per row. The full gate chain still runs at
+    /// each staggered tick.
+    func mayRestore(forTab tabID: UUID) -> Bool {
+        isEnabled && !consumedTabIDs.contains(tabID) && restorableAtLaunch.contains(tabID)
+    }
+
+    /// The agent mark a dormant tab should wear in the sidebar — the tab
+    /// holds a session that will resume on first visit (or when the eager
+    /// sweep reaches it), but no process is running yet. Nil once the
+    /// restore is consumed or when nothing would restore. Agent IDs are
+    /// TabProcess raw values ("claude", "codex"), the same identity the
+    /// quit snapshot uses.
+    func dormantAgent(forTab tabID: UUID) -> TabProcess? {
+        guard mayRestore(forTab: tabID) else { return nil }
+        return records[tabID].flatMap { TabProcess(rawValue: $0.agent) }
     }
 
     /// The text typed into the fresh PTY (the trailing newline runs it).
@@ -163,10 +286,19 @@ final class AgentSessionStore {
 
     // MARK: - Lifecycle hooks
 
-    /// Closed tabs can never restore their conversation; drop the map files.
+    /// Closed tabs can never restore their conversation; drop the map files
+    /// AND the launch-time restorability entries — a stale entry there would
+    /// keep answering mayRestore for a tab that no longer exists, wasting a
+    /// warm slot in the eager sweep's ranking. Publishes only when a badge
+    /// or ranking answer could actually change; plain shell tabs close
+    /// without touching observers.
     func removeRecords(forTabs tabIDs: Set<UUID>) {
+        if tabIDs.contains(where: { records[$0] != nil || restorableAtLaunch.contains($0) }) {
+            objectWillChange.send()
+        }
         for tabID in tabIDs {
             records[tabID] = nil
+            restorableAtLaunch.remove(tabID)
             let file = directory.appendingPathComponent("\(tabID.uuidString.lowercased()).jsonl")
             try? FileManager.default.removeItem(at: file)
         }

@@ -380,7 +380,7 @@ final class CommandCenter: ObservableObject {
                 section: .spaces,
                 kindLabel: "Space"
             ) { [weak store] in
-                store?.setActiveSpace(space.id)
+                store?.activateSpace(space.id)
             }
         }
     }

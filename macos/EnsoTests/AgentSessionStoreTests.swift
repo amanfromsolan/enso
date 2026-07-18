@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import Enso
@@ -20,9 +21,9 @@ struct AgentSessionStoreTests {
 
     /// Store rooted in <root>/agent-sessions with adapters pointed at fake
     /// claude/codex homes under the same root, and its own defaults suite.
-    private func makeStore(root: URL) -> AgentSessionStore {
-        let defaults = UserDefaults(suiteName: "AgentSessionStoreTests")!
-        defaults.removePersistentDomain(forName: "AgentSessionStoreTests")
+    private func makeStore(root: URL, suite: String = "AgentSessionStoreTests") -> AgentSessionStore {
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
         return AgentSessionStore(
             directory: root.appendingPathComponent("agent-sessions", isDirectory: true),
             adapters: [
@@ -31,6 +32,19 @@ struct AgentSessionStoreTests {
             ],
             defaults: defaults
         )
+    }
+
+    /// bootstrap + wait for the background restorability resolution to
+    /// land. Tests reading the launch snapshot (mayRestore, dormantAgent,
+    /// restorableAtLaunch) want the resolved state; the in-flight gate has
+    /// its own dedicated test. Deterministic — the continuation resumes on
+    /// the resolution callback, never on a timer.
+    private func bootstrapResolved(_ store: AgentSessionStore, knownTabIDs: Set<UUID>) async {
+        await withCheckedContinuation { continuation in
+            store.onRestorabilityResolved = { continuation.resume() }
+            store.bootstrap(knownTabIDs: knownTabIDs)
+        }
+        store.onRestorabilityResolved = nil
     }
 
     private func writeMapFile(root: URL, tabID: UUID, lines: [String]) throws {
@@ -570,6 +584,148 @@ struct AgentSessionStoreTests {
         #expect(store.consumeRestore(forTab: restorableTab) != nil)
         // …and a consumed tab stops being pending.
         #expect(!store.hasPendingRestore(forTab: restorableTab))
+    }
+
+    @Test func mayRestoreTracksLaunchTimeRestorability() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let restorableTab = UUID()
+        let untouchedTab = UUID()
+        let cleanTab = UUID()
+        let sessionID = "77777777-7777-7777-7777-777777777777"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        for tabID in [restorableTab, untouchedTab] {
+            try writeMapFile(root: root, tabID: tabID, lines: [
+                launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+            ])
+        }
+        // Cleanly ended session: the record exists but adapter policy says
+        // no restore — bootstrap's one-time policy pass rules it out, so it
+        // never occupies a warm slot or wears the dormant badge.
+        try writeMapFile(root: root, tabID: cleanTab, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+            hookLine(agent: "claude", name: "SessionEnd", sessionID: sessionID, extra: #","reason":"logout""#, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let store = makeStore(root: root)
+        await bootstrapResolved(store, knownTabIDs: [restorableTab, untouchedTab, cleanTab])
+        #expect(store.mayRestore(forTab: restorableTab))
+        #expect(!store.mayRestore(forTab: cleanTab))
+        #expect(!store.mayRestore(forTab: UUID()))
+
+        // The dormant badge follows the same gates and knows the agent.
+        #expect(store.dormantAgent(forTab: restorableTab) == .claude)
+        #expect(store.dormantAgent(forTab: cleanTab) == nil)
+
+        // Consuming closes the gate (the tab is warming, badge hands over
+        // to live process detection)…
+        _ = store.consumeRestore(forTab: restorableTab)
+        #expect(!store.mayRestore(forTab: restorableTab))
+        #expect(store.dormantAgent(forTab: restorableTab) == nil)
+
+        // …and so does the Settings toggle, for tabs never consumed.
+        #expect(store.mayRestore(forTab: untouchedTab))
+        UserDefaults(suiteName: "AgentSessionStoreTests")!
+            .set(false, forKey: AgentSessionStore.restoreEnabledDefaultsKey)
+        #expect(!store.mayRestore(forTab: untouchedTab))
+    }
+
+    @Test func restorabilityResolutionGatesMayRestoreUntilItLands() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "66666666-1111-1111-1111-111111111111"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let store = makeStore(root: root)
+        await withCheckedContinuation { continuation in
+            store.onRestorabilityResolved = { continuation.resume() }
+            store.bootstrap(knownTabIDs: [tabID])
+            // Bootstrap returned but resolution hasn't landed (it needs the
+            // main actor, which this test still occupies): launch code in
+            // that window must see "no candidates yet", never a stale or
+            // half-built answer.
+            #expect(!store.mayRestore(forTab: tabID))
+            #expect(store.dormantAgent(forTab: tabID) == nil)
+            // The staggered ticks' fire-time gate chain never consults the
+            // launch snapshot, so it gives the same answer on either side
+            // of the resolution.
+            #expect(store.hasPendingRestore(forTab: tabID))
+        }
+        store.onRestorabilityResolved = nil
+        #expect(store.mayRestore(forTab: tabID))
+        #expect(store.dormantAgent(forTab: tabID) == .claude)
+    }
+
+    @Test func removeRecordsClearsLaunchRestorability() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "66666666-2222-2222-2222-222222222222"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let store = makeStore(root: root)
+        await bootstrapResolved(store, knownTabIDs: [tabID])
+        #expect(store.mayRestore(forTab: tabID))
+
+        // Closing the tab must clear the launch-time entry along with the
+        // record; a stale entry would keep the tab in the eager sweep's
+        // ranking and on the dormant badge.
+        store.removeRecords(forTabs: [tabID])
+        #expect(!store.restorableAtLaunch.contains(tabID))
+        #expect(!store.mayRestore(forTab: tabID))
+        #expect(store.dormantAgent(forTab: tabID) == nil)
+    }
+
+    /// Every mutation that can flip a mayRestore/dormantAgent answer must
+    /// publish (the sidebar's dormant badges observe the store); everything
+    /// else must stay silent.
+    @Test func restoreStateMutationsPublish() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "66666666-3333-3333-3333-333333333333"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        // A private suite so parallel tests writing the shared suite can't
+        // inject flips of their own.
+        let suite = "AgentSessionStoreTests-publish"
+        let store = makeStore(root: root, suite: suite)
+        var publishes = 0
+        let subscription = store.objectWillChange.sink { publishes += 1 }
+        defer { subscription.cancel() }
+
+        await bootstrapResolved(store, knownTabIDs: [tabID])
+        #expect(publishes == 1)  // Resolution landing.
+
+        _ = store.consumeRestore(forTab: tabID)
+        #expect(publishes == 2)  // Consumption.
+        #expect(store.consumeRestore(forTab: tabID) == nil)
+        #expect(publishes == 2)  // A refused consume is silent.
+
+        store.removeRecords(forTabs: [tabID])
+        #expect(publishes == 3)  // Record drop.
+        store.removeRecords(forTabs: [UUID()])
+        #expect(publishes == 3)  // Plain shell tab close: silent.
+
+        // The Settings toggle writes UserDefaults directly (via
+        // @AppStorage), so the flip reaches the store through the
+        // defaults-change notification.
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(false, forKey: AgentSessionStore.restoreEnabledDefaultsKey)
+        #expect(publishes == 4)  // Toggle flip.
+        defaults.set(false, forKey: AgentSessionStore.restoreEnabledDefaultsKey)
+        #expect(publishes == 4)  // Same value again: silent.
+        defaults.removePersistentDomain(forName: suite)
     }
 
     @Test func closeRemovesMapFile() throws {

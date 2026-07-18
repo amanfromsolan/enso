@@ -1,8 +1,9 @@
 import Foundation
 
 /// One compacted agent conversation for a tab — the latest session distilled
-/// from the tab's JSONL map file in agent-sessions/.
-struct AgentSessionRecord: Equatable {
+/// from the tab's JSONL map file in agent-sessions/. Sendable: restorability
+/// resolution runs the adapters over these on a background task.
+struct AgentSessionRecord: Equatable, Sendable {
     /// The tab (TerminalSession) UUID the map file is keyed on.
     let tabID: UUID
     /// Adapter id ("claude", "codex"); matches the wrapper name on PATH.
@@ -27,7 +28,7 @@ struct AgentSessionRecord: Equatable {
 /// Written beside the map files on every consented quit, so the next launch
 /// can tell "was running at quit" (restore) from "crashed" (fall back to
 /// per-agent policies). Consumed — deleted — after being read once.
-struct QuitSnapshot: Codable, Equatable {
+struct QuitSnapshot: Codable, Equatable, Sendable {
     /// Epoch seconds; kept shell/JSON friendly on purpose.
     var ts: TimeInterval
     /// Lowercased tab UUID string → agent id.
@@ -40,8 +41,10 @@ struct QuitSnapshot: Codable, Equatable {
 
 /// An agent CLI plugged into session persistence. Adding an agent means one
 /// adapter here, a sanitizer policy, and one wrapper script in
-/// Resources/agent-shims.
-protocol AgentSessionAdapter {
+/// Resources/agent-shims. Sendable (adapters are stateless value types):
+/// launch-time restorability resolution calls restoreCommand off the main
+/// actor, where its transcript and rollout I/O belongs.
+protocol AgentSessionAdapter: Sendable {
     /// "claude" / "codex" — the shim name on PATH and TabProcess raw value.
     var agentID: String { get }
     /// Bundled wrapper (Resources/agent-shims/<name>.sh) installed as agentID.
