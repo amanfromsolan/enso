@@ -54,6 +54,9 @@ struct SettingsPanelView: View {
     /// the heading's large → compact collapse.
     @State private var isScrolled = false
 
+    @Environment(\.controlActiveState) private var controlActiveState
+    private var isWindowInactive: Bool { controlActiveState == .inactive }
+
     var body: some View {
         HStack(spacing: 0) {
             navRail
@@ -117,6 +120,9 @@ struct SettingsPanelView: View {
         .padding(.top, 14)
         .padding(.bottom, 12)
         .frame(width: 218)
+        // Same fade the main sidebar wears when its window loses focus.
+        .saturation(isWindowInactive ? 0 : 1)
+        .opacity(isWindowInactive ? 0.6 : 1)
         .background(
             // Same frost as the main window's sidebar, but muted: the
             // heavier tint keeps just a hint of desktop glow — a settings
@@ -533,9 +539,16 @@ private struct AppearanceThumbnail: View {
         case .light: pane(dark: false)
         case .dark: pane(dark: true)
         case .system:
-            HStack(spacing: 0) {
+            // One full-width illustration in each scheme, dark masked to
+            // the right half — the split runs through a single left-anchored
+            // drawing instead of cramming two half-width panes (whose bars
+            // would overflow and clip).
+            ZStack {
                 pane(dark: false)
                 pane(dark: true)
+                    .mask(alignment: .trailing) {
+                        Rectangle().frame(width: 32)
+                    }
             }
         }
     }
@@ -571,7 +584,9 @@ private struct SidebarFrost: NSViewRepresentable {
         let view = NSVisualEffectView()
         view.material = .sidebar
         view.blendingMode = .behindWindow
-        view.state = .active
+        // Dims with the window, so the rail fades on focus loss along with
+        // its content.
+        view.state = .followsWindowActiveState
         return view
     }
 
