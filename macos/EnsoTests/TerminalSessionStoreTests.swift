@@ -123,7 +123,7 @@ struct TerminalSessionStoreTests {
         )
 
         let restorable: Set = [selected.id, stale.id, fresh.id]
-        let candidates = store.eagerRestoreCandidates { restorable.contains($0) }
+        let candidates = store.eagerRestoreCandidates(mayRestore: { restorable.contains($0) }, budget: .max)
         // Selected is excluded even though restorable; the plain shell tab
         // never makes the list; the rest come most recently used first.
         #expect(candidates.map(\.id) == [fresh.id, stale.id])
@@ -153,19 +153,20 @@ struct TerminalSessionStoreTests {
         )
 
         // Only the active space's tabs are candidates.
-        #expect(store.eagerRestoreCandidates { _ in true }.map(\.id) == [homeDormant.id])
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id) == [homeDormant.id])
 
         // Switching spaces re-aims the sweep: the new space's dormant tabs
         // become the candidates (its remembered selection is skipped).
         store.activateSpace(work.id)
-        #expect(store.eagerRestoreCandidates { _ in true }.map(\.id) == [workDormant.id])
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id) == [workDormant.id])
     }
 
-    @Test func eagerRestoreCandidatesAreCapped() throws {
+    @Test func eagerRestoreCandidatesRespectTheWakeBudget() throws {
         let dir = try makeTempDirectory("capped")
+        let budget = TerminalSessionStore.defaultAgentWakeRecentCount
         // tab-0 is selected (and skipped); tab-1 onward are candidates in
         // strictly decreasing recency.
-        let sessions = (0..<(TerminalSessionStore.maxEagerRestores + 3)).map { index in
+        let sessions = (0..<(budget + 3)).map { index in
             TerminalSession(
                 title: "tab-\(index)",
                 workingDirectory: dir,
@@ -177,11 +178,21 @@ struct TerminalSessionStoreTests {
             select: sessions[0].id
         )
 
-        let candidates = store.eagerRestoreCandidates { _ in true }
-        // The cap keeps the most recently used tabs; the least recent two
-        // stay lazy.
-        #expect(candidates.map(\.id)
-            == sessions[1...TerminalSessionStore.maxEagerRestores].map(\.id))
+        // The budget keeps the most recently used tabs; the least recent
+        // stay lazy. Zero budget ("wake as I visit") empties the sweep.
+        let candidates = store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: budget)
+        #expect(candidates.map(\.id) == sessions[1...budget].map(\.id))
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: 0).isEmpty)
+    }
+
+    @Test func agentWakeBudgetFollowsPolicyAndSpentWakes() {
+        #expect(TerminalSessionStore.agentWakeBudget(policy: .onVisit, recentCount: 5, alreadyWoken: 0) == 0)
+        #expect(TerminalSessionStore.agentWakeBudget(policy: .recent, recentCount: 5, alreadyWoken: 0) == 5)
+        // The budget is per launch: re-sweeps continue it, never restart it.
+        #expect(TerminalSessionStore.agentWakeBudget(policy: .recent, recentCount: 5, alreadyWoken: 3) == 2)
+        // Lowering the count below what already woke must clamp, not trap.
+        #expect(TerminalSessionStore.agentWakeBudget(policy: .recent, recentCount: 5, alreadyWoken: 7) == 0)
+        #expect(TerminalSessionStore.agentWakeBudget(policy: .all, recentCount: 5, alreadyWoken: 100) == .max)
     }
 
     @Test func equalLastActivityCandidatesRankByStableTieBreaker() throws {
@@ -192,7 +203,8 @@ struct TerminalSessionStoreTests {
         // secondary key — Swift's sort alone is unstable and would make the
         // cap boundary a coin flip.
         let stamp = Date.now.addingTimeInterval(-600)
-        let sessions = (0..<(TerminalSessionStore.maxEagerRestores + 3)).map { index in
+        let budget = TerminalSessionStore.defaultAgentWakeRecentCount
+        let sessions = (0..<(budget + 3)).map { index in
             TerminalSession(title: "tab-\(index)", workingDirectory: dir, lastActivity: stamp)
         }
         let store = makeStore(
@@ -203,12 +215,12 @@ struct TerminalSessionStoreTests {
         let expected = Array(
             sessions.dropFirst()
                 .sorted { $0.id.uuidString < $1.id.uuidString }
-                .prefix(TerminalSessionStore.maxEagerRestores)
+                .prefix(budget)
                 .map(\.id)
         )
-        #expect(store.eagerRestoreCandidates { _ in true }.map(\.id) == expected)
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: budget).map(\.id) == expected)
         // Reproducible on every ask, not just the first.
-        #expect(store.eagerRestoreCandidates { _ in true }.map(\.id) == expected)
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: budget).map(\.id) == expected)
     }
 
     // MARK: - Atomic space transitions (#53)
@@ -257,7 +269,7 @@ struct TerminalSessionStoreTests {
         #expect(store.activeSpaceID == home.id)
         #expect(store.selection == homeSelected.id)
         #expect(sweptSelections == [homeSelected.id])
-        #expect(store.eagerRestoreCandidates { _ in true }.map(\.id) == [homeDormant.id])
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id) == [homeDormant.id])
 
         // Deleting a background space is not a transition; no re-sweep.
         let scratch = store.createSpace(name: "Scratch", icon: .dot)
@@ -285,7 +297,7 @@ struct TerminalSessionStoreTests {
         #expect(store.selection == workDormant.id)
         #expect(store.multiSelection == [workDormant.id])
         #expect(sweptSelections == [workDormant.id])
-        #expect(store.eagerRestoreCandidates { _ in true }.map(\.id) == [workSelected.id])
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id) == [workSelected.id])
 
         // Same-space reveal is a selection landing, not a transition.
         store.reveal(workSelected.id)
@@ -310,7 +322,7 @@ struct TerminalSessionStoreTests {
         #expect(newID != workSelected.id)
         #expect(store.activeSpace.sessions.contains { $0.id == newID })
         #expect(sweptSelections == [newID])
-        #expect(Set(store.eagerRestoreCandidates { _ in true }.map(\.id))
+        #expect(Set(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id))
             == [workSelected.id, workDormant.id])
     }
 

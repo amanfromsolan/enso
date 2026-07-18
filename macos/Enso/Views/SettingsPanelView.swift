@@ -294,6 +294,10 @@ private struct TabsSettings: View {
     @AppStorage(TabAutoNamer.enabledDefaultsKey) private var namingEnabled = true
     @AppStorage(TabAutoNamer.commandDefaultsKey) private var namingCommand = ""
     @AppStorage(AgentSessionStore.restoreEnabledDefaultsKey) private var resumeAgentSessions = true
+    @AppStorage(TerminalSessionStore.agentWakePolicyDefaultsKey)
+    private var agentWakePolicy = TerminalSessionStore.AgentWakePolicy.recent
+    @AppStorage(TerminalSessionStore.agentWakeRecentCountDefaultsKey)
+    private var agentWakeRecentCount = TerminalSessionStore.defaultAgentWakeRecentCount
 
     private static let customChoice = "Custom"
     @State private var namingChoice = TabAutoNamer.presetCommands[0].name
@@ -380,6 +384,47 @@ private struct TabsSettings: View {
                     .controlSize(.small)
                     .labelsHidden()
             }
+
+            if resumeAgentSessions {
+                SettingsRow("When Enso opens…", caption: wakeCaption) {
+                    Picker("", selection: $agentWakePolicy) {
+                        Text("Wake as I visit").tag(TerminalSessionStore.AgentWakePolicy.onVisit)
+                        Text("Wake recent tabs").tag(TerminalSessionStore.AgentWakePolicy.recent)
+                        Text("Wake everything").tag(TerminalSessionStore.AgentWakePolicy.all)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                if agentWakePolicy == .recent {
+                    SettingsRow(
+                        "Tabs to wake right away",
+                        caption: "Most recent first, counted across the whole launch."
+                    ) {
+                        Stepper(value: $agentWakeRecentCount, in: 1...20) {
+                            Text("\(agentWakeRecentCount)")
+                                .font(.system(size: 13).monospacedDigit())
+                                .frame(minWidth: 22, alignment: .trailing)
+                        }
+                        .fixedSize()
+                    }
+                }
+            }
+        }
+    }
+
+    /// The explainer under the wake picker doubles as the introduction to
+    /// the sidebar's tinted "asleep" badge, so the setting and the badge
+    /// teach each other.
+    private var wakeCaption: String {
+        switch agentWakePolicy {
+        case .onVisit:
+            "Sleeping agent tabs wear a tinted badge and wake the moment you click them."
+        case .recent:
+            "Your \(agentWakeRecentCount) most recent agent tabs pick up right away. The rest sleep — a tinted badge marks them — and wake when you click."
+        case .all:
+            "Every agent restarts the moment Enso opens — heavier on memory while they all spin up."
         }
     }
 }

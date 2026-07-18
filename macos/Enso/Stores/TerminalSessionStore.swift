@@ -60,6 +60,22 @@ final class TerminalSessionStore: ObservableObject {
     private var expiryTimer: Timer?
     private let persistToDisk: Bool
 
+    /// Wake-setting changes take effect live: a raised count or a switch to
+    /// "wake everything" starts a fresh sweep instead of waiting for the
+    /// next space switch. UserDefaults.didChangeNotification fires on every
+    /// defaults write (sidebar width, tab naming…), so the observer keeps a
+    /// snapshot and only re-sweeps on an actual wake-setting change.
+    private var wakeSettingsObserver: NSObjectProtocol?
+    private var lastWakeSettings: (policy: String?, count: Int?) = (nil, nil)
+
+    private static func wakeSettingsSnapshot() -> (policy: String?, count: Int?) {
+        let defaults = UserDefaults.standard
+        return (
+            defaults.string(forKey: agentWakePolicyDefaultsKey),
+            defaults.object(forKey: agentWakeRecentCountDefaultsKey) as? Int
+        )
+    }
+
     init(spaces: [SidebarSpace]? = nil, persistToDisk: Bool = true) {
         self.persistToDisk = persistToDisk
 
@@ -94,6 +110,19 @@ final class TerminalSessionStore: ObservableObject {
             }
             RunLoop.main.add(timer, forMode: .common)
             expiryTimer = timer
+
+            lastWakeSettings = Self.wakeSettingsSnapshot()
+            wakeSettingsObserver = NotificationCenter.default.addObserver(
+                forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let snapshot = Self.wakeSettingsSnapshot()
+                    guard snapshot != self.lastWakeSettings else { return }
+                    self.lastWakeSettings = snapshot
+                    self.eagerlyRestoreAgentSessions()
+                }
+            }
         }
     }
 
@@ -643,14 +672,52 @@ final class TerminalSessionStore: ObservableObject {
     /// doesn't spawn every PTY and agent process in the same instant.
     private static let eagerRestoreStagger: TimeInterval = 1.0
 
-    /// Ceiling on background restores per sweep; tabs beyond it stay lazy
-    /// and restore on first switch, as before #45 — wearing the sidebar's
-    /// dormant badge so the pending resume is visible. Bounds each sweep's
-    /// cost: an eager restore is a live surface plus an agent process (the
-    /// agent dominates — a resumed claude is a full Node process). The
-    /// sweep is per space, so switching spaces can warm up to this many
-    /// more; already-warmed tabs are consumed and never recounted.
-    static let maxEagerRestores = 8
+    /// How eagerly sleeping agent tabs wake in the background — the
+    /// "When Enso opens…" setting. The budget is global per launch, not per
+    /// sweep: "wake my 5 most recent" promises at most five agent processes
+    /// spawned unasked, and the cost being bounded (a resumed claude is a
+    /// full Node process) is global, so space-hopping must not multiply it.
+    /// Tabs past the budget stay asleep wearing the sidebar's dormant badge
+    /// and wake on first visit.
+    enum AgentWakePolicy: String {
+        /// Nothing wakes unasked; every sleeping tab waits for its click.
+        case onVisit
+        /// The most recently used tabs wake right away, up to the count
+        /// setting (the default).
+        case recent
+        /// Every restorable tab wakes, staggered.
+        case all
+    }
+
+    static let agentWakePolicyDefaultsKey = "agentWakePolicy"
+    static let agentWakeRecentCountDefaultsKey = "agentWakeRecentCount"
+    static let defaultAgentWakeRecentCount = 5
+
+    /// Background wakes already spent this launch. Only a tick that really
+    /// wakes a tab counts — no-op ticks (tab closed, restore consumed) and
+    /// click-driven restores spend nothing.
+    private var agentWakesThisLaunch = 0
+
+    /// Pure policy → budget mapping, separated so it is testable without
+    /// touching UserDefaults.
+    static func agentWakeBudget(policy: AgentWakePolicy, recentCount: Int, alreadyWoken: Int) -> Int {
+        switch policy {
+        case .onVisit: return 0
+        case .recent: return max(0, recentCount - alreadyWoken)
+        case .all: return .max
+        }
+    }
+
+    /// The live remaining budget: settings are read on every ask so a
+    /// mid-run change applies to the very next sweep.
+    private var remainingAgentWakeBudget: Int {
+        let defaults = UserDefaults.standard
+        let policy = defaults.string(forKey: Self.agentWakePolicyDefaultsKey)
+            .flatMap(AgentWakePolicy.init(rawValue:)) ?? .recent
+        let count = defaults.object(forKey: Self.agentWakeRecentCountDefaultsKey) as? Int
+            ?? Self.defaultAgentWakeRecentCount
+        return Self.agentWakeBudget(policy: policy, recentCount: count, alreadyWoken: agentWakesThisLaunch)
+    }
 
     /// Pending ticks of the sweep in flight; cancelled wholesale when a new
     /// sweep starts so warm-up effort always chases the active space.
@@ -682,12 +749,14 @@ final class TerminalSessionStore: ObservableObject {
     /// transcript I/O happens here and no warm slot is spent on a tab that
     /// wouldn't actually resume.
     func eagerRestoreCandidates(
-        mayRestore: ((TerminalSession.ID) -> Bool)? = nil
+        mayRestore: ((TerminalSession.ID) -> Bool)? = nil,
+        budget: Int? = nil
     ) -> [TerminalSession] {
-        // Resolved here, not as a default argument: the fallback reads the
-        // main-actor AgentSessionStore, and only the method body carries
-        // that isolation.
+        // Resolved here, not as default arguments: the fallbacks read the
+        // main-actor AgentSessionStore and this store's launch budget, and
+        // only the method body carries that isolation.
         let mayRestore = mayRestore ?? { AgentSessionStore.shared.mayRestore(forTab: $0) }
+        let budget = budget ?? remainingAgentWakeBudget
         return Array(
             activeSpace.sessions
                 .filter { $0.id != selection && mayRestore($0.id) }
@@ -700,7 +769,7 @@ final class TerminalSessionStore: ObservableObject {
                         ? $0.lastActivity > $1.lastActivity
                         : $0.id.uuidString < $1.id.uuidString
                 }
-                .prefix(Self.maxEagerRestores)
+                .prefix(budget)
         )
     }
 
@@ -732,6 +801,9 @@ final class TerminalSessionStore: ObservableObject {
                       AgentSessionStore.shared.hasPendingRestore(forTab: sessionID)
                 else { return }
                 self.wireSurfaceCallbacks(GhosttySurfaceManager.shared.view(for: live), for: sessionID)
+                // A real background wake spends one slot of the launch-wide
+                // budget; the guards above ensure no-ops never do.
+                self.agentWakesThisLaunch += 1
             }
             eagerRestoreTicks.append(tick)
             DispatchQueue.main.asyncAfter(
