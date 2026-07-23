@@ -114,9 +114,19 @@ final class SplitLayoutHostView: NSView {
             header.removeFromSuperview()
             headers.removeValue(forKey: id)
         }
+        // Panes narrowed by a horizontal split (side-by-side, reduced
+        // width) get the compact type treatment; unsplit tabs and
+        // vertical-only (stacked, full-width) panes keep the full size.
+        var narrowed: [TerminalSession.ID: Bool] = [:]
+        if let tree {
+            Self.collectNarrowedLeaves(tree, narrowed: false, into: &narrowed)
+        }
         for id in surfaces.keys {
             guard let session = sessions[id] else { continue }
-            let rootView = PaneHeaderView(session: session) { [weak self] in
+            let rootView = PaneHeaderView(
+                session: session,
+                compact: narrowed[id] ?? false
+            ) { [weak self] in
                 self?.focusPane(id)
             }
             if let header = headers[id] {
@@ -124,6 +134,13 @@ final class SplitLayoutHostView: NSView {
             } else {
                 let header = NSHostingView(rootView: rootView)
                 header.sizingOptions = []
+                // The card's top band sits under the window's transparent
+                // titlebar; by default NSHostingView propagates that as a
+                // safe-area inset and SwiftUI shoves the content downward,
+                // out of its 46pt frame (hosting views don't clip) — the
+                // header rendered mid-card over the terminal. Pane headers
+                // are pane chrome, not window chrome: no safe areas.
+                header.safeAreaRegions = []
                 headers[id] = header
                 addSubview(header)
             }
@@ -173,9 +190,27 @@ final class SplitLayoutHostView: NSView {
     /// comfortable.
     static let dividerThickness: CGFloat = 6
 
-    /// The in-pane header band: two compact lines (title, then cwd) plus
-    /// breathing room, sitting on the terminal background inside the pane.
-    static let paneHeaderHeight: CGFloat = 40
+    /// The in-pane header band: two lines (title, then cwd breadcrumb)
+    /// centered in the same 46pt the old header strip used, sitting on the
+    /// terminal background inside the pane.
+    static let paneHeaderHeight: CGFloat = 46
+
+    /// Marks every leaf whose width a horizontal split reduces: any
+    /// horizontal split on the path from the root narrows both children.
+    private static func collectNarrowedLeaves(
+        _ node: SplitNode,
+        narrowed: Bool,
+        into map: inout [TerminalSession.ID: Bool]
+    ) {
+        switch node {
+        case .leaf(let id):
+            map[id] = narrowed
+        case .split(let branch):
+            let next = narrowed || branch.direction == .horizontal
+            collectNarrowedLeaves(branch.first, narrowed: next, into: &map)
+            collectNarrowedLeaves(branch.second, narrowed: next, into: &map)
+        }
+    }
 
     private func layoutPanes() {
         guard let tree, bounds.width > 0, bounds.height > 0 else {
@@ -321,37 +356,46 @@ final class SplitDividerView: NSView {
 // MARK: - Pane header
 
 /// The header INSIDE each pane: the tab's process icon and title, with the
-/// working directory on a quieter second line below. One component serves
-/// split panes and the unsplit tab alike (a plain tab is a single-leaf
-/// tree through the same host path). Display only — no buttons, no hover
-/// actions; clicking it focuses the pane's terminal.
+/// working directory breadcrumb on a quieter second line below. One
+/// component serves split panes and the unsplit tab alike (a plain tab is
+/// a single-leaf tree through the same host path). Display only — no
+/// buttons, no hover actions; clicking it focuses the pane's terminal.
+///
+/// Type responds to splitting: `compact` (set only for panes narrowed by
+/// a horizontal split) shrinks the title and breadcrumb; an unsplit tab
+/// and vertical-only (full-width) panes keep the old header strip's
+/// full-size treatment. The icon never changes size.
 struct PaneHeaderView: View {
     let session: TerminalSession
+    let compact: Bool
     let onActivate: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
+            // Fixed 24pt in every state — the old strip's badge size; the
+            // compact treatment shrinks type only, never the mark.
             PaneHeaderBadge(process: session.runningProcess, ink: ink)
-                .frame(width: 16, height: 16)
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(ink.opacity(0.85))
+                    .font(.system(size: compact ? 12.5 : 15, weight: compact ? .medium : .regular))
+                    .foregroundStyle(ink.opacity(0.9))
                     .lineLimit(1)
 
-                Text(displayPath)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(ink.opacity(0.4))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                PaneHeaderBreadcrumb(
+                    path: session.workingDirectory,
+                    ink: ink,
+                    compact: compact
+                )
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 7)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 16)
+        // Row centered in the fixed 46pt band, icon centered against the
+        // two-line text block.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         // Never steals the keyboard: a click routes focus to this pane's
         // terminal (which also syncs the sidebar selection).
@@ -364,23 +408,53 @@ struct PaneHeaderView: View {
     private var ink: Color {
         GhosttyRuntime.shared.terminalColorScheme == .light ? .black : .white
     }
+}
 
-    /// Home-relative path ("~", "~/…"), the app's path shorthand; absolute
-    /// elsewhere. Middle truncation keeps the leaf folder readable when
-    /// the pane is narrow.
-    private var displayPath: String {
-        let home = NSHomeDirectory()
-        let path = session.workingDirectory
-        if path == home || path == "~" { return "~" }
-        if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
-        return path
+/// The old header strip's segmented breadcrumb, relocated under the title:
+/// a home/disk root icon, then discrete path segments between compact
+/// chevrons, deep paths collapsed around an ellipsis by PathTrail — never
+/// one ellipsized string. `compact` only scales the type down.
+private struct PaneHeaderBreadcrumb: View {
+    let path: String
+    let ink: Color
+    let compact: Bool
+
+    var body: some View {
+        let trail = PathTrail(path: path)
+        let textSize: CGFloat = compact ? 10.5 : 12
+
+        HStack(spacing: compact ? 3 : 4) {
+            Image(systemName: trail.rootIcon)
+                .font(.system(size: compact ? 8 : 9, weight: .medium))
+                .foregroundStyle(ink.opacity(trail.segments.isEmpty ? 0.42 : 0.3))
+
+            if let rootLabel = trail.rootLabel {
+                Text(rootLabel)
+                    .font(.system(size: textSize))
+                    .foregroundStyle(ink.opacity(0.42))
+            }
+
+            ForEach(Array(trail.segments.enumerated()), id: \.offset) { index, segment in
+                Image(systemName: "chevron.compact.right")
+                    .font(.system(size: compact ? 7 : 8, weight: .semibold))
+                    .foregroundStyle(ink.opacity(0.18))
+
+                Text(segment)
+                    .font(.system(size: textSize))
+                    .foregroundStyle(ink.opacity(
+                        index == trail.segments.count - 1 ? 0.42 : 0.28
+                    ))
+                    .lineLimit(1)
+            }
+        }
     }
 }
 
-/// The pane header's icon slot — the 16pt twin of the sidebar row's badge,
-/// but inked off the terminal background's luminance: agents keep their
-/// full-color mark, known tools their symbol, live-but-unknown processes
-/// the blue glyph, idle panes the quiet grey one.
+/// The pane header's icon slot — the old strip's badge, unchanged in size
+/// across states and inked off the terminal background's luminance: agents
+/// keep their full-color mark (24pt draws the 48-grid artwork 1:1 on the
+/// Retina grid), known tools their symbol, live-but-unknown processes the
+/// blue glyph, idle panes the quiet grey one.
 private struct PaneHeaderBadge: View {
     let process: TabProcess?
     let ink: Color
@@ -392,28 +466,28 @@ private struct PaneHeaderBadge: View {
                 // Asset variants key off the terminal background, not the
                 // system appearance; overriding the environment scheme
                 // makes the catalog resolve the matching one.
-                Image("\(base)16")
+                Image("\(base)48")
                     .resizable()
                     .renderingMode(.original)
                     .aspectRatio(contentMode: .fit)
                     .environment(\.colorScheme, GhosttyRuntime.shared.terminalColorScheme)
             case .symbol(let name):
                 Image(systemName: name)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(ink.opacity(0.6))
             case .dot:
-                Image("TerminalIdle16")
+                Image("TerminalIdleHeader")
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
                     .foregroundStyle(Color.blue.opacity(0.8))
             }
         } else {
-            Image("TerminalIdle16")
+            Image("TerminalIdleHeader")
                 .resizable()
                 .renderingMode(.template)
                 .aspectRatio(contentMode: .fit)
-                .foregroundStyle(ink.opacity(0.45))
+                .foregroundStyle(ink.opacity(0.5))
         }
     }
 }

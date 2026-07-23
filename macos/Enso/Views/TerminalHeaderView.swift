@@ -123,3 +123,40 @@ extension NSWindow {
         }
     }
 }
+
+/// Splits an absolute path into a friendly root (home / disk) plus trailing
+/// components, collapsing deep paths around an ellipsis. Drives the pane
+/// headers' segmented breadcrumb (PaneHeaderBreadcrumb).
+struct PathTrail {
+    let rootIcon: String
+    let rootLabel: String?
+    let segments: [String]
+
+    init(path: String) {
+        let home = NSHomeDirectory()
+
+        if path == home || path == "~" {
+            rootIcon = "house.fill"
+            rootLabel = "Home"
+            segments = []
+            return
+        }
+
+        var components: [String]
+        if path.hasPrefix(home + "/") {
+            rootIcon = "house.fill"
+            rootLabel = nil
+            components = path.dropFirst(home.count + 1).split(separator: "/").map(String.init)
+        } else {
+            rootIcon = "internaldrive.fill"
+            rootLabel = path == "/" ? "Macintosh HD" : nil
+            components = path.split(separator: "/").map(String.init)
+        }
+
+        // Deep paths read as noise; keep the last two and hint at the rest.
+        if components.count > 3 {
+            components = ["…"] + components.suffix(2)
+        }
+        segments = components
+    }
+}
