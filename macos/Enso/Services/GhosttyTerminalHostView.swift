@@ -141,7 +141,10 @@ final class SplitLayoutHostView: NSView {
             let card = cards[id] ?? {
                 let card = PaneCardView()
                 cards[id] = card
-                addSubview(card)
+                // Below every sibling: dividers overhang the card edges by
+                // a few points, and their grab strips must stay on top of
+                // cards added later.
+                addSubview(card, positioned: .below, relativeTo: nil)
                 return card
             }()
             card.setChrome(enabled: isSplitLayout, cornerRadius: paneCornerRadius)
@@ -213,10 +216,15 @@ final class SplitLayoutHostView: NSView {
 
     // MARK: - Geometry
 
-    /// The gap between pane cards — window chrome showing through, sized
-    /// to the card's own 10pt window inset so the spacing reads native.
-    /// The whole gap doubles as the resize-drag hit target.
-    static let dividerThickness: CGFloat = 10
+    /// The gap between pane cards — window chrome showing through. The
+    /// divider's grab strip extends a few points past the gap onto the
+    /// card edges (see grabOutset), like standard split views, so the
+    /// narrow gap stays comfortable to hit.
+    static let dividerThickness: CGFloat = 5
+
+    /// How far the divider's invisible grab strip (and hover dots)
+    /// overhang the neighboring card edges on each side.
+    static let dividerGrabOutset: CGFloat = 4
 
     /// The in-pane header band: two lines (title, then cwd breadcrumb)
     /// centered in the same 46pt the old header strip used, sitting on the
@@ -337,7 +345,11 @@ final class SplitLayoutHostView: NSView {
             divider.path = path
             divider.direction = branch.direction
             divider.regionRect = rect
-            divider.frame = dividerRect
+            // The frame overhangs the gap onto the card edges: a wider
+            // invisible grab strip, and room for the hover dots to draw.
+            divider.frame = branch.direction == .horizontal
+                ? dividerRect.insetBy(dx: -Self.dividerGrabOutset, dy: 0)
+                : dividerRect.insetBy(dx: 0, dy: -Self.dividerGrabOutset)
             if divider.superview !== self {
                 // Above the surfaces; the divider owns the seam strip the
                 // pane frames leave open, so hit areas never contend.
@@ -350,19 +362,85 @@ final class SplitLayoutHostView: NSView {
 }
 
 /// One draggable split divider: an invisible strip spanning the chrome
-/// gap between two pane cards, converting pointer position into the
-/// parent split's first-child ratio. Draws nothing — the gap itself is
-/// the visual — but keeps the resize cursor affordance.
+/// gap between two pane cards (overhanging their edges a few points),
+/// converting pointer position into the parent split's first-child
+/// ratio. The strip itself draws nothing — the gap is the visual — but
+/// hovering fades in a small three-dot grab affordance, oriented with
+/// the drag axis, and the resize cursor covers the strip.
 final class SplitDividerView: NSView {
     var path = SplitPath()
-    var direction: SplitDirection = .horizontal
+    var direction: SplitDirection = .horizontal {
+        didSet {
+            dots.direction = direction
+            layoutDots()
+            dots.needsDisplay = true
+        }
+    }
     /// The whole region the parent split divides, in the host's
     /// coordinates; drags map the pointer into this to produce a ratio.
     var regionRect: CGRect = .zero
     var onDrag: ((SplitPath, Double) -> Void)?
     var onDragEnded: (() -> Void)?
 
+    /// The hover affordance: three quiet dots centered in the gap.
+    private let dots = SplitDividerDotsView()
+
     override var isFlipped: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+        dots.wantsLayer = true
+        dots.alphaValue = 0
+        addSubview(dots)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutDots()
+    }
+
+    private func layoutDots() {
+        let size = direction == .horizontal
+            ? NSSize(width: SplitDividerDotsView.length, height: SplitDividerDotsView.thickness)
+            : NSSize(width: SplitDividerDotsView.thickness, height: SplitDividerDotsView.length)
+        dots.frame = NSRect(
+            x: (bounds.width - size.width) / 2,
+            y: (bounds.height - size.height) / 2,
+            width: size.width, height: size.height
+        )
+    }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .inVisibleRect, .activeInKeyWindow],
+            owner: self
+        ))
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        fadeDots(to: 1)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        fadeDots(to: 0)
+    }
+
+    /// Quick opacity-only transition — a hover affordance, not a motion
+    /// effect.
+    private func fadeDots(to alpha: CGFloat) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            dots.animator().alphaValue = alpha
+        }
+    }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -393,6 +471,34 @@ final class SplitDividerView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         onDragEnded?()
+    }
+}
+
+/// The divider's hover affordance: three small dots in the system's
+/// secondary ink (appearance-adaptive, quiet on the frost), laid out
+/// along the drag axis — a horizontal row between side-by-side cards, a
+/// vertical column between stacked ones. Display only; never intercepts
+/// the divider's clicks.
+final class SplitDividerDotsView: NSView {
+    var direction: SplitDirection = .horizontal
+
+    static let dotDiameter: CGFloat = 2.5
+    static let dotGap: CGFloat = 2.5
+    static var length: CGFloat { dotDiameter * 3 + dotGap * 2 }
+    static var thickness: CGFloat { dotDiameter }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.secondaryLabelColor.setFill()
+        let d = Self.dotDiameter
+        for index in 0..<3 {
+            let offset = CGFloat(index) * (d + Self.dotGap)
+            let rect = direction == .horizontal
+                ? NSRect(x: offset, y: (bounds.height - d) / 2, width: d, height: d)
+                : NSRect(x: (bounds.width - d) / 2, y: offset, width: d, height: d)
+            NSBezierPath(ovalIn: rect).fill()
+        }
     }
 }
 
@@ -457,6 +563,20 @@ final class PaneCardView: NSView {
 
     override func layout() {
         super.layout()
+        updateShadowPath()
+    }
+
+    /// The one guaranteed-synchronous hook on every resize. The first
+    /// setChrome runs at creation while bounds are still zero, so the
+    /// path guard leaves shadowPath nil — and with no path, CALayer
+    /// derives the shadow from the composited content, which renders as
+    /// a squarish clipped blob around the Metal-backed card until some
+    /// later pass (an appearance change, any store publish) re-ran
+    /// setChrome with real bounds. A plain NSView gets no reliable
+    /// layout() call after the host assigns its frame, so the path must
+    /// chase the frame here.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
         updateShadowPath()
     }
 
