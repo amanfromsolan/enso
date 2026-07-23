@@ -12,7 +12,12 @@ struct TerminalWorkspaceView: View {
             // Always mounted: the host container persists across session
             // and space switches so the Metal surface swap lands in the
             // same commit as SwiftUI's redraw (see GhosttyTerminalHostView).
-            GhosttyTerminalHostView(session: store.selectedSession, store: store)
+            // Selecting any pane of a split shows the whole container.
+            GhosttyTerminalHostView(
+                session: store.selectedSession,
+                container: store.selectedSession.flatMap { store.splitContainer(containing: $0.id) },
+                store: store
+            )
                 .overlay {
                     if store.selectedSession == nil {
                         ContentUnavailableView(
