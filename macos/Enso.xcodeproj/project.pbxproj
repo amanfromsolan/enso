@@ -43,6 +43,7 @@
 		A1RELNTP012FD810C30001BF12 /* ReleaseNotesParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */; };
 		A1SETPNL012FD810C30001BF12 /* SettingsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */; };
 		A1SPKLBLD12FD810C30001BF12 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1SPKLPRD12FD810C30001BF12 /* Sparkle */; };
+		A1SPLTRE012FD810C30001BF12 /* SplitTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SPLTRE022FD810C30001BF12 /* SplitTree.swift */; };
 		A1TABPRC012FD810C30001BF12 /* TabProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TABPRC022FD810C30001BF12 /* TabProcess.swift */; };
 		A1ICNCAT012FD810C30001BF12 /* IconCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ICNCAT022FD810C30001BF12 /* IconCatalog.swift */; };
 		A1TABSW012FD810C30001BF12 /* TabSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1TABSW022FD810C30001BF12 /* TabSwitcher.swift */; };
@@ -75,6 +76,7 @@
 		070AC3922FD810C50001BF12 /* EnsoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EnsoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000012FD810C30001BF12 /* TerminalCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalCommands.swift; sourceTree = "<group>"; };
 		A10000022FD810C30001BF12 /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
+		A1SPLTRE022FD810C30001BF12 /* SplitTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTree.swift; sourceTree = "<group>"; };
 		A10000032FD810C30001BF12 /* GhosttyTerminalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyTerminalHostView.swift; sourceTree = "<group>"; };
 		A10000042FD810C30001BF12 /* TerminalSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionStore.swift; sourceTree = "<group>"; };
 		A10000052FD810C30001BF12 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
@@ -221,6 +223,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000022FD810C30001BF12 /* TerminalSession.swift */,
+				A1SPLTRE022FD810C30001BF12 /* SplitTree.swift */,
 				A1TABPRC022FD810C30001BF12 /* TabProcess.swift */,
 				A1ICNCAT022FD810C30001BF12 /* IconCatalog.swift */,
 			);
@@ -447,6 +450,7 @@
 				A10000102FD810C30001BF12 /* TerminalCommands.swift in Sources */,
 				A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */,
 				A10000112FD810C30001BF12 /* TerminalSession.swift in Sources */,
+				A1SPLTRE012FD810C30001BF12 /* SplitTree.swift in Sources */,
 				A1TABPRC012FD810C30001BF12 /* TabProcess.swift in Sources */,
 				A1ICNCAT012FD810C30001BF12 /* IconCatalog.swift in Sources */,
 				A10000122FD810C30001BF12 /* GhosttyTerminalHostView.swift in Sources */,

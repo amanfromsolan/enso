@@ -17,6 +17,12 @@ final class TerminalSessionStore: ObservableObject {
     /// Rows highlighted for multi-select actions (folder creation, bulk close).
     @Published var multiSelection: Set<TerminalSession.ID> = []
 
+    /// Split containers: each groups the tabs participating in one split
+    /// layout (every pane is a real tab; the container only records the
+    /// grouping and geometry). Persisted with the sidebar structure so a
+    /// split survives relaunch.
+    @Published private(set) var splitContainers: [SplitContainer] = []
+
     /// Most-recently-used selection order per space; drives the Ctrl-Tab
     /// switcher. Session-only — falls back to display order on launch.
     private var recency: [SidebarSpace.ID: [TerminalSession.ID]] = [:]
@@ -80,10 +86,12 @@ final class TerminalSessionStore: ObservableObject {
         self.persistToDisk = persistToDisk
 
         var loaded: [SidebarSpace]
+        var loadedContainers: [SplitContainer] = []
         if let spaces {
             loaded = spaces
         } else if persistToDisk, let state = Self.loadState() {
             loaded = state.spaces
+            loadedContainers = state.splitContainers ?? []
         } else {
             loaded = []
         }
@@ -94,6 +102,10 @@ final class TerminalSessionStore: ObservableObject {
 
         self.spaces = loaded
         self.activeSpaceID = loaded[0].id
+        self.splitContainers = loadedContainers
+        // A stale state file may reference tabs that no longer exist;
+        // membership must only ever cover live sessions.
+        pruneSplitContainerMembership()
 
         pruneExpiredEphemeralSessions()
 
@@ -208,6 +220,8 @@ final class TerminalSessionStore: ObservableObject {
             GhosttySurfaceManager.shared.closeSurface(for: session.id)
         }
         spaces.remove(at: index)
+        // Containers whose members lived in the deleted space are gone too.
+        pruneSplitContainerMembership()
         if activeSpaceID == spaceID {
             // Deleting the active space is a real transition: route it
             // through activateSpace so the fallback space gets everything a
@@ -384,6 +398,138 @@ final class TerminalSessionStore: ObservableObject {
         )
     }
 
+    // MARK: - Splits
+
+    /// The container the given tab is a pane of, if any.
+    func splitContainer(containing sessionID: TerminalSession.ID) -> SplitContainer? {
+        splitContainers.first { $0.tree.contains(sessionID) }
+    }
+
+    /// ⌘D / ⇧⌘D: splits the focused pane. A split creates a NEW real tab —
+    /// its own sidebar row, session, and shell (spawned in the split pane's
+    /// working directory) — and groups it with the source tab in a split
+    /// container. Splitting an unsplit tab starts a container; splitting a
+    /// pane of an existing container grows its tree in place.
+    ///
+    /// The new row is inserted right after the container's last member (or
+    /// after the source tab when unsplit), so members always sit adjacent
+    /// in the sidebar in creation order — the flat stack the container
+    /// renders, regardless of split geometry.
+    func splitSelection(direction: SplitDirection) {
+        guard let selection, let source = selectedSession else { return }
+        let session = Self.makeSession(
+            workingDirectory: source.workingDirectory,
+            accentIndex: sessions.count
+        )
+
+        let existing = splitContainer(containing: selection)
+        let anchorID = existing.flatMap { container in
+            activeSpace.sessions.last { container.tree.contains($0.id) }?.id
+        } ?? selection
+
+        insertSession(session, after: anchorID)
+
+        if let existing,
+           let index = splitContainers.firstIndex(where: { $0.id == existing.id }),
+           let grown = existing.tree.inserting(session.id, splitting: selection, direction: direction) {
+            splitContainers[index].tree = grown
+        } else {
+            splitContainers.append(SplitContainer(tree: .split(SplitBranch(
+                direction: direction,
+                ratio: 0.5,
+                first: .leaf(selection),
+                second: .leaf(session.id)
+            ))))
+        }
+
+        // Focus follows the new pane, like every terminal's split behavior.
+        activateSpace(activeSpaceID, selecting: session.id)
+    }
+
+    /// Live divider drag: rewrites one split's ratio. Publishes (so the
+    /// layout follows the pointer) but does not persist — the divider
+    /// commits once on mouse-up via `commitSplitLayout`.
+    func updateSplitRatio(containerID: SplitContainer.ID, path: SplitPath, ratio: Double) {
+        guard let index = splitContainers.firstIndex(where: { $0.id == containerID }) else { return }
+        splitContainers[index].tree = splitContainers[index].tree.updatingRatio(at: path, to: ratio)
+    }
+
+    /// Divider drag ended: persist the final ratios.
+    func commitSplitLayout() {
+        save()
+    }
+
+    /// Inserts a session immediately after the anchor row, in whatever
+    /// collection (loose pinned, folder, ephemeral) the anchor lives — the
+    /// split sibling lands beside its source wherever that is. Falls back
+    /// to a loose ephemeral append if the anchor vanished mid-flight.
+    private func insertSession(_ session: TerminalSession, after anchorID: TerminalSession.ID) {
+        for spaceIndex in spaces.indices {
+            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == anchorID }) {
+                spaces[spaceIndex].pinnedItems.insert(.tab(session), at: itemIndex + 1)
+                return
+            }
+            var inserted = false
+            var revealFolderID: TerminalFolder.ID?
+            spaces[spaceIndex].modifyFolders { folder in
+                guard !inserted,
+                      let index = folder.sessions.firstIndex(where: { $0.id == anchorID }) else {
+                    return
+                }
+                folder.sessions.insert(session, at: index + 1)
+                revealFolderID = folder.id
+                inserted = true
+            }
+            if inserted {
+                // A pane born into a collapsed folder must be visible.
+                if let revealFolderID {
+                    collapsedFolderIDs.remove(revealFolderID)
+                }
+                return
+            }
+            if let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == anchorID }) {
+                spaces[spaceIndex].ephemeralSessions.insert(session, at: index + 1)
+                return
+            }
+        }
+        withSpace(activeSpaceID) { $0.ephemeralSessions.append(session) }
+    }
+
+    /// Removes the given tabs from any split trees they are panes of;
+    /// neighbors absorb the space, and a container down to one member
+    /// dissolves — its last tab returns to being a plain sidebar row.
+    /// Called for closes AND for moves (pin/unpin, drag, move-to-space,
+    /// into-folder): a tab relocated away from its group leaves the split,
+    /// which keeps every container's members co-located and adjacent.
+    private func removeFromSplitContainers(_ sessionIDs: Set<TerminalSession.ID>) {
+        guard !sessionIDs.isEmpty else { return }
+        var changed = false
+        for index in splitContainers.indices {
+            var tree: SplitNode? = splitContainers[index].tree
+            for id in sessionIDs where tree?.contains(id) == true {
+                tree = tree?.removing(id)
+                changed = true
+            }
+            // A fully emptied tree collapses to a dead single leaf, which
+            // the dissolve pass below removes along with every other
+            // container left under two members.
+            splitContainers[index].tree = tree ?? .leaf(UUID())
+        }
+        guard changed else { return }
+        splitContainers.removeAll { $0.memberIDs.count < 2 }
+    }
+
+    /// Drops membership for tabs that no longer exist anywhere (stale state
+    /// files, whole-space deletion) and dissolves containers left with a
+    /// single member.
+    private func pruneSplitContainerMembership() {
+        let live = Set(sessions.map(\.id))
+        let stale = splitContainers
+            .flatMap(\.memberIDs)
+            .filter { !live.contains($0) }
+        removeFromSplitContainers(Set(stale))
+    }
+
     // MARK: - Pinning / moving
 
     func pin(_ sessionIDs: Set<TerminalSession.ID>, inSpace spaceID: SidebarSpace.ID) {
@@ -512,6 +658,12 @@ final class TerminalSessionStore: ObservableObject {
             moved += spaces[index].ephemeralSessions.filter { sessionIDs.contains($0.id) }
             spaces[index].ephemeralSessions.removeAll { sessionIDs.contains($0.id) }
         }
+        // Leaving one's spot means leaving one's split: every caller here
+        // either closes the tab or relocates it (pin/unpin, drag reorder,
+        // move to folder/space), and a relocated pane exits its container
+        // so members always stay adjacent. Splits never re-home a session
+        // through this path (they insert directly), so this can't misfire.
+        removeFromSplitContainers(sessionIDs)
         return moved
     }
 
@@ -529,6 +681,20 @@ final class TerminalSessionStore: ObservableObject {
     func close(sessionIDs: Set<TerminalSession.ID>) {
         let orderedActive = activeSpace.sessions
         let anchorIndex = orderedActive.firstIndex { sessionIDs.contains($0.id) }
+
+        // Closing the focused pane of a split keeps focus inside the split:
+        // the nearest surviving member (by sidebar order) takes over,
+        // instead of the generic next-row fallback jumping outside the
+        // container. Resolved before removal — membership is gone after.
+        var splitFallback: TerminalSession.ID?
+        if let selection, sessionIDs.contains(selection),
+           let container = splitContainer(containing: selection),
+           let selectionIndex = orderedActive.firstIndex(where: { $0.id == selection }) {
+            splitFallback = orderedActive.enumerated()
+                .filter { container.tree.contains($0.element.id) && !sessionIDs.contains($0.element.id) }
+                .min { abs($0.offset - selectionIndex) < abs($1.offset - selectionIndex) }?
+                .element.id
+        }
 
         for id in sessionIDs {
             GhosttySurfaceManager.shared.closeSurface(for: id)
@@ -549,6 +715,8 @@ final class TerminalSessionStore: ObservableObject {
             let remaining = activeSpace.sessions
             if remaining.isEmpty {
                 self.selection = nil
+            } else if let splitFallback {
+                self.selection = splitFallback
             } else {
                 self.selection = remaining[min(anchorIndex ?? 0, remaining.count - 1)].id
             }
@@ -665,6 +833,15 @@ final class TerminalSessionStore: ObservableObject {
         }
         surfaceView.onSurfaceClose = { [weak self] in
             self?.close(sessionID: sessionID)
+        }
+        // Clicking a pane focuses its surface; the sidebar selection must
+        // follow so the highlighted row is always the focused pane. The
+        // guard keeps programmatic focus (the host focusing the already-
+        // selected pane) from re-publishing selection during a view update.
+        surfaceView.onFocusGained = { [weak self] in
+            guard let self, self.selection != sessionID else { return }
+            self.selection = sessionID
+            self.multiSelection = [sessionID]
         }
     }
 
@@ -1193,6 +1370,8 @@ final class TerminalSessionStore: ObservableObject {
 
     private struct PersistedState: Codable {
         var spaces: [SidebarSpace]
+        /// Absent in state files written before splits shipped.
+        var splitContainers: [SplitContainer]?
     }
 
     /// Pre-spaces state file layout, migrated on first load.
@@ -1250,7 +1429,9 @@ final class TerminalSessionStore: ObservableObject {
     private func save() {
         guard persistToDisk else { return }
         withSpace(activeSpaceID) { $0.lastSelection = selection }
-        guard let data = try? JSONEncoder().encode(PersistedState(spaces: spaces)) else { return }
+        guard let data = try? JSONEncoder().encode(
+            PersistedState(spaces: spaces, splitContainers: splitContainers)
+        ) else { return }
         try? data.write(to: Self.stateURL, options: .atomic)
     }
 }

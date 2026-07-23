@@ -11,6 +11,9 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
     var onTitleChange: ((String) -> Void)?
     var onPwdChange: ((String) -> Void)?
     var onSurfaceClose: (() -> Void)?
+    /// Fired when the surface becomes first responder — clicking a pane in
+    /// a split layout syncs the sidebar selection to that pane's tab.
+    var onFocusGained: (() -> Void)?
 
     /// Non-nil while interpretKeyEvents is routing a keyDown through
     /// NSTextInputClient; collects the text AppKit translates for us.
@@ -199,6 +202,9 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         let accepted = super.becomeFirstResponder()
         if accepted, let surface {
             ghostty_surface_set_focus(surface, true)
+        }
+        if accepted {
+            onFocusGained?()
         }
         return accepted
     }
