@@ -8,11 +8,11 @@ struct TerminalWorkspaceView: View {
         // and space switches so the Metal surface swap lands in the
         // same commit as SwiftUI's redraw (see GhosttyTerminalHostView).
         // Selecting any pane of a split shows the whole container. Each
-        // pane draws its own in-pane header (the original strip for
-        // unsplit tabs and full-width panes, the stacked compact variant
-        // only for horizontally narrowed ones), so no chrome sits above
-        // or across the splits — dividers run edge to edge through the
-        // card.
+        // pane draws its own in-pane header (the original strip when the
+        // pane is wide, the stacked compact variant when its laid-out
+        // width falls under the responsive threshold), so no chrome sits
+        // above or across the splits — dividers run edge to edge through
+        // the card.
         GhosttyTerminalHostView(
             session: store.selectedSession,
             container: store.selectedSession.flatMap { store.splitContainer(containing: $0.id) },

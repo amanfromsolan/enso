@@ -70,6 +70,16 @@ final class SplitLayoutHostView: NSView {
 
     private var tree: SplitNode?
     private var surfaces: [TerminalSession.ID: GhosttySurfaceView] = [:]
+    /// Live session snapshots for the panes on screen; kept so a layout
+    /// pass can rebuild a header's content when its width crosses the
+    /// compact threshold.
+    private var sessions: [TerminalSession.ID: TerminalSession] = [:]
+    /// Which panes currently wear the compact header. Decided from the
+    /// pane's LAID-OUT width (responsive), not from tree topology — a
+    /// 50/50 horizontal split at typical window widths goes compact, but
+    /// the same split in a very wide window keeps full headers, and a
+    /// very narrow window can go compact even unsplit.
+    private var compactHeaders: [TerminalSession.ID: Bool] = [:]
     /// One in-pane header per pane (icon + title + cwd), hosted SwiftUI.
     /// Living INSIDE the pane region — never above or across the split —
     /// is what lets the dividers run edge to edge.
@@ -111,29 +121,20 @@ final class SplitLayoutHostView: NSView {
         }
         self.surfaces = surfaces
 
+        self.sessions = sessions
+
         // Headers track the surfaces one-to-one: refresh live ones with the
         // session's current title/process/cwd, drop the ones whose pane
-        // left, and mount headers for new panes.
+        // left, and mount headers for new panes. Which VARIANT a header
+        // wears (full vs compact) is a width question, settled during the
+        // layout pass below once the pane rects are known.
         for (id, header) in headers where surfaces[id] == nil || sessions[id] == nil {
             header.removeFromSuperview()
             headers.removeValue(forKey: id)
-        }
-        // Panes narrowed by a horizontal split (side-by-side, reduced
-        // width) get the compact type treatment; unsplit tabs and
-        // vertical-only (stacked, full-width) panes keep the full size.
-        var narrowed: [TerminalSession.ID: Bool] = [:]
-        if let tree {
-            Self.collectNarrowedLeaves(tree, narrowed: false, into: &narrowed)
+            compactHeaders.removeValue(forKey: id)
         }
         for id in surfaces.keys {
-            guard let session = sessions[id], let store else { continue }
-            let rootView = PaneHeaderView(
-                session: session,
-                store: store,
-                compact: narrowed[id] ?? false
-            ) { [weak self] in
-                self?.focusPane(id)
-            }
+            guard let rootView = headerRootView(for: id) else { continue }
             if let header = headers[id] {
                 header.rootView = rootView
             } else {
@@ -200,20 +201,43 @@ final class SplitLayoutHostView: NSView {
     /// terminal background inside the pane.
     static let paneHeaderHeight: CGFloat = 46
 
-    /// Marks every leaf whose width a horizontal split reduces: any
-    /// horizontal split on the path from the root narrows both children.
-    private static func collectNarrowedLeaves(
-        _ node: SplitNode,
-        narrowed: Bool,
-        into map: inout [TerminalSession.ID: Bool]
-    ) {
-        switch node {
-        case .leaf(let id):
-            map[id] = narrowed
-        case .split(let branch):
-            let next = narrowed || branch.direction == .horizontal
-            collectNarrowedLeaves(branch.first, narrowed: next, into: &map)
-            collectNarrowedLeaves(branch.second, narrowed: next, into: &map)
+    /// The responsive compact gate: a pane whose laid-out width drops
+    /// below this goes compact. 500pt lands a 50/50 horizontal split
+    /// compact at typical window widths while an unsplit tab (or a
+    /// full-width stacked pane) stays full — yet the same split in a very
+    /// wide window keeps full headers, and a very narrow window can go
+    /// compact even unsplit.
+    static let compactHeaderEnterWidth: CGFloat = 500
+    /// A compact pane returns to full only once it clears this — 40pt of
+    /// hysteresis so a divider parked right at the threshold can't flap
+    /// the header between variants while dragging.
+    static let compactHeaderExitWidth: CGFloat = 540
+
+    /// Rebuilds a pane header's content from the current session snapshot
+    /// and compact state; nil when the pane's session or the store is gone.
+    private func headerRootView(for id: TerminalSession.ID) -> PaneHeaderView? {
+        guard let session = sessions[id], let store else { return nil }
+        return PaneHeaderView(
+            session: session,
+            store: store,
+            compact: compactHeaders[id] ?? false
+        ) { [weak self] in
+            self?.focusPane(id)
+        }
+    }
+
+    /// The width decision, applied wherever leaf rects are computed: flips
+    /// the pane's header variant when its laid-out width crosses the
+    /// threshold (with hysteresis), rebuilding the hosted content in place.
+    private func updateHeaderVariant(for id: TerminalSession.ID, paneWidth: CGFloat) {
+        let wasCompact = compactHeaders[id] ?? false
+        let isCompact = wasCompact
+            ? paneWidth < Self.compactHeaderExitWidth
+            : paneWidth < Self.compactHeaderEnterWidth
+        guard isCompact != wasCompact else { return }
+        compactHeaders[id] = isCompact
+        if let rootView = headerRootView(for: id) {
+            headers[id]?.rootView = rootView
         }
     }
 
@@ -238,6 +262,9 @@ final class SplitLayoutHostView: NSView {
             // header claims the top band only within this leaf, so nothing
             // spans across a divider.
             let paneRect = rect.integral
+            // The full-vs-compact call is made here, off the measured
+            // width, so window resizes and divider drags respond live.
+            updateHeaderVariant(for: id, paneWidth: paneRect.width)
             let headerHeight = min(Self.paneHeaderHeight, paneRect.height)
             headers[id]?.frame = CGRect(
                 x: paneRect.minX, y: paneRect.minY,
@@ -360,13 +387,14 @@ final class SplitDividerView: NSView {
 
 // MARK: - Pane header
 
-/// The header INSIDE each pane. Two variants with one gate:
-/// `compact == false` — an unsplit tab or a pane only stacked by vertical
-/// splits — renders the ORIGINAL pre-splits header strip verbatim
-/// (FullPaneHeader): title and breadcrumb inline on one row, double-click
-/// rename, window drag/zoom on the empty band. The stacked two-line
-/// treatment (CompactPaneHeader) exists ONLY for panes whose width a
-/// horizontal split reduced — never anywhere else.
+/// The header INSIDE each pane. Two variants with one gate, decided
+/// responsively from the pane's LAID-OUT width (see updateHeaderVariant):
+/// wide panes — an unsplit tab, a full-width stacked pane, or even a
+/// horizontal split in a very wide window — render the ORIGINAL
+/// pre-splits header strip verbatim (FullPaneHeader): title and
+/// breadcrumb inline on one row, double-click rename, window drag/zoom on
+/// the empty band. The stacked two-line treatment (CompactPaneHeader)
+/// appears only when a pane's width falls under the compact threshold.
 struct PaneHeaderView: View {
     let session: TerminalSession
     let store: TerminalSessionStore
@@ -590,11 +618,12 @@ private struct HeaderProcessBadge: View {
     }
 }
 
-/// The narrowed-pane header: title with the working-directory breadcrumb
-/// stacked on a line BELOW, compact type. Exists ONLY for panes reduced in
-/// width by a horizontal split. Display only — no buttons, no hover
-/// actions; clicking it focuses the pane's terminal. The badge keeps the
-/// full header's 24pt — the compact treatment shrinks type, never the mark.
+/// The narrow-pane header: title with the working-directory breadcrumb
+/// stacked on a line BELOW, compact type. Appears only when a pane's
+/// laid-out width falls under the compact threshold. Display only — no
+/// buttons, no hover actions; clicking it focuses the pane's terminal.
+/// The badge keeps the full header's 24pt — the compact treatment shrinks
+/// type, never the mark.
 private struct CompactPaneHeader: View {
     let session: TerminalSession
     let onActivate: () -> Void
