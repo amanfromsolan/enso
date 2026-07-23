@@ -8,9 +8,11 @@ struct TerminalWorkspaceView: View {
         // and space switches so the Metal surface swap lands in the
         // same commit as SwiftUI's redraw (see GhosttyTerminalHostView).
         // Selecting any pane of a split shows the whole container. Each
-        // pane draws its own in-pane header (icon, title, cwd below), so
-        // no chrome sits above or across the splits — dividers run edge
-        // to edge through the card.
+        // pane draws its own in-pane header (the original strip for
+        // unsplit tabs and full-width panes, the stacked compact variant
+        // only for horizontally narrowed ones), so no chrome sits above
+        // or across the splits — dividers run edge to edge through the
+        // card.
         GhosttyTerminalHostView(
             session: store.selectedSession,
             container: store.selectedSession.flatMap { store.splitContainer(containing: $0.id) },
@@ -30,16 +32,6 @@ struct TerminalWorkspaceView: View {
                 .colorScheme(.dark)
             }
         }
-        #if DEBUG
-        // The dev marker lost its home when the header strip became
-        // per-pane; float it in the card's corner instead. Display only —
-        // it must never eat a click meant for the terminal.
-        .overlay(alignment: .topTrailing) {
-            DevBadge()
-                .padding(10)
-                .allowsHitTesting(false)
-        }
-        #endif
         .background(GhosttyRuntime.shared.themeBackground)
         // Space/tab switches run inside withAnimation; a cross-fade here
         // makes the SwiftUI pane headers and the Metal-backed terminal

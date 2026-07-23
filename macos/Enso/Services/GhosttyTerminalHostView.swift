@@ -43,6 +43,7 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
             surfaces[id] = surface
         }
 
+        host.store = store
         let containerID = container?.id
         host.onRatioChange = { [weak store] path, ratio in
             guard let containerID else { return }
@@ -63,6 +64,9 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
 final class SplitLayoutHostView: NSView {
     var onRatioChange: ((SplitPath, Double) -> Void)?
     var onRatioCommit: (() -> Void)?
+    /// For the pane headers' rename plumbing; set by the representable
+    /// before every apply.
+    weak var store: TerminalSessionStore?
 
     private var tree: SplitNode?
     private var surfaces: [TerminalSession.ID: GhosttySurfaceView] = [:]
@@ -122,9 +126,10 @@ final class SplitLayoutHostView: NSView {
             Self.collectNarrowedLeaves(tree, narrowed: false, into: &narrowed)
         }
         for id in surfaces.keys {
-            guard let session = sessions[id] else { continue }
+            guard let session = sessions[id], let store else { continue }
             let rootView = PaneHeaderView(
                 session: session,
+                store: store,
                 compact: narrowed[id] ?? false
             ) { [weak self] in
                 self?.focusPane(id)
@@ -355,38 +360,260 @@ final class SplitDividerView: NSView {
 
 // MARK: - Pane header
 
-/// The header INSIDE each pane: the tab's process icon and title, with the
-/// working directory breadcrumb on a quieter second line below. One
-/// component serves split panes and the unsplit tab alike (a plain tab is
-/// a single-leaf tree through the same host path). Display only — no
-/// buttons, no hover actions; clicking it focuses the pane's terminal.
-///
-/// Type responds to splitting: `compact` (set only for panes narrowed by
-/// a horizontal split) shrinks the title and breadcrumb; an unsplit tab
-/// and vertical-only (full-width) panes keep the old header strip's
-/// full-size treatment. The icon never changes size.
+/// The header INSIDE each pane. Two variants with one gate:
+/// `compact == false` — an unsplit tab or a pane only stacked by vertical
+/// splits — renders the ORIGINAL pre-splits header strip verbatim
+/// (FullPaneHeader): title and breadcrumb inline on one row, double-click
+/// rename, window drag/zoom on the empty band. The stacked two-line
+/// treatment (CompactPaneHeader) exists ONLY for panes whose width a
+/// horizontal split reduced — never anywhere else.
 struct PaneHeaderView: View {
     let session: TerminalSession
+    let store: TerminalSessionStore
     let compact: Bool
     let onActivate: () -> Void
 
     var body: some View {
+        if compact {
+            CompactPaneHeader(session: session, onActivate: onActivate)
+        } else {
+            FullPaneHeader(session: session, store: store)
+        }
+    }
+}
+
+/// The original header strip, exactly as it was before splits shipped —
+/// recovered from history, not approximated: 24pt badge, 15pt title with
+/// the segmented breadcrumb INLINE on the same row, double-click-to-rename
+/// with the invisible-twin field, the 80% cluster cap, the DEV badge, and
+/// the AppKit drag/zoom handle behind the empty band. Living inside the
+/// pane band, it is pixel-identical to the old strip for an unsplit tab.
+private struct FullPaneHeader: View {
+    let session: TerminalSession
+    let store: TerminalSessionStore
+
+    @State private var isRenaming = false
+    @State private var draftTitle = ""
+    @FocusState private var renameFieldFocused: Bool
+
+    /// Measured strip width; caps the title cluster below.
+    @State private var headerWidth: CGFloat = 0
+
+    var body: some View {
         HStack(spacing: 8) {
-            // Fixed 24pt in every state — the old strip's badge size; the
-            // compact treatment shrinks type only, never the mark.
+            HStack(spacing: 8) {
+                // Leading slot mirrors the sidebar row: the detected-process
+                // badge supplants the accent dot while something known is
+                // running; idle tabs keep today's dot — never an empty slot.
+                if let process = session.runningProcess {
+                    HeaderProcessBadge(process: process, ink: terminalInk)
+                } else {
+                    // Idle terminal glyph, tinted like the tool badges;
+                    // 24 pt from the full-bleed header artwork, same slot
+                    // the agent marks occupy.
+                    Image("TerminalIdleHeader")
+                        .resizable()
+                        .renderingMode(.template)
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(terminalInk.opacity(0.5))
+                        .frame(width: 24, height: 24)
+                }
+
+                if isRenaming {
+                    // An invisible twin of the title keeps the field exactly
+                    // as wide as the typed text — a fixed-width field would
+                    // shove the breadcrumb sideways the moment editing
+                    // starts. The trailing space gives the caret room.
+                    Text(draftTitle + " ")
+                        .font(.system(size: 15, weight: .regular))
+                        .lineLimit(1)
+                        .opacity(0)
+                        .overlay {
+                            TextField("", text: $draftTitle)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(terminalInk.opacity(0.9))
+                                .environment(\.colorScheme, terminalColorScheme)
+                                .focused($renameFieldFocused)
+                                .onSubmit {
+                                    commitRename()
+                                    restoreTerminalFocus()
+                                }
+                                .onExitCommand {
+                                    isRenaming = false
+                                    restoreTerminalFocus()
+                                }
+                        }
+                } else {
+                    Text(session.title)
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(terminalInk.opacity(0.9))
+                        .lineLimit(1)
+                }
+
+                PaneHeaderBreadcrumb(
+                    path: session.workingDirectory,
+                    ink: terminalInk,
+                    compact: false
+                )
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                beginRename()
+            }
+            // A long title + breadcrumb never swallows the whole strip:
+            // cap the cluster at 80% so the header keeps visible breathing
+            // room (and drag/zoom target) on the right. A max, not a fixed
+            // width — short titles still hug their content.
+            .frame(
+                maxWidth: headerWidth > 0 ? headerWidth * 0.8 : nil,
+                alignment: .leading
+            )
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 46)
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            headerWidth = width
+        }
+        #if DEBUG
+        // Overlaid so the badge claims no room from the title cluster.
+        .overlay(alignment: .trailing) {
+            DevBadge()
+                .frame(height: 22)
+                .padding(.trailing, 12)
+        }
+        #endif
+        // Drag + double-click-zoom handled in AppKit, not SwiftUI: a
+        // WindowDragGesture claims the mouse-down to start dragging, so a
+        // paired .onTapGesture(count: 2) never recognizes and zoom silently
+        // did nothing. WindowDragHandle reads the raw clickCount instead.
+        // Sits behind the title cluster, whose own double-click (rename)
+        // keeps taking precedence.
+        .background(WindowDragHandle())
+        // Click-away while renaming: keep the edit (matching focus-loss
+        // behavior) and let the click do its normal job — same contract as
+        // the sidebar's inline renames.
+        .background(
+            RenameClickAway(active: isRenaming) {
+                commitRename()
+            }
+        )
+        .onChange(of: renameFieldFocused) { _, focused in
+            if !focused, isRenaming {
+                commitRename()
+            }
+        }
+    }
+
+    // MARK: Rename
+
+    private func beginRename() {
+        guard !isRenaming else { return }
+        draftTitle = session.title
+        isRenaming = true
+        renameFieldFocused = true
+    }
+
+    /// Commit doubles as cancel: a blanked or untouched title leaves the
+    /// session alone.
+    private func commitRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        let trimmed = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != session.title else { return }
+        store.rename(session, to: trimmed)
+    }
+
+    /// Ending a rename leaves first responder parked nowhere, so Return
+    /// stops reaching the shell; hand the keyboard back to the terminal.
+    private func restoreTerminalFocus() {
+        GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+    }
+
+    /// Ink for the process badge: dark ink on a light terminal theme, light
+    /// ink on a dark one.
+    private var terminalInk: Color {
+        GhosttyRuntime.shared.terminalColorScheme == .light ? .black : .white
+    }
+
+    /// Appearance for the rename field's editing chrome — selection
+    /// highlight, caret — so it keys off the terminal background rather than
+    /// the app appearance.
+    private var terminalColorScheme: ColorScheme {
+        GhosttyRuntime.shared.terminalColorScheme
+    }
+}
+
+/// Detected-process icon in the full header's leading slot — restored
+/// verbatim from the original strip. Agents get their full-color mark
+/// (24 pt, drawn from the 48-grid artwork); tool symbols render in the
+/// luminance-derived ink at a subdued opacity to stay legible and quiet on
+/// any Ghostty theme.
+private struct HeaderProcessBadge: View {
+    let process: TabProcess
+    let ink: Color
+
+    var body: some View {
+        switch process.badge {
+        case .agent(let base):
+            // The header sits on the Ghostty theme background, not the app
+            // chrome, so the artwork's light/dark appearance variant must
+            // key off that color's luminance rather than the system
+            // appearance. Overriding the environment colorScheme makes the
+            // asset catalog resolve the matching variant.
+            // 24 pt draws the 48-grid artwork: 24 pt @2x is 48 physical
+            // pixels, so the marks land 1:1 on the Retina grid.
+            Image("\(base)48")
+                .resizable()
+                .renderingMode(.original)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 24, height: 24)
+                .environment(\.colorScheme, GhosttyRuntime.shared.terminalColorScheme)
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(ink.opacity(0.6))
+        case .dot:
+            // A live process without artwork: the idle glyph turns blue.
+            Image("TerminalIdleHeader")
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Color.blue.opacity(0.8))
+                .frame(width: 24, height: 24)
+        }
+    }
+}
+
+/// The narrowed-pane header: title with the working-directory breadcrumb
+/// stacked on a line BELOW, compact type. Exists ONLY for panes reduced in
+/// width by a horizontal split. Display only — no buttons, no hover
+/// actions; clicking it focuses the pane's terminal. The badge keeps the
+/// full header's 24pt — the compact treatment shrinks type, never the mark.
+private struct CompactPaneHeader: View {
+    let session: TerminalSession
+    let onActivate: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
             PaneHeaderBadge(process: session.runningProcess, ink: ink)
                 .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.title)
-                    .font(.system(size: compact ? 12.5 : 15, weight: compact ? .medium : .regular))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(ink.opacity(0.9))
                     .lineLimit(1)
 
                 PaneHeaderBreadcrumb(
                     path: session.workingDirectory,
                     ink: ink,
-                    compact: compact
+                    compact: true
                 )
             }
 
@@ -450,11 +677,10 @@ private struct PaneHeaderBreadcrumb: View {
     }
 }
 
-/// The pane header's icon slot — the old strip's badge, unchanged in size
-/// across states and inked off the terminal background's luminance: agents
-/// keep their full-color mark (24pt draws the 48-grid artwork 1:1 on the
-/// Retina grid), known tools their symbol, live-but-unknown processes the
-/// blue glyph, idle panes the quiet grey one.
+/// The compact header's icon slot — HeaderProcessBadge's rendering with
+/// the idle fallback folded in and a uniform 24pt frame. Same size as the
+/// full header's badge in every state: the compact treatment shrinks
+/// type, never the mark.
 private struct PaneHeaderBadge: View {
     let process: TabProcess?
     let ink: Color
