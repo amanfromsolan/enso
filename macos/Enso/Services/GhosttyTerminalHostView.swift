@@ -606,7 +606,7 @@ private struct CompactPaneHeader: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: 11.5, weight: .regular))
                     .foregroundStyle(ink.opacity(0.9))
                     .lineLimit(1)
 
