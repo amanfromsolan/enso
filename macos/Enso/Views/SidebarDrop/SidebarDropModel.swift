@@ -74,18 +74,19 @@ struct SidebarFlatRow: Equatable, Identifiable {
     /// a split group's run; the resolver treats a run as one unit for tabs
     /// dragged in from outside it.
     let splitContainerID: SplitContainer.ID?
-
-    var depth: Int { parentFolderID == nil ? 0 : 1 }
+    /// Real tree depth: 0 for top-level rows, +1 per enclosing folder.
+    /// Uncapped — the view caps only the visual indent, never the model.
+    let depth: Int
 }
 
 /// The single source of the sidebar's visible order: selection ranges and
 /// drop projection both derive from this, so they can never drift from what
 /// renders. Collapsed folders contribute only their own row, plus the active
-/// tab that peeks out beneath them. Split-container members are hoisted to
-/// the first member's position within their collection — the exact grouping
-/// the sidebar's display entries render — so the flatten can never disagree
-/// with the group boxes on screen, even when members drifted apart in the
-/// model.
+/// tab that peeks out beneath them (from anywhere in the collapsed subtree).
+/// Split-container members are hoisted to the first member's position within
+/// their item list — the exact grouping the sidebar's display entries
+/// render — so the flatten can never disagree with the group boxes on
+/// screen, even when members drifted apart in the model.
 func flattenSidebar(
     space: SidebarSpace,
     collapsedFolderIDs: Set<TerminalFolder.ID>,
@@ -98,75 +99,70 @@ func flattenSidebar(
         splitContainers.first { $0.tree.contains(sessionID) }
     }
 
-    /// Appends one flat tab list with split members hoisted: at the first
-    /// member's position the whole group's rows are emitted (in list
-    /// order) and later members are skipped — mirroring the view's grouped
-    /// display entries.
-    func appendTabs(
-        _ tabs: [TerminalSession], parentFolderID: TerminalFolder.ID?, zone: SidebarFlatRow.Zone
+    /// Appends one ordered item list, recursing into expanded folders.
+    /// Tabs group against the list's WHOLE run of direct tabs, not a
+    /// contiguous slice: a split group whose members drifted apart in the
+    /// model (even across an intervening folder) still flattens as one run
+    /// at the first member's position, exactly as the view hoists it.
+    func appendItems(
+        _ items: [SidebarPinnedItem],
+        parentFolderID: TerminalFolder.ID?,
+        depth: Int,
+        zone: SidebarFlatRow.Zone
     ) {
+        let directTabs = items.compactMap { item -> TerminalSession? in
+            if case .tab(let session) = item { return session }
+            return nil
+        }
         var consumed: Set<TerminalSession.ID> = []
-        for session in tabs {
-            guard !consumed.contains(session.id) else { continue }
-            guard let container = containerOf(session.id) else {
+        for item in items {
+            switch item {
+            case .tab(let session):
+                guard !consumed.contains(session.id) else { continue }
+                guard let container = containerOf(session.id) else {
+                    rows.append(SidebarFlatRow(
+                        id: session.id, kind: .tab, parentFolderID: parentFolderID,
+                        zone: zone, splitContainerID: nil, depth: depth
+                    ))
+                    continue
+                }
+                for member in directTabs.filter({ container.tree.contains($0.id) }) {
+                    consumed.insert(member.id)
+                    rows.append(SidebarFlatRow(
+                        id: member.id, kind: .tab, parentFolderID: parentFolderID,
+                        zone: zone, splitContainerID: container.id, depth: depth
+                    ))
+                }
+            case .folder(let folder):
+                let collapsed = collapsedFolderIDs.contains(folder.id)
                 rows.append(SidebarFlatRow(
-                    id: session.id, kind: .tab, parentFolderID: parentFolderID,
-                    zone: zone, splitContainerID: nil
+                    id: folder.id, kind: .folder(collapsed: collapsed),
+                    parentFolderID: parentFolderID,
+                    zone: zone, splitContainerID: nil, depth: depth
                 ))
-                continue
-            }
-            for member in tabs.filter({ container.tree.contains($0.id) }) {
-                consumed.insert(member.id)
-                rows.append(SidebarFlatRow(
-                    id: member.id, kind: .tab, parentFolderID: parentFolderID,
-                    zone: zone, splitContainerID: container.id
-                ))
+                if !collapsed {
+                    appendItems(
+                        folder.items, parentFolderID: folder.id, depth: depth + 1, zone: zone
+                    )
+                } else if let selection, folder.allSessions.contains(where: { $0.id == selection }) {
+                    // The selection peeks out of a collapsed folder no
+                    // matter how deep it nests. The peeking row renders as
+                    // a lone session row outside any group chrome, so it
+                    // carries no run membership.
+                    rows.append(SidebarFlatRow(
+                        id: selection, kind: .tab, parentFolderID: folder.id,
+                        zone: zone, splitContainerID: nil, depth: depth + 1
+                    ))
+                }
             }
         }
     }
 
-    // Loose pinned tabs group against the space's WHOLE loose list, not a
-    // contiguous slice: a group whose members drifted apart in the model
-    // (even across an intervening folder) still flattens as one run at the
-    // first member's position, exactly as the view hoists it.
-    var consumedPinned: Set<TerminalSession.ID> = []
-    for item in space.pinnedItems {
-        switch item {
-        case .tab(let session):
-            guard !consumedPinned.contains(session.id) else { continue }
-            guard let container = containerOf(session.id) else {
-                rows.append(SidebarFlatRow(
-                    id: session.id, kind: .tab, parentFolderID: nil,
-                    zone: .pinned, splitContainerID: nil
-                ))
-                continue
-            }
-            for member in space.pinnedSessions.filter({ container.tree.contains($0.id) }) {
-                consumedPinned.insert(member.id)
-                rows.append(SidebarFlatRow(
-                    id: member.id, kind: .tab, parentFolderID: nil,
-                    zone: .pinned, splitContainerID: container.id
-                ))
-            }
-        case .folder(let folder):
-            let collapsed = collapsedFolderIDs.contains(folder.id)
-            rows.append(SidebarFlatRow(
-                id: folder.id, kind: .folder(collapsed: collapsed), parentFolderID: nil,
-                zone: .pinned, splitContainerID: nil
-            ))
-            if !collapsed {
-                appendTabs(folder.sessions, parentFolderID: folder.id, zone: .pinned)
-            } else if let selection, folder.sessions.contains(where: { $0.id == selection }) {
-                // The peeking row renders as a lone session row outside any
-                // group chrome, so it carries no run membership.
-                rows.append(SidebarFlatRow(
-                    id: selection, kind: .tab, parentFolderID: folder.id,
-                    zone: .pinned, splitContainerID: nil
-                ))
-            }
-        }
-    }
-    appendTabs(space.ephemeralSessions, parentFolderID: nil, zone: .ephemeral)
+    appendItems(space.pinnedItems, parentFolderID: nil, depth: 0, zone: .pinned)
+    appendItems(
+        space.ephemeralSessions.map(SidebarPinnedItem.tab),
+        parentFolderID: nil, depth: 0, zone: .ephemeral
+    )
     return rows
 }
 
@@ -178,18 +174,26 @@ func flattenSidebar(
 enum SidebarDropTarget: Equatable {
     // Tab payloads.
     case insertBefore(TerminalSession.ID)
-    /// A loose pinned tab immediately before the given folder.
+    /// A tab immediately before the given folder row, as its sibling — at
+    /// the top level for a top-level folder, inside the parent folder for
+    /// a nested one.
     case insertLooseBefore(TerminalFolder.ID)
     /// A loose pinned tab at the end of the pinned zone.
     case appendToPinned
+    /// Appended at the end of the folder's children; the folder may nest
+    /// at any depth. Also used by folder payloads for the trailing gap of
+    /// an expanded folder (the dragged folder nests as its last child).
     case appendToFolder(TerminalFolder.ID)
     /// Same mutation as `appendToFolder`; distinct so feedback can highlight
-    /// the folder row instead of drawing an insertion line.
+    /// the folder row instead of drawing an insertion line. For folder
+    /// payloads this is the nesting drop: the dragged folder becomes the
+    /// target's last child.
     case intoFolder(TerminalFolder.ID)
     case appendToEphemeral
-    // Folder payloads. The anchor is any pinned item — loose tab or folder —
-    // since folders interleave freely with loose tabs.
+    // Folder payloads. The anchor is any item — tab or folder, at any
+    // depth — since folders interleave freely with tabs and nest.
     case insertFolderBefore(UUID)
+    /// At the end of the space's top-level pinned items.
     case appendFolder
 }
 
@@ -227,11 +231,11 @@ enum SidebarDropResolution: Equatable {
 /// positions). Rows keep flatten order; geometry only decides which row/gap
 /// the pointer is in, while adjacency semantics stay structural.
 ///
-/// Loose tabs and folders interleave freely, so the gap that closes a
-/// folder (after its last visible child, or after a childless folder row)
-/// has two valid depths for a dragged tab. The pointer's X offset picks —
-/// dnd-kit's projection collapsed to our two levels: inside the child
-/// indentation nests into the folder, left of it outdents to a loose tab.
+/// Tabs and folders interleave freely and folders nest, so the gap that
+/// closes one or more folders (after a subtree's last visible row, or
+/// after a childless folder row) has several valid depths. The pointer's
+/// X offset picks — dnd-kit's projection: each childIndent of rightward
+/// travel nests one level deeper, no travel keeps the shallowest landing.
 struct SidebarDropResolver {
     struct FramedRow {
         let row: SidebarFlatRow
@@ -244,8 +248,10 @@ struct SidebarDropResolver {
     /// Pointer above this Y belongs to the pinned zone, below to ephemeral.
     private let zoneBoundaryY: CGFloat
 
-    /// Child rows sit 14pt in from their folder; used to synthesize a
-    /// child-depth line under a folder row with no visible children.
+    /// Child rows sit 14pt in from their folder, per nesting level; used
+    /// to synthesize a child-depth line under a folder row with no visible
+    /// children, and as the rightward-travel step that picks a deeper
+    /// landing in an ambiguous gap.
     private static let childIndent: CGFloat = 14
     /// Insertion lines inset 4pt from the anchor row's edges, matching the
     /// old indicator style.
@@ -282,7 +288,9 @@ struct SidebarDropResolver {
     ) -> SidebarDropResolution {
         switch payload {
         case .folder(let id):
-            return folderResolution(y: location.y, draggedFolder: id)
+            return folderResolution(
+                at: location, draggedFolder: id, horizontalDelta: horizontalDelta
+            )
         case .tabs(let ids):
             var proposal = location.y < zoneBoundaryY
                 ? pinnedTabProposal(at: location, horizontalDelta: horizontalDelta)
@@ -442,94 +450,145 @@ struct SidebarDropResolver {
         }
     }
 
-    /// The insertion point in the gap immediately after the given pinned
-    /// row. Where the gap closes a folder, both depths are valid: dragging
-    /// rightward by at least half the indentation nests into the folder,
-    /// anything else stays loose (the less-destructive default). The
-    /// insertion line previews the choice either way.
-    private func tabGapProposal(after index: Int, horizontalDelta: CGFloat) -> SidebarDropProposal {
+    // MARK: Gap projection
+
+    /// One landing slot in the gap immediately after a pinned row: the
+    /// receiving container, the row the drop lands before (nil to append at
+    /// the container's end), and the preview line at the landing depth.
+    private struct GapSlot {
+        /// nil for the space's top level.
+        let parentFolderID: TerminalFolder.ID?
+        let nextRow: SidebarFlatRow?
+        let depth: Int
+        let indicator: SidebarDropProposal.Indicator
+    }
+
+    /// The chain of open folders a row sits in, outermost first — its
+    /// ancestors, plus the row itself when it is a folder row with no
+    /// visible children (the gap after it can append INTO it). Chain[d - 1]
+    /// is the folder that owns depth-d landings at a gap closing this row.
+    private func parentChain(endingAt row: SidebarFlatRow) -> [TerminalFolder.ID] {
+        var chain: [TerminalFolder.ID] = []
+        var parentID = row.parentFolderID
+        while let id = parentID {
+            chain.insert(id, at: 0)
+            parentID = frameRow(id)?.row.parentFolderID
+        }
+        if case .folder = row.kind { chain.append(row.id) }
+        return chain
+    }
+
+    /// Whether the row lives anywhere inside the given folder's visible
+    /// subtree (the folder's own row excluded).
+    private func isInSubtree(_ row: SidebarFlatRow, of folderID: TerminalFolder.ID) -> Bool {
+        var parentID = row.parentFolderID
+        while let id = parentID {
+            if id == folderID { return true }
+            parentID = frameRow(id)?.row.parentFolderID
+        }
+        return false
+    }
+
+    /// Resolves the gap after the given pinned row to one landing depth.
+    /// A gap that closes one or more folders is ambiguous — every folder
+    /// ending there, plus the container of whatever follows, is valid —
+    /// and the pointer's rightward travel picks: each childIndent of
+    /// travel nests one level deeper (dnd-kit's projection generalized
+    /// from the old two-level version), clamped to the depths the gap
+    /// actually offers. No travel keeps the shallowest, least-destructive
+    /// landing. `maxAllowedDepth` lets folder drags fence off their own
+    /// subtree. The insertion line previews the chosen depth either way.
+    private func gapSlot(
+        after index: Int, horizontalDelta: CGFloat, maxAllowedDepth: Int? = nil
+    ) -> GapSlot {
         let hit = pinnedRows[index]
         let next = index + 1 < pinnedRows.count ? pinnedRows[index + 1] : nil
         let gapY = hit.frame.maxY
 
-        // The folder this gap could extend, if any: the row's own folder,
-        // or the folder row itself when it has no visible children.
-        let folderID: TerminalFolder.ID? = {
-            switch hit.row.kind {
-            case .folder: return hit.row.id
-            case .tab: return hit.row.parentFolderID
-            }
-        }()
+        // chain.count is the deepest landing this gap offers: for a tab
+        // that's its own container; for a folder row with no visible
+        // children, one level inside it; for an expanded folder row, the
+        // slot before its first child (whose depth the next row pins).
+        let chain = parentChain(endingAt: hit.row)
+        var maxDepth = chain.count
+        if let maxAllowedDepth { maxDepth = min(maxDepth, maxAllowedDepth) }
+        let minDepth = next?.row.depth ?? 0
+        let steps = max(0, Int(((horizontalDelta + Self.childIndent / 2) / Self.childIndent)
+            .rounded(.down)))
+        let depth = max(minDepth, min(maxDepth, minDepth + steps))
 
-        // Interior gap — the next row belongs to the same folder: depth 1
-        // only, before that row.
-        if let folderID, let next, next.row.parentFolderID == folderID {
-            return SidebarDropProposal(
-                target: .insertBefore(next.row.id),
+        if depth == minDepth, let next {
+            // Landing right before the following row, in its container.
+            return GapSlot(
+                parentFolderID: next.row.parentFolderID,
+                nextRow: next.row,
+                depth: depth,
                 indicator: line(at: next.frame.minY, spanning: next.frame)
             )
         }
-
-        guard let folderID else {
-            return looseTabProposal(before: next, at: gapY, span: hit.frame)
-        }
-        let folderFrame = frame(of: folderID) ?? hit.frame
-        if horizontalDelta >= Self.childIndent / 2 {
-            return SidebarDropProposal(
-                target: .appendToFolder(folderID),
-                indicator: line(at: gapY, spanning: childSpan(of: folderFrame))
+        if depth >= 1 {
+            // Appending at the end of a folder this gap closes.
+            let parent = chain[depth - 1]
+            let parentFrame = frame(of: parent) ?? hit.frame
+            return GapSlot(
+                parentFolderID: parent,
+                nextRow: nil,
+                depth: depth,
+                indicator: line(at: gapY, spanning: childSpan(of: parentFrame))
             )
         }
-        return looseTabProposal(before: next, at: gapY, span: folderFrame)
+        // The end of the pinned zone's top level.
+        let span = chain.first.flatMap { frame(of: $0) } ?? hit.frame
+        return GapSlot(
+            parentFolderID: nil,
+            nextRow: nil,
+            depth: 0,
+            indicator: line(at: gapY, spanning: span)
+        )
     }
 
-    /// A depth-0 (loose tab) insertion at the given gap.
-    private func looseTabProposal(
-        before next: FramedRow?,
-        at y: CGFloat,
-        span: CGRect
-    ) -> SidebarDropProposal {
-        guard let next else {
+    /// The tab-payload proposal for a resolved gap slot.
+    private func tabGapProposal(after index: Int, horizontalDelta: CGFloat) -> SidebarDropProposal {
+        let slot = gapSlot(after: index, horizontalDelta: horizontalDelta)
+        if let next = slot.nextRow {
+            switch next.kind {
+            case .folder:
+                return SidebarDropProposal(
+                    target: .insertLooseBefore(next.id), indicator: slot.indicator
+                )
+            case .tab:
+                return SidebarDropProposal(
+                    target: .insertBefore(next.id), indicator: slot.indicator
+                )
+            }
+        }
+        if let parent = slot.parentFolderID {
             return SidebarDropProposal(
-                target: .appendToPinned,
-                indicator: line(at: y, spanning: span)
+                target: .appendToFolder(parent), indicator: slot.indicator
             )
         }
-        switch next.row.kind {
-        case .folder:
-            return SidebarDropProposal(
-                target: .insertLooseBefore(next.row.id),
-                indicator: line(at: y, spanning: next.frame)
-            )
-        case .tab:
-            // Only a loose tab can follow here — a folder child would have
-            // been the interior-gap case.
-            return SidebarDropProposal(
-                target: .insertBefore(next.row.id),
-                indicator: line(at: y, spanning: next.frame)
-            )
-        }
+        return SidebarDropProposal(target: .appendToPinned, indicator: slot.indicator)
     }
 
     // MARK: Folders
 
-    private func folderResolution(y: CGFloat, draggedFolder: TerminalFolder.ID) -> SidebarDropResolution {
+    /// Folder drags mirror the tab projection row-for-row — insert before
+    /// a row, nest into a folder's trailing gap by dragging rightward, or
+    /// drop onto a folder row's middle to nest inside it — with one hard
+    /// fence: no landing inside the dragged folder's own subtree ever
+    /// resolves (into itself, its descendants, or before an anchor that
+    /// would leave with it). Those positions read as the quiet no-op, not
+    /// the forbidden cursor, matching the own-slot treatment.
+    private func folderResolution(
+        at location: CGPoint,
+        draggedFolder: TerminalFolder.ID,
+        horizontalDelta: CGFloat
+    ) -> SidebarDropResolution {
         // Folders are pinned-only.
-        guard y < zoneBoundaryY else { return .invalid }
+        guard location.y < zoneBoundaryY else { return .invalid }
+        let y = location.y
 
-        // Each top-level pinned item projects as one group: a loose tab is
-        // its own row, a folder is its row plus visible children. A dragged
-        // folder slots between groups.
-        var groups: [(id: UUID, frame: CGRect)] = []
-        for framed in pinnedRows {
-            if framed.row.parentFolderID == nil {
-                groups.append((id: framed.row.id, frame: framed.frame))
-            } else if let last = groups.indices.last {
-                groups[last].frame = groups[last].frame.union(framed.frame)
-            }
-        }
-
-        guard !groups.isEmpty else {
+        guard !pinnedRows.isEmpty else {
             // Empty pinned zone: the only slot is the zone itself.
             let anchor = dividerFrame ?? .zero
             return .proposal(SidebarDropProposal(
@@ -538,23 +597,123 @@ struct SidebarDropResolver {
             ))
         }
 
-        let index = groups.firstIndex(where: { y < $0.frame.midY }) ?? groups.count
-        // The dragged folder's own slot (before or right after itself).
-        if index < groups.count, groups[index].id == draggedFolder { return .noOp }
-        if index > 0, groups[index - 1].id == draggedFolder { return .noOp }
+        guard let index = pinnedRows.firstIndex(where: { y < $0.frame.maxY }) else {
+            // Below every pinned row: the gap closing the last one.
+            return folderGapResolution(
+                after: pinnedRows.count - 1, draggedFolder: draggedFolder,
+                horizontalDelta: horizontalDelta
+            )
+        }
 
-        if index < groups.count {
-            let target = groups[index]
+        let hit = pinnedRows[index]
+        let fraction = (y - hit.frame.minY) / max(hit.frame.height, 1)
+        let hitIsDragged = hit.row.id == draggedFolder
+            || isInSubtree(hit.row, of: draggedFolder)
+
+        switch hit.row.kind {
+        case .tab:
+            if fraction < 0.5 {
+                guard index > 0 else {
+                    // Very top of the zone, only reachable for rows outside
+                    // the dragged subtree (a subtree row always has the
+                    // dragged folder's row above it).
+                    return .proposal(SidebarDropProposal(
+                        target: .insertFolderBefore(hit.row.id),
+                        indicator: line(at: hit.frame.minY, spanning: hit.frame)
+                    ))
+                }
+                return folderGapResolution(
+                    after: index - 1, draggedFolder: draggedFolder,
+                    horizontalDelta: horizontalDelta
+                )
+            }
+            return folderGapResolution(
+                after: index, draggedFolder: draggedFolder, horizontalDelta: horizontalDelta
+            )
+
+        case .folder(let collapsed):
+            if fraction < 0.25 {
+                guard index > 0 else {
+                    return hit.row.id == draggedFolder
+                        ? .noOp
+                        : .proposal(SidebarDropProposal(
+                            target: .insertFolderBefore(hit.row.id),
+                            indicator: line(at: hit.frame.minY, spanning: hit.frame)
+                        ))
+                }
+                return folderGapResolution(
+                    after: index - 1, draggedFolder: draggedFolder,
+                    horizontalDelta: horizontalDelta
+                )
+            }
+            // The dragged folder's own row (or a descendant folder's):
+            // nesting here would create a cycle, so nothing resolves.
+            if hitIsDragged { return .noOp }
+            if !collapsed, fraction >= 0.75,
+               index + 1 < pinnedRows.count,
+               pinnedRows[index + 1].row.parentFolderID == hit.row.id {
+                // The expanded folder's trailing edge: before its first child.
+                let child = pinnedRows[index + 1]
+                if child.row.id == draggedFolder { return .noOp }
+                return .proposal(SidebarDropProposal(
+                    target: .insertFolderBefore(child.row.id),
+                    indicator: line(at: child.frame.minY, spanning: child.frame)
+                ))
+            }
             return .proposal(SidebarDropProposal(
-                target: .insertFolderBefore(target.id),
-                indicator: line(at: target.frame.minY, spanning: target.frame)
+                target: .intoFolder(hit.row.id),
+                indicator: .folderHighlight(hit.row.id)
             ))
         }
-        let last = groups[groups.count - 1]
-        return .proposal(SidebarDropProposal(
-            target: .appendFolder,
-            indicator: line(at: last.frame.maxY, spanning: last.frame)
-        ))
+    }
+
+    /// The folder-payload resolution for the gap after a pinned row. Depths
+    /// inside the dragged subtree are fenced off via the chain cap; the
+    /// dragged folder's own depth right after its subtree is its own slot
+    /// (a no-op), while shallower depths there un-nest it in place.
+    private func folderGapResolution(
+        after index: Int,
+        draggedFolder: TerminalFolder.ID,
+        horizontalDelta: CGFloat
+    ) -> SidebarDropResolution {
+        let hit = pinnedRows[index]
+        let next = index + 1 < pinnedRows.count ? pinnedRows[index + 1] : nil
+        let hitInDragged = hit.row.id == draggedFolder
+            || isInSubtree(hit.row, of: draggedFolder)
+
+        // Gaps interior to the dragged subtree offer nothing — only the
+        // gap that CLOSES it (nothing of the subtree follows) can, and
+        // then only the un-nesting depths outside the subtree.
+        if hitInDragged, let next,
+           next.row.id == draggedFolder || isInSubtree(next.row, of: draggedFolder) {
+            return .noOp
+        }
+
+        let chain = parentChain(endingAt: hit.row)
+        // Depths at or below the dragged folder's own position in the
+        // chain would nest it into itself or a descendant.
+        let cap = chain.firstIndex(of: draggedFolder)
+        let slot = gapSlot(after: index, horizontalDelta: horizontalDelta, maxAllowedDepth: cap)
+
+        // Right after its own subtree at its own depth: the current slot.
+        if hitInDragged, let draggedRow = frameRow(draggedFolder)?.row,
+           slot.depth == draggedRow.depth {
+            return .noOp
+        }
+
+        if let next = slot.nextRow {
+            // Right before its own row: the current slot from above.
+            if next.id == draggedFolder { return .noOp }
+            return .proposal(SidebarDropProposal(
+                target: .insertFolderBefore(next.id), indicator: slot.indicator
+            ))
+        }
+        if let parent = slot.parentFolderID {
+            return .proposal(SidebarDropProposal(
+                target: .appendToFolder(parent), indicator: slot.indicator
+            ))
+        }
+        return .proposal(SidebarDropProposal(target: .appendFolder, indicator: slot.indicator))
     }
 
     // MARK: No-op detection
@@ -574,7 +733,12 @@ struct SidebarDropResolver {
             )
         case .insertLooseBefore(let folderID):
             guard let index = pinnedRows.firstIndex(where: { $0.row.id == folderID }) else { return false }
-            return draggedFillSlot(endingAt: index - 1, in: pinnedRows, container: nil, draggedIDs: draggedIDs)
+            // The landing container is the folder row's own: top level for
+            // a top-level folder, its parent folder for a nested one.
+            return draggedFillSlot(
+                endingAt: index - 1, in: pinnedRows,
+                container: pinnedRows[index].row.parentFolderID, draggedIDs: draggedIDs
+            )
         case .appendToFolder(let folderID), .intoFolder(let folderID):
             // Hidden children of a collapsed folder can reorder on append,
             // so only an expanded folder's trailing slot is a true no-op.
@@ -620,10 +784,14 @@ struct SidebarDropResolver {
         return remaining.isEmpty
     }
 
-    // MARK: Indicator geometry
+    // MARK: Row lookup & indicator geometry
+
+    private func frameRow(_ rowID: UUID) -> FramedRow? {
+        pinnedRows.first { $0.row.id == rowID }
+    }
 
     private func frame(of rowID: UUID) -> CGRect? {
-        pinnedRows.first { $0.row.id == rowID }?.frame
+        frameRow(rowID)?.frame
     }
 
     private func line(at y: CGFloat, spanning frame: CGRect) -> SidebarDropProposal.Indicator {

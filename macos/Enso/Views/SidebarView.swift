@@ -378,7 +378,7 @@ private struct SpacePage: View {
         )
         .onChange(of: folderRenameFocused) { _, focused in
             if !focused, let id = renamingFolderID,
-               let folder = space.pinnedFolders.first(where: { $0.id == id }) {
+               let folder = space.allFolders.first(where: { $0.id == id }) {
                 commitFolderRename(folder)
             }
         }
@@ -389,7 +389,7 @@ private struct SpacePage: View {
                 store.renameRequest = nil
                 beginRename(session)
             case .folder(let id):
-                guard let folder = space.pinnedFolders.first(where: { $0.id == id }) else { return }
+                guard let folder = space.allFolders.first(where: { $0.id == id }) else { return }
                 store.renameRequest = nil
                 beginFolderRename(folder)
             case nil:
@@ -402,16 +402,19 @@ private struct SpacePage: View {
     /// pin/unpin) without animating metadata-only updates — selecting a tab
     /// stamps its lastActivity, and that must not fade the highlight in.
     private var rowLayout: [UUID] {
-        var ids: [UUID] = []
-        for item in space.pinnedItems {
-            switch item {
-            case .tab(let session):
-                ids.append(session.id)
-            case .folder(let folder):
-                ids.append(folder.id)
-                ids.append(contentsOf: folder.sessions.map(\.id))
+        func append(_ items: [SidebarPinnedItem], into ids: inout [UUID]) {
+            for item in items {
+                switch item {
+                case .tab(let session):
+                    ids.append(session.id)
+                case .folder(let folder):
+                    ids.append(folder.id)
+                    append(folder.items, into: &ids)
+                }
             }
         }
+        var ids: [UUID] = []
+        append(space.pinnedItems, into: &ids)
         ids.append(contentsOf: space.ephemeralSessions.map(\.id))
         return ids
     }
@@ -425,7 +428,7 @@ private struct SpacePage: View {
         if let id = renamingSessionID, let session = space.sessions.first(where: { $0.id == id }) {
             commitRename(session)
         }
-        if let id = renamingFolderID, let folder = space.pinnedFolders.first(where: { $0.id == id }) {
+        if let id = renamingFolderID, let folder = space.allFolders.first(where: { $0.id == id }) {
             commitFolderRename(folder)
         }
     }
@@ -490,7 +493,7 @@ private struct SpacePage: View {
                 // and flips to the outward chevrons once all are folded (click
                 // reopens). Custom template assets so they tint like the
                 // neighboring SF Symbols.
-                if !space.pinnedFolders.isEmpty {
+                if !space.allFolders.isEmpty {
                     HoverIconButton(
                         help: allFoldersCollapsed ? "Expand All Folders" : "Collapse All Folders",
                         action: {
@@ -559,10 +562,10 @@ private struct SpacePage: View {
         .padding(.bottom, 4)
     }
 
-    /// Every folder in this space is collapsed — the toggle then offers to
-    /// expand rather than collapse.
+    /// Every folder in this space — at every depth — is collapsed; the
+    /// toggle then offers to expand rather than collapse.
     private var allFoldersCollapsed: Bool {
-        space.pinnedFolders.allSatisfy { store.collapsedFolderIDs.contains($0.id) }
+        space.allFolders.allSatisfy { store.collapsedFolderIDs.contains($0.id) }
     }
 
     private func beginSpaceRename() {
@@ -602,7 +605,7 @@ private struct SpacePage: View {
             // same order the drop projection flattens — with split-container
             // members folded into their group chrome.
             ForEach(pinnedEntries) { entry in
-                displayEntry(entry)
+                displayEntry(entry, depth: 0)
             }
         }
         .padding(.vertical, 4)
@@ -615,17 +618,28 @@ private struct SpacePage: View {
     /// renders at the first member's position and absorbs the others —
     /// tolerant of members that ended up non-adjacent.
     private var pinnedEntries: [SidebarDisplayEntry] {
+        displayEntries(for: space.pinnedItems)
+    }
+
+    /// Display entries for one ordered item list — the pinned zone's top
+    /// level or a folder's children. Same grouping rules at every depth:
+    /// split members hoist against the list's own direct tabs, exactly as
+    /// the drop projection's flatten does.
+    private func displayEntries(for items: [SidebarPinnedItem]) -> [SidebarDisplayEntry] {
         var entries: [SidebarDisplayEntry] = []
         var consumed: Set<TerminalSession.ID> = []
-        let looseTabs = space.pinnedSessions
-        for item in space.pinnedItems {
+        let directTabs = items.compactMap { item -> TerminalSession? in
+            if case .tab(let session) = item { return session }
+            return nil
+        }
+        for item in items {
             switch item {
             case .folder(let folder):
                 entries.append(.folder(folder))
             case .tab(let session):
                 guard !consumed.contains(session.id) else { continue }
                 if let container = store.splitContainer(containing: session.id) {
-                    let members = looseTabs.filter { container.tree.contains($0.id) }
+                    let members = directTabs.filter { container.tree.contains($0.id) }
                     members.forEach { consumed.insert($0.id) }
                     entries.append(.splitGroup(container.id, members))
                 } else {
@@ -653,14 +667,15 @@ private struct SpacePage: View {
         return entries
     }
 
-    /// Folders render only at the pinned zone's top level (they can't
-    /// nest), so this splits from `tabEntry` to keep the view recursion
-    /// finite: folderSection's children go straight to tabEntry.
+    /// Folders nest, so this recurses: a folder's children route back
+    /// through displayEntry at the next depth. The folder branch is
+    /// type-erased — the folder → children → folder cycle would otherwise
+    /// have no finite opaque view type.
     @ViewBuilder
-    private func displayEntry(_ entry: SidebarDisplayEntry) -> some View {
+    private func displayEntry(_ entry: SidebarDisplayEntry, depth: Int) -> some View {
         switch entry {
         case .folder(let folder):
-            folderSection(folder)
+            AnyView(folderSection(folder, depth: depth))
         default:
             tabEntry(entry)
         }
@@ -674,7 +689,8 @@ private struct SpacePage: View {
         case .splitGroup(let containerID, let members):
             splitGroup(containerID, members)
         case .folder:
-            // groupedTabEntries never emits folders.
+            // displayEntry routes folders to folderSection before this;
+            // groupedTabEntries (the ephemeral zone) never emits them.
             EmptyView()
         }
     }
@@ -792,18 +808,19 @@ private struct SpacePage: View {
         )
     }
 
-    private func folderSection(_ folder: TerminalFolder) -> some View {
+    private func folderSection(_ folder: TerminalFolder, depth: Int) -> some View {
         let isExpanded = !store.collapsedFolderIDs.contains(folder.id)
         let isHovered = hoveredFolderID == folder.id
         let isRenaming = renamingFolderID == folder.id
-        // Dragged tabs hovering the row's middle land inside the folder.
+        // Dragged rows hovering the row's middle land inside the folder.
         let isDropInto = dropProposal?.indicator == .folderHighlight(folder.id)
-        // A collapsed folder still shows its active tab: the selected row
-        // peeks out under the folder so the current tab never vanishes from
-        // the sidebar. Selecting a tab elsewhere retracts it.
+        // A collapsed folder still shows its active tab: the selected row —
+        // from anywhere in the collapsed subtree — peeks out under the
+        // folder so the current tab never vanishes from the sidebar.
+        // Selecting a tab elsewhere retracts it.
         let peekingSession = isExpanded
             ? nil
-            : folder.sessions.first { $0.id == store.selection }
+            : folder.allSessions.first { $0.id == store.selection }
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -944,13 +961,14 @@ private struct SpacePage: View {
             // clips, so rows disappear into the folder instead of floating.
             // The peeking session is pulled out (it renders below instead),
             // so its row — and a rename field's focus binding — never exists
-            // twice in the tree.
+            // twice in the tree. Subfolders recurse through displayEntry at
+            // the next depth.
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(groupedTabEntries(folder.sessions.filter { $0.id != peekingSession?.id })) { entry in
-                    tabEntry(entry)
+                ForEach(displayEntries(for: folder.items.excludingSession(peekingSession?.id))) { entry in
+                    displayEntry(entry, depth: depth + 1)
                 }
             }
-            .padding(.leading, 14)
+            .padding(.leading, Self.childIndent(at: depth))
             // Breathing room so the selected row's drop shadow isn't clipped
             // sideways or below by this container's collapse clip (the clip
             // is what lets rows vanish into the folder when it folds). The
@@ -968,11 +986,18 @@ private struct SpacePage: View {
             // session row at child indentation, fully interactive.
             if let peekingSession {
                 sessionRow(peekingSession)
-                    .padding(.leading, 14)
+                    .padding(.leading, Self.childIndent(at: depth))
                     .padding(.trailing, 6)
             }
         }
         .geometryGroup()
+    }
+
+    /// Per-level child indentation. The model's nesting depth is uncapped,
+    /// but rows would get unusably narrow if the indent kept growing, so
+    /// levels past the fourth stop indenting visually.
+    private static func childIndent(at depth: Int) -> CGFloat {
+        depth < 4 ? 14 : 0
     }
 
     /// A dropped folder reopens if it was expanded before its drag
@@ -1230,9 +1255,11 @@ private struct SpacePage: View {
             store.createFolder(with: targets, inSpace: space.id)
         }
 
-        if !space.pinnedFolders.isEmpty {
+        if !space.allFolders.isEmpty {
+            // Every folder at every depth, in visual order — nested
+            // folders are reachable move targets too.
             Menu("Move to Folder") {
-                ForEach(space.pinnedFolders) { folder in
+                ForEach(space.allFolders) { folder in
                     Button(folder.title) {
                         store.move(targets, toFolder: folder.id)
                     }
@@ -1527,15 +1554,13 @@ private struct SpacePage: View {
                 restoreDraggedFolderExpansion(folderID)
             }
             // A tab that landed inside a collapsed folder must stay
-            // visible: open the folder it ended up in.
-            var landedFolderID: TerminalFolder.ID?
-            if case .tabs(let ids) = payload, let first = ids.first {
-                landedFolderID = store.spaces
-                    .compactMap { $0.folder(containing: first) }
-                    .first?.id
-            }
-            if let landedFolderID {
-                _ = store.collapsedFolderIDs.remove(landedFolderID)
+            // visible: open the folder it ended up in, and every collapsed
+            // ancestor above it.
+            if case .tabs(let ids) = payload, let first = ids.first,
+               let landedPath = store.spaces
+                   .compactMap({ $0.pinnedItems.folderPath(containingSession: first) })
+                   .first {
+                store.collapsedFolderIDs.subtract(landedPath)
             }
         }
         return true

@@ -2,8 +2,10 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// One entry in the pinned zone's single ordered list: a loose tab or a
-/// folder. Tabs and folders interleave freely; folders cannot nest.
+/// One entry in an ordered sidebar list — the pinned zone's top level or a
+/// folder's children: a tab or a folder. Tabs and folders interleave
+/// freely, and folders nest to arbitrary depth (a folder's children are
+/// this same item type).
 enum SidebarPinnedItem: Identifiable, Hashable, Codable {
     case tab(TerminalSession)
     case folder(TerminalFolder)
@@ -12,6 +14,181 @@ enum SidebarPinnedItem: Identifiable, Hashable, Codable {
         switch self {
         case .tab(let session): return session.id
         case .folder(let folder): return folder.id
+        }
+    }
+}
+
+/// Tree operations shared by every ordered item list (a space's pinned
+/// zone and each folder's children). All traversals are depth-first in
+/// visual order, so flattened results always match what the sidebar draws.
+extension Array where Element == SidebarPinnedItem {
+    /// Every tab in the subtree, in visual order.
+    var allSessions: [TerminalSession] {
+        flatMap { item -> [TerminalSession] in
+            switch item {
+            case .tab(let session): return [session]
+            case .folder(let folder): return folder.items.allSessions
+            }
+        }
+    }
+
+    /// Every folder in the subtree, in visual order (parents before their
+    /// subfolders).
+    var allFolders: [TerminalFolder] {
+        flatMap { item -> [TerminalFolder] in
+            guard case .folder(let folder) = item else { return [] }
+            return [folder] + folder.items.allFolders
+        }
+    }
+
+    /// The folder with the given ID, wherever it nests.
+    func firstFolder(_ folderID: TerminalFolder.ID) -> TerminalFolder? {
+        for item in self {
+            guard case .folder(let folder) = item else { continue }
+            if folder.id == folderID { return folder }
+            if let nested = folder.items.firstFolder(folderID) { return nested }
+        }
+        return nil
+    }
+
+    /// The folder whose DIRECT children include the given session, at any
+    /// depth.
+    func folder(directlyContaining sessionID: TerminalSession.ID) -> TerminalFolder? {
+        for item in self {
+            guard case .folder(let folder) = item else { continue }
+            if folder.sessions.contains(where: { $0.id == sessionID }) { return folder }
+            if let nested = folder.items.folder(directlyContaining: sessionID) { return nested }
+        }
+        return nil
+    }
+
+    /// The chain of folder IDs from the top level down to (and including)
+    /// the given folder; nil when it isn't in this subtree. Expanding every
+    /// ID on the path is what makes a nested folder actually visible.
+    func folderPath(to folderID: TerminalFolder.ID) -> [TerminalFolder.ID]? {
+        for item in self {
+            guard case .folder(let folder) = item else { continue }
+            if folder.id == folderID { return [folder.id] }
+            if let nested = folder.items.folderPath(to: folderID) {
+                return [folder.id] + nested
+            }
+        }
+        return nil
+    }
+
+    /// The chain of folder IDs from the top level down to the folder that
+    /// directly contains the given session; nil for loose/absent sessions.
+    func folderPath(containingSession sessionID: TerminalSession.ID) -> [TerminalFolder.ID]? {
+        for item in self {
+            guard case .folder(let folder) = item else { continue }
+            if folder.sessions.contains(where: { $0.id == sessionID }) { return [folder.id] }
+            if let nested = folder.items.folderPath(containingSession: sessionID) {
+                return [folder.id] + nested
+            }
+        }
+        return nil
+    }
+
+    /// Mutates the folder with the given ID in place, wherever it nests;
+    /// returns whether it was found.
+    @discardableResult
+    mutating func modifyFolder(
+        _ folderID: TerminalFolder.ID,
+        _ mutate: (inout TerminalFolder) -> Void
+    ) -> Bool {
+        for index in indices {
+            guard case .folder(var folder) = self[index] else { continue }
+            if folder.id == folderID {
+                mutate(&folder)
+                self[index] = .folder(folder)
+                return true
+            }
+            if folder.items.modifyFolder(folderID, mutate) {
+                self[index] = .folder(folder)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Mutates every folder in the subtree in place, parents before their
+    /// subfolders.
+    mutating func modifyFolders(_ mutate: (inout TerminalFolder) -> Void) {
+        for index in indices {
+            guard case .folder(var folder) = self[index] else { continue }
+            mutate(&folder)
+            folder.items.modifyFolders(mutate)
+            self[index] = .folder(folder)
+        }
+    }
+
+    /// Detaches and returns the folder with the given ID, wherever it
+    /// nests; nil when absent.
+    mutating func removeFolder(_ folderID: TerminalFolder.ID) -> TerminalFolder? {
+        for index in indices {
+            guard case .folder(var folder) = self[index] else { continue }
+            if folder.id == folderID {
+                remove(at: index)
+                return folder
+            }
+            if let nested = folder.items.removeFolder(folderID) {
+                self[index] = .folder(folder)
+                return nested
+            }
+        }
+        return nil
+    }
+
+    /// Dissolves the folder in place: its row disappears but its children
+    /// (tabs and subfolders) splice into the containing list at the same
+    /// position. Returns whether it was found.
+    @discardableResult
+    mutating func dissolveFolder(_ folderID: TerminalFolder.ID) -> Bool {
+        for index in indices {
+            guard case .folder(var folder) = self[index] else { continue }
+            if folder.id == folderID {
+                replaceSubrange(index...index, with: folder.items)
+                return true
+            }
+            if folder.items.dissolveFolder(folderID) {
+                self[index] = .folder(folder)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Inserts the given items immediately before the item with the given
+    /// ID, in whatever list (this one or any nested folder's) the anchor
+    /// lives. Returns whether the anchor was found.
+    mutating func insert(_ newItems: [SidebarPinnedItem], beforeItem itemID: UUID) -> Bool {
+        if let index = firstIndex(where: { $0.id == itemID }) {
+            insert(contentsOf: newItems, at: index)
+            return true
+        }
+        for index in indices {
+            guard case .folder(var folder) = self[index] else { continue }
+            if folder.items.insert(newItems, beforeItem: itemID) {
+                self[index] = .folder(folder)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The same tree with one tab removed wherever it appears — the
+    /// collapsed-folder peek renders that row outside the children
+    /// container, and its identity must never exist twice in the view tree.
+    func excludingSession(_ sessionID: TerminalSession.ID?) -> [SidebarPinnedItem] {
+        guard let sessionID else { return self }
+        return compactMap { item in
+            switch item {
+            case .tab(let session):
+                return session.id == sessionID ? nil : item
+            case .folder(var folder):
+                folder.items = folder.items.excludingSession(sessionID)
+                return .folder(folder)
+            }
         }
     }
 }
@@ -73,12 +250,19 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
         )
     }
 
-    /// All pinned folders, in visual order.
+    /// Top-level pinned folders, in visual order (nested subfolders
+    /// excluded — see `allFolders`).
     var pinnedFolders: [TerminalFolder] {
         pinnedItems.compactMap { item in
             if case .folder(let folder) = item { return folder }
             return nil
         }
+    }
+
+    /// Every pinned folder at every depth, in visual order (parents before
+    /// their subfolders).
+    var allFolders: [TerminalFolder] {
+        pinnedItems.allFolders
     }
 
     /// Loose pinned tabs (folder members excluded), in visual order.
@@ -90,44 +274,28 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
     }
 
     var sessions: [TerminalSession] {
-        pinnedItems.flatMap { item -> [TerminalSession] in
-            switch item {
-            case .tab(let session): return [session]
-            case .folder(let folder): return folder.sessions
-            }
-        } + ephemeralSessions
+        pinnedItems.allSessions + ephemeralSessions
     }
 
-    /// The pinned folder the given session is filed under, if any.
+    /// The pinned folder whose direct children include the given session,
+    /// at any depth.
     func folder(containing sessionID: TerminalSession.ID) -> TerminalFolder? {
-        pinnedFolders.first { $0.sessions.contains { $0.id == sessionID } }
+        pinnedItems.folder(directlyContaining: sessionID)
     }
 
-    /// Mutates the folder with the given ID in place; returns whether it
-    /// was found.
+    /// Mutates the folder with the given ID in place, wherever it nests;
+    /// returns whether it was found.
     @discardableResult
     mutating func modifyFolder(
         _ folderID: TerminalFolder.ID,
         _ mutate: (inout TerminalFolder) -> Void
     ) -> Bool {
-        for index in pinnedItems.indices {
-            guard case .folder(var folder) = pinnedItems[index], folder.id == folderID else {
-                continue
-            }
-            mutate(&folder)
-            pinnedItems[index] = .folder(folder)
-            return true
-        }
-        return false
+        pinnedItems.modifyFolder(folderID, mutate)
     }
 
-    /// Mutates every pinned folder in place.
+    /// Mutates every pinned folder in place, at every depth.
     mutating func modifyFolders(_ mutate: (inout TerminalFolder) -> Void) {
-        for index in pinnedItems.indices {
-            guard case .folder(var folder) = pinnedItems[index] else { continue }
-            mutate(&folder)
-            pinnedItems[index] = .folder(folder)
-        }
+        pinnedItems.modifyFolders(mutate)
     }
 
     // MARK: Codable
@@ -175,7 +343,9 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
 struct TerminalFolder: Identifiable, Hashable, Codable {
     let id: UUID
     var title: String
-    var sessions: [TerminalSession]
+    /// Ordered children in exact visual order: tabs and subfolders
+    /// interleaved, nesting to arbitrary depth.
+    var items: [SidebarPinnedItem]
     /// Last-known cwd of the folder's most recently active tab. A folder is,
     /// in practice, a project: this keeps the association alive after the
     /// last tab is gone so a new tab can start back in the project directory.
@@ -185,13 +355,92 @@ struct TerminalFolder: Identifiable, Hashable, Codable {
     init(
         id: UUID = UUID(),
         title: String,
-        sessions: [TerminalSession] = [],
+        items: [SidebarPinnedItem],
         lastWorkingDirectory: String? = nil
     ) {
         self.id = id
         self.title = title
-        self.sessions = sessions
+        self.items = items
         self.lastWorkingDirectory = lastWorkingDirectory
+    }
+
+    /// Sessions-only convenience matching the pre-nesting model.
+    /// (`sessions` has no default in the designated init's place — `items`
+    /// does — so the two can't collide.)
+    init(
+        id: UUID = UUID(),
+        title: String,
+        sessions: [TerminalSession] = [],
+        lastWorkingDirectory: String? = nil
+    ) {
+        self.init(
+            id: id,
+            title: title,
+            items: sessions.map(SidebarPinnedItem.tab),
+            lastWorkingDirectory: lastWorkingDirectory
+        )
+    }
+
+    /// Direct child tabs, in order (subfolder members excluded).
+    var sessions: [TerminalSession] {
+        items.compactMap { item in
+            if case .tab(let session) = item { return session }
+            return nil
+        }
+    }
+
+    /// Direct child folders, in order.
+    var subfolders: [TerminalFolder] {
+        items.compactMap { item in
+            if case .folder(let folder) = item { return folder }
+            return nil
+        }
+    }
+
+    /// Every tab in the folder's subtree, in visual order.
+    var allSessions: [TerminalSession] {
+        items.allSessions
+    }
+
+    /// Whether the given folder nests anywhere in this folder's subtree
+    /// (descendants only — a folder does not contain itself). The cycle
+    /// check for every nesting mutation.
+    func contains(folderID: TerminalFolder.ID) -> Bool {
+        items.firstFolder(folderID) != nil
+    }
+
+    // MARK: Codable
+
+    // Custom codec so state files written by the sessions-only model keep
+    // loading: absent `items`, the legacy `sessions` key migrates forward
+    // as tab children. Saves dual-write `sessions` (the subtree flattened)
+    // so a rollback to a build that requires that key still decodes — at
+    // worst with nested structure flattened, but no tab lost.
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, items, sessions, lastWorkingDirectory
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try container.decode(UUID.self, forKey: .id)
+        let title = try container.decode(String.self, forKey: .title)
+        let lastWorkingDirectory = try container.decodeIfPresent(String.self, forKey: .lastWorkingDirectory)
+        if let items = try container.decodeIfPresent([SidebarPinnedItem].self, forKey: .items) {
+            self.init(id: id, title: title, items: items, lastWorkingDirectory: lastWorkingDirectory)
+        } else {
+            let sessions = try container.decodeIfPresent([TerminalSession].self, forKey: .sessions) ?? []
+            self.init(id: id, title: title, sessions: sessions, lastWorkingDirectory: lastWorkingDirectory)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(items, forKey: .items)
+        try container.encode(allSessions, forKey: .sessions)
+        try container.encodeIfPresent(lastWorkingDirectory, forKey: .lastWorkingDirectory)
     }
 }
 
