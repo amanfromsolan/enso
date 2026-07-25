@@ -6,7 +6,10 @@ import SwiftUI
 /// holding Ctrl surfaces a HUD listing the space's tabs in recency order,
 /// each Tab walks the highlight (Shift reverses), releasing Ctrl commits and
 /// Esc restores the origin. Cycling drives the real selection, so the live
-/// terminal behind the HUD is the preview.
+/// terminal behind the HUD is the preview. A split is one stop, like it is
+/// one sidebar group: the store collapses its members to the most recently
+/// focused one, so a quick tap from a pane flips to the last-used tab
+/// OUTSIDE the split, never to a sibling pane.
 @MainActor
 final class TabSwitcher: ObservableObject {
     @Published private(set) var isShowingHUD = false
@@ -85,13 +88,25 @@ final class TabSwitcher: ObservableObject {
     // unit-testable without synthesizing NSEvents.
     func begin(backwards: Bool) {
         guard let store else { return }
-        let ordered = store.recencyOrderedSessions(inSpace: store.activeSpaceID)
+        // Collapsed stops: one entry per split container (its most recently
+        // focused member), so the HUD shows a split as the one tile it is
+        // in the sidebar and cycling can never bounce between sibling panes.
+        let ordered = store.switcherOrderedSessions(inSpace: store.activeSpaceID)
         guard ordered.count > 1 else { return }
 
         // The HUD (and the cycle) caps at the nine most recent tabs.
         sessions = Array(ordered.prefix(9))
         originalSelection = store.selection
-        highlightedIndex = ordered.firstIndex { $0.id == store.selection } ?? 0
+        // Membership, not identity, finds the current stop: the selected
+        // pane of a split need not be its container's list entry (focus
+        // can bounce between siblings without reordering recency), and an
+        // identity miss would restart the walk at the top of the list —
+        // whose next entry can be the selection's own sibling.
+        let selectionContainer = store.selection.flatMap { store.splitContainer(containing: $0) }
+        highlightedIndex = ordered.firstIndex { entry in
+            entry.id == store.selection
+                || selectionContainer?.tree.contains(entry.id) == true
+        } ?? 0
         isActive = true
         store.isCyclingSelection = true
         advance(by: backwards ? -1 : 1)

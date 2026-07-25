@@ -777,10 +777,13 @@ final class TerminalSessionStore: ObservableObject {
 
     /// Whether ⌘W (and the palette's close command) would put the selected
     /// tab to sleep instead of closing it: pinned awake tabs get the
-    /// two-step exit — sleep first, close the sleeping tab second — so one
-    /// keystroke can never silently destroy a pinned tab or the saved
-    /// conversation a sleep promised to keep. The menu and palette read
-    /// this to title the command and run the busy confirmation to match.
+    /// two-step exit — sleep first (which hands the workspace back to the
+    /// previous tab), close the sleeping tab second, from its row's × or
+    /// context menu, or with another ⌘W when a sleeping tab holds the
+    /// selection (the relaunch shape) — so one keystroke can never
+    /// silently destroy a pinned tab or the saved conversation a sleep
+    /// promised to keep. The menu and palette read this to title the
+    /// command and run the busy confirmation to match.
     var selectedTabSleepsInsteadOfClosing: Bool {
         guard let selection,
               let session = sessions.first(where: { $0.id == selection }) else { return false }
@@ -868,15 +871,18 @@ final class TerminalSessionStore: ObservableObject {
     /// AgentSessionStore — the agent conversation to resume on wake.
     /// Sleep is strictly per tab: a pane of a split sleeps alone, its
     /// siblings keep running and its region shows the in-pane sleeping
-    /// card. Sleeping the selected tab keeps it selected: the workspace's
-    /// sleeping card IS the feature's feedback, and with a collapsed
-    /// folder or hidden sidebar a selection jump would make sleep look
-    /// exactly like close. The one exception is the focused pane of a
-    /// split with an awake sibling: the in-pane sleeping card stays
-    /// visible without selection, and a selected pane with no surface
+    /// card. Sleeping the selected tab hands the workspace to the
+    /// previously used tab (per-space MRU, non-waking): sleeping a tab
+    /// says "done here for now", so the workspace returns to what the
+    /// user was doing instead of parking on the sleeping card. The
+    /// focused pane of a split hands over inside the split instead — the
+    /// nearest awake sibling, same handoff as close() — since its region
+    /// keeps showing the in-pane card and a selected pane with no surface
     /// would leave the keyboard pointing at nothing while the focus ring
-    /// crowned the moon — so the nearest awake sibling takes over, same
-    /// handoff as close(). Background sleeps never touch selection. One
+    /// crowned the moon. With nothing awake to hand to anywhere, the
+    /// selection stays put on the moon: a jump to some other sleeping
+    /// card would read as waking it. Background sleeps (a non-selected
+    /// tab's context menu) never touch selection. One
     /// plain entry point on purpose, so a future auto-sleep (idle timeout,
     /// sleep-on-quit) can call it too. The set form exists for bulk
     /// context-menu sleeps — one marker write for the whole batch.
@@ -902,6 +908,20 @@ final class TerminalSessionStore: ObservableObject {
                     .min { abs($0.offset - selectionIndex) < abs($1.offset - selectionIndex) }?
                     .element.id
             }
+        }
+
+        // The general handoff, also resolved before marking: sleeping the
+        // selected tab returns the workspace to the previously used tab
+        // (per-space MRU). Awake non-targets only — the handoff must not
+        // park the user on some other sleeping card (or wake it); with
+        // nothing awake left the selection stays put and the slept tab's
+        // own card is the feedback. A split member prefers its sibling
+        // handoff above and only falls through here when the whole
+        // container is going dark.
+        var recencyFallback: TerminalSession.ID?
+        if let selection, targets.contains(selection) {
+            recencyFallback = recencyOrderedSessions(inSpace: activeSpaceID)
+                .first { !targets.contains($0.id) && !$0.isSleeping }?.id
         }
 
         if persistToDisk {
@@ -940,8 +960,8 @@ final class TerminalSessionStore: ObservableObject {
             }
         }
         multiSelection.subtract(targets)
-        if let splitFallback {
-            setSelection(splitFallback, waking: false)
+        if let handoff = splitFallback ?? recencyFallback {
+            setSelection(handoff, waking: false)
         }
         save()
     }
@@ -1134,15 +1154,28 @@ final class TerminalSessionStore: ObservableObject {
         surfaceView.onSurfaceClose = { [weak self] in
             self?.close(sessionID: sessionID)
         }
-        // Clicking a pane focuses its surface; the sidebar selection must
-        // follow so the highlighted row is always the focused pane. The
-        // guard keeps programmatic focus (the host focusing the already-
-        // selected pane) from re-publishing selection during a view update.
         surfaceView.onFocusGained = { [weak self] in
-            guard let self, self.selection != sessionID else { return }
-            self.selection = sessionID
-            self.multiSelection = [sessionID]
+            self?.paneFocusDidGain(sessionID)
         }
+    }
+
+    /// Clicking a pane focuses its surface; the sidebar selection must
+    /// follow so the highlighted row is always the focused pane. The
+    /// first guard keeps programmatic focus (the host focusing the
+    /// already-selected pane) from re-publishing selection during a view
+    /// update. The second scopes the sync to SIBLINGS of the current
+    /// selection: only panes of the rendered layout can be clicked, so a
+    /// grant for any other tab is stale — the host's focus regrant for a
+    /// Ctrl-Tab preview arriving after the cycle moved on (or committed
+    /// elsewhere) — and following it would yank the workspace back into
+    /// a split the user just left, re-ranking a pane nobody picked.
+    func paneFocusDidGain(_ sessionID: TerminalSession.ID) {
+        guard selection != sessionID else { return }
+        guard let selection,
+              splitContainer(containing: selection)?.tree.contains(sessionID) == true
+        else { return }
+        self.selection = sessionID
+        multiSelection = [sessionID]
     }
 
     /// Delay between background restores so a launch with many agent tabs
@@ -1596,6 +1629,22 @@ final class TerminalSessionStore: ObservableObject {
         let ranked = order.compactMap { id in all.first { $0.id == id } }
         let rest = all.filter { session in !order.contains(session.id) }
         return ranked + rest
+    }
+
+    /// The Ctrl-Tab switcher's stops: recency order with each split
+    /// container collapsed to its most recently used member. A split is
+    /// ONE tab in the sidebar, so it is ONE stop in the cycle — pane
+    /// focus records recency per member, and without the collapse an
+    /// actively-used split's panes occupy the top TWO stops and Ctrl-Tab
+    /// ping-pongs between siblings instead of reaching other tabs.
+    /// Landing on the stop selects the surviving entry: the member
+    /// focused most recently inside the container.
+    func switcherOrderedSessions(inSpace spaceID: SidebarSpace.ID) -> [TerminalSession] {
+        var seenContainers: Set<SplitContainer.ID> = []
+        return recencyOrderedSessions(inSpace: spaceID).filter { session in
+            guard let container = splitContainer(containing: session.id) else { return true }
+            return seenContainers.insert(container.id).inserted
+        }
     }
 
     /// Called by the switcher on commit, after cycling suppressed recording

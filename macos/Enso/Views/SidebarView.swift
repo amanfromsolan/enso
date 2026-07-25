@@ -294,7 +294,7 @@ private enum SidebarDisplayEntry: Identifiable {
 private struct SpacePage: View {
     @ObservedObject var store: TerminalSessionStore
     @ObservedObject private var namer = TabAutoNamer.shared
-    /// Observed so dormant badges track the store live: consumption, tab
+    /// Observed so dormant moons track the store live: consumption, tab
     /// close, the Settings toggle, and launch-time restorability resolution
     /// all publish, and each re-render re-asks dormantAgent(forTab:) below.
     @ObservedObject private var agentSessions = AgentSessionStore.shared
@@ -1007,15 +1007,20 @@ private struct SpacePage: View {
                         .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
                 } else if let process = session.runningProcess {
                     ProcessBadgeView(process: process, isSelected: isSelected)
-                } else if let dormant = agentSessions.dormantAgent(forTab: session.id) {
+                } else if agentSessions.dormantAgent(forTab: session.id) != nil {
                     // An agent session lives here but isn't running yet
                     // (eager sweep hasn't reached it, or it's past the warm
-                    // cap). The badge clears the moment the restore is
-                    // consumed or the Settings toggle flips (the store
-                    // publishes both); the flip to the full-color badge
-                    // rides on process detection updating the session once
-                    // the resume command runs.
-                    DormantAgentBadgeView(process: dormant, isSelected: isSelected)
+                    // cap). After a relaunch such a tab is effectively
+                    // sleeping — it resumes on first visit — so it wears
+                    // the same moon as an explicit sleep; a tinted agent
+                    // mark here read as a third state. The moon clears the
+                    // moment the restore is consumed or the Settings
+                    // toggle flips (the store publishes both); the flip to
+                    // the full-color badge rides on process detection
+                    // updating the session once the resume command runs.
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
                 } else if namer.namingSessions.contains(session.id) {
                     AutoNamingIndicator()
                         .frame(width: 8, height: 8)
@@ -1608,9 +1613,7 @@ private struct ProcessBadgeView: View {
             // 16 pt matches the artwork's 16 px pixel grid (and the row's
             // badge slot) so pixel edges land on whole pixels. Full-color
             // mark on every tab — its light/dark appearance variants track
-            // the app theme via the asset catalog. (The "<base>16Tinted"
-            // template glyphs are the dormant treatment; see
-            // DormantAgentBadgeView.)
+            // the app theme via the asset catalog.
             Image("\(base)16")
                 .resizable()
                 .renderingMode(.original)
@@ -1648,27 +1651,6 @@ private struct SleepingRowHelp: ViewModifier {
             content.help("Sleeping — click to wake")
         } else {
             content
-        }
-    }
-}
-
-/// Tinted agent mark for a tab whose agent session will resume on first
-/// visit (or when the eager sweep reaches it). Quiet ink instead of the
-/// full-color mark, so "an agent lives here but isn't running" reads at a
-/// glance without claiming the active treatment — the row flips to
-/// ProcessBadgeView once the resume runs and detection sees the agent.
-private struct DormantAgentBadgeView: View {
-    let process: TabProcess
-    let isSelected: Bool
-
-    var body: some View {
-        if case .agent(let base) = process.badge {
-            Image("\(base)16Tinted")
-                .resizable()
-                .renderingMode(.template)
-                .aspectRatio(contentMode: .fit)
-                .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.45))
-                .frame(width: 16, height: 16)
         }
     }
 }

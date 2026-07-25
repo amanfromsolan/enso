@@ -448,15 +448,16 @@ private struct TabsSettings: View {
     }
 
     /// The explainer under the pick-up picker doubles as the introduction
-    /// to the sidebar's tinted dormant badge, so the setting and the badge
-    /// teach each other. Deliberately free of sleep/wake words — those
-    /// belong to the put-to-sleep feature, a different state.
+    /// to the sidebar's moon on not-yet-resumed agent tabs, so the setting
+    /// and the glyph teach each other. Dormant wears the same moon as an
+    /// explicit sleep — after a relaunch those tabs are effectively
+    /// sleeping too, so one parked state gets one glyph.
     private var wakeCaption: String {
         switch agentWakePolicy {
         case .onVisit:
             "Agent tabs pick their conversation back up the moment you click them."
         case .recent:
-            "Your \(agentWakeRecentCount) most recent agent tabs pick up right away; the rest wear a tinted badge until you click them."
+            "Your \(agentWakeRecentCount) most recent agent tabs pick up right away; the rest sleep until you click them."
         case .all:
             "Every agent restarts the moment Enso opens — heavier on memory while they all spin up."
         }

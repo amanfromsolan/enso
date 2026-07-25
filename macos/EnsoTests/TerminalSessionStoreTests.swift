@@ -328,7 +328,7 @@ struct TerminalSessionStoreTests {
 
     // MARK: - Sleep / wake
 
-    @Test func putToSleepKeepsSelectionAndCapturesWhatWasRunning() throws {
+    @Test func putToSleepCapturesWhatWasRunningAndHandsSelectionBack() throws {
         let dir = try makeTempDirectory("sleep")
         var sleeper = TerminalSession(title: "agent", workingDirectory: dir, status: .attention)
         sleeper.runningProcess = .claude
@@ -346,15 +346,15 @@ struct TerminalSessionStoreTests {
         #expect(slept.runningProcess == nil)
         #expect(slept.sleepingProcess == .claude)
         #expect(slept.status == .idle)
-        // Sleeping the selected tab keeps it selected: the workspace's
-        // sleeping card is the feedback, not a selection jump that makes
-        // sleep look like close.
-        #expect(store.selection == sleeper.id)
+        // Sleeping the selected tab says "done here for now": the
+        // workspace returns to the previously used tab instead of parking
+        // on the sleeping card.
+        #expect(store.selection == neighbor.id)
 
         // A background sleep never touches selection.
         store.wake(sessionID: sleeper.id)
-        store.putToSleep(sessionID: neighbor.id)
-        #expect(store.selection == sleeper.id)
+        store.putToSleep(sessionID: sleeper.id)
+        #expect(store.selection == neighbor.id)
     }
 
     @Test func selectingSleepingTabWakesIt() throws {
@@ -438,10 +438,37 @@ struct TerminalSessionStoreTests {
         #expect(store.sessions.first { $0.id == pane }?.isSleeping == true)
         #expect(store.splitContainer(containing: pane) != nil)
 
-        // With every sibling asleep there is nothing to hand over to: the
-        // selection parks on the moon, exactly like the unsplit case.
+        // With every sibling asleep — and nothing awake outside the split
+        // either — there is nothing to hand over to: the selection parks
+        // on the moon rather than jumping to another sleeping card.
         store.putToSleep(sessionID: source.id)
         #expect(store.selection == source.id)
+    }
+
+    @Test func sleepingTheSelectedTabHandsSelectionToThePreviousTab() throws {
+        let dir = try makeTempDirectory("sleep-mru-handoff")
+        let first = TerminalSession(title: "a", workingDirectory: dir)
+        let second = TerminalSession(title: "b", workingDirectory: dir)
+        let third = TerminalSession(title: "c", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [first, second, third]),
+            select: second.id
+        )
+        // Recency: first (current), third, second.
+        store.selection = third.id
+        store.selection = first.id
+
+        // The handoff follows recency, not row order: sleeping the
+        // selected tab returns to the tab used just before it.
+        store.putToSleep(sessionID: first.id)
+        #expect(store.selection == third.id)
+
+        // And it skips sleeping tabs while an awake candidate exists —
+        // recency still ranks the just-slept FIRST ahead of SECOND, but a
+        // handoff must never park on (or wake) a sleeping card.
+        store.putToSleep(sessionID: third.id)
+        #expect(store.selection == second.id)
+        #expect(store.sessions.first { $0.id == first.id }?.isSleeping == true)
     }
 
     @Test func busyAgentRequiresARunningAgentWithoutTheAttentionDot() throws {
@@ -559,13 +586,14 @@ struct TerminalSessionStoreTests {
 
     @Test func switcherCancelRestoresASleepingOriginWithoutWaking() throws {
         let dir = try makeTempDirectory("switcher-cancel")
-        let sleeper = TerminalSession(title: "a", workingDirectory: dir)
+        // Asleep from launch: the relaunch shape is how a sleeping tab
+        // ends up selected (sleeping the selected tab now hands off).
+        let sleeper = TerminalSession(title: "a", workingDirectory: dir, isSleeping: true)
         let other = TerminalSession(title: "b", workingDirectory: dir)
         let store = makeStore(
             folder: TerminalFolder(title: "enso", sessions: [sleeper, other]),
             select: sleeper.id
         )
-        store.putToSleep(sessionID: sleeper.id)
         #expect(store.selection == sleeper.id)
 
         // Ctrl-Tab away from the sleeping card, then Esc back: the origin
@@ -577,6 +605,180 @@ struct TerminalSessionStoreTests {
         switcher.cancel()
         #expect(store.selection == sleeper.id)
         #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == true)
+    }
+
+    @Test func switcherTreatsASplitAsOneStop() throws {
+        let dir = try makeTempDirectory("switcher-split")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let other = TerminalSession(title: "other", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source, other]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+        let pane = try #require(store.selection)
+        #expect(pane != source.id)
+
+        // Quick tap from a pane: the flip must reach the most recent tab
+        // OUTSIDE the split — the sibling pane is part of the same stop,
+        // even though it sits right below the pane in raw recency.
+        let switcher = TabSwitcher()
+        switcher.attach(to: store)
+        switcher.begin(backwards: false)
+        #expect(store.selection == other.id)
+        // The HUD sees the collapsed stops too: one tile for the split
+        // (its most recent member), one for the loose tab.
+        #expect(switcher.sessions.map(\.id) == [pane, other.id])
+
+        // Cycling on wraps back to the split as a whole — one stop, never
+        // a walk through the sibling.
+        switcher.advance(by: 1)
+        #expect(store.selection == pane)
+        switcher.commit()
+    }
+
+    /// The host grants pane focus when a cycle step renders a split, and
+    /// the grant's onFocusGained sync can arrive LATE — after the walk
+    /// moved on (SwiftUI update lag on the multi-surface re-attach), or
+    /// after the session committed. A late grant must never yank the
+    /// selection back into the split it came from.
+    @Test func cyclingSurvivesLateFocusGrantsFromSplitPanes() throws {
+        let dir = try makeTempDirectory("switcher-late-grants")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let c = TerminalSession(title: "c", workingDirectory: dir)
+        let d = TerminalSession(title: "d", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source, c, d]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+        let pane = try #require(store.selection)
+        let memberIDs = try #require(store.splitContainer(containing: pane)).memberIDs
+
+        // The host model: landing on the split queues a focus regrant for
+        // the landed pane (the surfaces re-attach); it is delivered one
+        // step LATER, through the same sync onFocusGained runs.
+        var lateGrants: [TerminalSession.ID] = []
+        func step(_ switcher: TabSwitcher, by delta: Int = 1) {
+            switcher.advance(by: delta)
+            while !lateGrants.isEmpty {
+                store.paneFocusDidGain(lateGrants.removeFirst())
+            }
+            if let landed = store.selection, memberIDs.contains(landed) {
+                lateGrants.append(landed)
+            }
+        }
+
+        // Hold-session walking TWO full wraps: stops are [pane, c, d].
+        let switcher = TabSwitcher()
+        switcher.attach(to: store)
+        switcher.begin(backwards: false)
+        if let landed = store.selection, memberIDs.contains(landed) {
+            lateGrants.append(landed)
+        }
+        #expect(store.selection == c.id)
+
+        step(switcher)
+        #expect(store.selection == d.id)
+        step(switcher)
+        #expect(store.selection == pane) // split visit #1: passes
+        // The step AFTER the split visit is where the regrant lands late:
+        // the walk must stay on its new stop, not snap back to the pane.
+        step(switcher)
+        #expect(store.selection == c.id)
+        step(switcher)
+        #expect(store.selection == d.id)
+        step(switcher)
+        #expect(store.selection == pane) // split visit #2: still one stop
+        step(switcher)
+        #expect(store.selection == c.id)
+
+        switcher.commit()
+        #expect(store.selection == c.id)
+
+        // Next session: quick-flip INTO the split; its landing regrant
+        // drains after the commit and must be a no-op.
+        switcher.begin(backwards: false)
+        switcher.commit()
+        if let landed = store.selection, memberIDs.contains(landed) {
+            lateGrants.append(landed)
+        }
+        while !lateGrants.isEmpty {
+            store.paneFocusDidGain(lateGrants.removeFirst())
+        }
+        #expect(store.selection == pane)
+
+        // And a session AWAY from the split, with the split's stale
+        // regrant arriving after the commit: the pick must stick — a
+        // post-commit yank re-records the member and re-selects the
+        // split, which is exactly the reported "stuck" loop.
+        switcher.begin(backwards: false)
+        switcher.commit()
+        let committed = try #require(store.selection)
+        #expect(!memberIDs.contains(committed))
+        store.paneFocusDidGain(pane)
+        #expect(store.selection == committed)
+    }
+
+    /// A late sibling grant accepted mid-cycle can leave a split member
+    /// selected while raw recency ranks other tabs (and the sibling)
+    /// above it. The walk's current-position lookup must find the
+    /// container's stop by MEMBERSHIP, or the flip restarts at the top of
+    /// the list and lands on the sibling — ping-pong inside the split.
+    @Test func quickFlipFromADisplacedSplitMemberNeverLandsOnTheSibling() throws {
+        let dir = try makeTempDirectory("switcher-displaced-member")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let c = TerminalSession(title: "c", workingDirectory: dir)
+        let d = TerminalSession(title: "d", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source, c, d]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+        let pane = try #require(store.selection)
+        let container = try #require(store.splitContainer(containing: pane))
+
+        // c is genuinely recent; then a late grant (delivered inside a
+        // cycling window, so nothing records) parks the user in SOURCE:
+        // selection is a member, but recency reads [c, pane, source].
+        store.selection = c.id
+        store.isCyclingSelection = true
+        store.selection = source.id
+        store.isCyclingSelection = false
+
+        // Quick flip from the displaced member: one stop past the
+        // container — never the sibling pane.
+        let switcher = TabSwitcher()
+        switcher.attach(to: store)
+        switcher.begin(backwards: false)
+        let flipped = try #require(store.selection)
+        #expect(!container.tree.contains(flipped))
+        #expect(flipped == d.id)
+        switcher.commit()
+    }
+
+    @Test func cyclingIntoASplitLandsOnItsMostRecentlyFocusedMember() throws {
+        let dir = try makeTempDirectory("switcher-split-landing")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let other = TerminalSession(title: "other", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source, other]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+
+        // Focus back to the source pane (selection follows pane focus),
+        // then leave the split for the loose tab.
+        store.selection = source.id
+        store.selection = other.id
+
+        // Cycling into the split lands on SOURCE — the member focused
+        // most recently — not on the sibling that was created later.
+        let switcher = TabSwitcher()
+        switcher.attach(to: store)
+        switcher.begin(backwards: false)
+        #expect(store.selection == source.id)
+        switcher.commit()
     }
 
     @Test func closingOnePaneOfAFullySleepingSplitKeepsTheSurvivorAsleep() throws {
@@ -666,11 +868,17 @@ struct TerminalSessionStoreTests {
             select: pinned.id
         )
 
-        // ⌘W on a pinned awake tab sleeps it; ⌘W again closes for real.
+        // ⌘W on a pinned awake tab sleeps it — and the sleep hands the
+        // workspace back to the previous tab, so a second ⌘W acts on THAT
+        // tab, never blindly destroying the one just slept.
         #expect(store.selectedTabSleepsInsteadOfClosing)
         store.closeSelectedSession()
         #expect(store.sessions.first { $0.id == pinned.id }?.isSleeping == true)
-        #expect(store.selection == pinned.id)
+        #expect(store.selection == other.id)
+
+        // A sleeping tab holding the selection (the relaunch shape, here
+        // via a non-waking restore) closes for real on ⌘W.
+        store.setSelection(pinned.id, waking: false)
         #expect(!store.selectedTabSleepsInsteadOfClosing)
         store.closeSelectedSession()
         #expect(!store.sessions.contains { $0.id == pinned.id })

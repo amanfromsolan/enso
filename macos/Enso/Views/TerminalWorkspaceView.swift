@@ -98,6 +98,9 @@ private struct SleepingTabCard: View {
 
             Text(summary)
                 .font(.system(size: 13))
+                // Sentence-length copy that wraps: 1.6 line height
+                // (13 pt type + 0.6× spacing) gives the lines air.
+                .lineSpacing(13 * 0.6)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)

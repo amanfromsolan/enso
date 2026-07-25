@@ -28,8 +28,8 @@ enum TabProcess: String, Hashable, Codable {
     enum Badge: Equatable {
         /// Adaptive agent artwork. Carries the asset-catalog base name;
         /// views pick the concrete imageset — "<base>16" full-color with
-        /// light/dark appearance variants, "<base>16Tinted" single-color
-        /// template, "<base>48" for the larger header rendition.
+        /// light/dark appearance variants, "<base>48" for the larger
+        /// header rendition.
         case agent(String)
         /// SF Symbol, rendered in neutral ink by the row.
         case symbol(String)
