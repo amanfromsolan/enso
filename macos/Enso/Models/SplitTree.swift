@@ -27,6 +27,11 @@ struct SplitBranch: Codable, Hashable {
     static let minRatio = 0.1
     static let maxRatio = 0.9
 
+    /// The proportional persistence backstop, guarding ratios that arrive
+    /// outside a live drag (state files, stale paths). The divider drag
+    /// itself applies a tighter clamp from the real region size — an
+    /// absolute pane floor (see SplitDividerView.clampedRatio) that pure
+    /// proportions can't provide, since they compound under nesting.
     static func clampRatio(_ ratio: Double) -> Double {
         min(Self.maxRatio, max(Self.minRatio, ratio))
     }
