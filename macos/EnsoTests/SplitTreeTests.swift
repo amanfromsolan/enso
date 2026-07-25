@@ -165,6 +165,78 @@ struct SplitStoreTests {
         #expect(store.selection == members[1])
     }
 
+    @Test func reorderWithinSplitGroupPreservesTheContainer() {
+        let source = TerminalSession(title: "src", workingDirectory: "/tmp")
+        let outsider = TerminalSession(title: "out", workingDirectory: "~")
+        let store = makeStore(sessions: [source, outsider])
+        store.selection = source.id
+        store.splitSelection(direction: .horizontal)
+        let newID = store.splitContainer(containing: source.id)!.memberIDs.last!
+
+        // Drag the new pane above its sibling INSIDE the group box: a pure
+        // reorder of the group's rows — the split must survive it.
+        store.insert([newID], before: source.id)
+        #expect(store.splitContainer(containing: source.id)?.memberIDs.count == 2)
+        #expect(store.activeSpace.sessions.map(\.id) == [newID, source.id, outsider.id])
+
+        // Drag it out of the group (anchored on an outside row): a real
+        // relocation — the pane leaves and the container dissolves.
+        store.insert([newID], before: outsider.id)
+        #expect(store.splitContainers.isEmpty)
+        #expect(store.activeSpace.sessions.map(\.id) == [source.id, newID, outsider.id])
+    }
+
+    @Test func newTabBesideASplitPaneLandsAfterTheWholeGroup() {
+        let source = TerminalSession(title: "src", workingDirectory: "/tmp")
+        let outsider = TerminalSession(title: "out", workingDirectory: "~")
+        let store = makeStore(sessions: [source, outsider])
+        store.selection = source.id
+        store.splitSelection(direction: .horizontal)
+        let siblingID = store.splitContainer(containing: source.id)!.memberIDs.last!
+
+        // Focus back on the FIRST pane, then "new terminal beside it": the
+        // row lands after the group's last member — between the members it
+        // would break the adjacent run the sidebar (and the drop
+        // projection's flatten) renders the group as.
+        store.selection = source.id
+        store.createSession(besideSelectionWithWorkingDirectory: "/tmp")
+
+        let newID = store.selection!
+        #expect(newID != siblingID)
+        #expect(store.activeSpace.sessions.map(\.id) == [source.id, siblingID, newID, outsider.id])
+        // The new tab is a plain row, not a pane of the split.
+        #expect(store.splitContainer(containing: newID) == nil)
+    }
+
+    @Test func outsideTabAnchoredMidGroupSnapsBeforeTheRun() {
+        let source = TerminalSession(title: "src", workingDirectory: "/tmp")
+        let outsider = TerminalSession(title: "out", workingDirectory: "~")
+        let store = makeStore(sessions: [source, outsider])
+        store.selection = source.id
+        store.splitSelection(direction: .horizontal)
+        let siblingID = store.splitContainer(containing: source.id)!.memberIDs.last!
+
+        // The structural backstop behind the projection's run snapping: an
+        // outside tab anchored between the members lands before the whole
+        // run instead, keeping the members adjacent.
+        store.insert([outsider.id], before: siblingID)
+        #expect(store.activeSpace.sessions.map(\.id) == [outsider.id, source.id, siblingID])
+        #expect(store.splitContainer(containing: source.id)?.memberIDs.count == 2)
+    }
+
+    @Test func dividerDragClampsToAbsoluteMinimumPaneExtent() {
+        // Wide region: the absolute pane floor converts to a ratio floor.
+        let usable: CGFloat = 800
+        let floor = Double(SplitLayoutHostView.minPaneExtent / usable)
+        #expect(SplitDividerView.clampedRatio(0.01, usable: usable) == floor)
+        #expect(SplitDividerView.clampedRatio(0.99, usable: usable) == 1 - floor)
+        #expect(SplitDividerView.clampedRatio(0.5, usable: usable) == 0.5)
+        // Very wide regions keep the proportional floor when it's tighter.
+        #expect(SplitDividerView.clampedRatio(0.01, usable: 10_000) == SplitBranch.minRatio)
+        // A region too small for two usable panes pins the divider midway.
+        #expect(SplitDividerView.clampedRatio(0.2, usable: 200) == 0.5)
+    }
+
     @Test func movingPaneOutLeavesTheSplit() {
         let source = TerminalSession(title: "src", workingDirectory: "/tmp")
         let store = makeStore(sessions: [source])

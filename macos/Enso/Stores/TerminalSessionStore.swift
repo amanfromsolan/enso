@@ -330,32 +330,37 @@ final class TerminalSessionStore: ObservableObject {
     /// directory (the selected tab's cwd) and lands beside the selection —
     /// inside the same folder when the selected tab is filed under one,
     /// otherwise immediately after it in its container (loose pinned or
-    /// ephemeral). Falls back to a loose append when nothing is selected.
+    /// ephemeral). A selected split pane counts as its whole group: the new
+    /// tab lands after the container's LAST member, because inserting
+    /// between members would break the adjacent run the sidebar (and the
+    /// drop projection) renders the group as. Falls back to a loose append
+    /// when nothing is selected.
     func createSession(besideSelectionWithWorkingDirectory workingDirectory: String?) {
         guard let selectedID = selection else {
             createSession(workingDirectory: workingDirectory)
             return
         }
         let session = Self.makeSession(workingDirectory: workingDirectory, accentIndex: sessions.count)
+        let anchorID = splitRunEnd(after: selectedID)
 
         for spaceIndex in spaces.indices {
             var inserted = false
             var revealFolderID: TerminalFolder.ID?
 
-            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == selectedID }) {
+            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == anchorID }) {
                 spaces[spaceIndex].pinnedItems.insert(.tab(session), at: itemIndex + 1)
                 inserted = true
             } else {
                 spaces[spaceIndex].modifyFolders { folder in
                     guard !inserted,
-                          let index = folder.sessions.firstIndex(where: { $0.id == selectedID }) else {
+                          let index = folder.sessions.firstIndex(where: { $0.id == anchorID }) else {
                         return
                     }
                     folder.sessions.insert(session, at: index + 1)
                     revealFolderID = folder.id
                     inserted = true
                 }
-                if !inserted, let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == selectedID }) {
+                if !inserted, let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == anchorID }) {
                     spaces[spaceIndex].ephemeralSessions.insert(session, at: index + 1)
                     inserted = true
                 }
@@ -448,6 +453,32 @@ final class TerminalSessionStore: ObservableObject {
         splitContainers.first { $0.tree.contains(sessionID) }
     }
 
+    // A split group's members render as ONE adjacent run in the sidebar, so
+    // insertions near a member must aim at the run's edges, never between
+    // members. These resolve a member to its run's first/last row (in the
+    // containing space's display order); a tab outside any container is its
+    // own boundary.
+
+    /// The first member of the target's split run — where "insert before
+    /// this member" lands when the inserted tabs aren't part of the group.
+    private func splitRunStart(before targetID: TerminalSession.ID) -> TerminalSession.ID {
+        guard let container = splitContainer(containing: targetID),
+              let space = spaces.first(where: { $0.sessions.contains { $0.id == targetID } }),
+              let first = space.sessions.first(where: { container.tree.contains($0.id) })
+        else { return targetID }
+        return first.id
+    }
+
+    /// The last member of the target's split run — where "insert after this
+    /// member" (split siblings, new-tab-beside-selection) lands.
+    private func splitRunEnd(after targetID: TerminalSession.ID) -> TerminalSession.ID {
+        guard let container = splitContainer(containing: targetID),
+              let space = spaces.first(where: { $0.sessions.contains { $0.id == targetID } }),
+              let last = space.sessions.last(where: { container.tree.contains($0.id) })
+        else { return targetID }
+        return last.id
+    }
+
     /// ⌘D / ⇧⌘D: splits the focused pane. A split creates a NEW real tab —
     /// its own sidebar row, session, and shell (spawned in the split pane's
     /// working directory) — and groups it with the source tab in a split
@@ -472,9 +503,7 @@ final class TerminalSessionStore: ObservableObject {
         )
 
         let existing = splitContainer(containing: selection)
-        let anchorID = existing.flatMap { container in
-            activeSpace.sessions.last { container.tree.contains($0.id) }?.id
-        } ?? selection
+        let anchorID = splitRunEnd(after: selection)
 
         insertSession(session, after: anchorID)
 
@@ -495,9 +524,11 @@ final class TerminalSessionStore: ObservableObject {
         activateSpace(activeSpaceID, selecting: session.id)
     }
 
-    /// Live divider drag: rewrites one split's ratio. Publishes (so the
-    /// layout follows the pointer) but does not persist — the divider
-    /// commits once on mouse-up via `commitSplitLayout`.
+    /// Divider drag ended: rewrites one split's ratio. Called ONCE per
+    /// drag, on mouse-up — the drag itself is laid out locally by the
+    /// AppKit host (see SplitLayoutHostView), so the store's @Published
+    /// containers (and every sidebar row observing them) never hear about
+    /// individual mouse events. Persistence follows via `commitSplitLayout`.
     func updateSplitRatio(containerID: SplitContainer.ID, path: SplitPath, ratio: Double) {
         guard let index = splitContainers.firstIndex(where: { $0.id == containerID }) else { return }
         splitContainers[index].tree = splitContainers[index].tree.updatingRatio(at: path, to: ratio)
@@ -615,11 +646,26 @@ final class TerminalSessionStore: ObservableObject {
     /// in whatever container (loose pinned, folder, ephemeral) the target lives.
     func insert(_ sessionIDs: Set<TerminalSession.ID>, before targetID: TerminalSession.ID) {
         guard !sessionIDs.contains(targetID) else { return }
-        let moved = removeSessions(with: sessionIDs)
+        // A drag that starts and ends inside one split group — the anchor
+        // AND every dragged tab are members of the same container — is a
+        // pure reorder of the group's rows, and the split must survive it.
+        // Anything anchored outside the group stays a real relocation and
+        // ejects as usual.
+        let withinOwnSplitGroup = splitContainer(containing: targetID).map { container in
+            sessionIDs.allSatisfy { container.tree.contains($0) }
+        } ?? false
+        let moved = removeSessions(with: sessionIDs, leavingSplits: !withinOwnSplitGroup)
         guard !moved.isEmpty else { return }
 
+        // Outsiders must never land BETWEEN two members of a split group —
+        // the sidebar renders members as one adjacent run. A drop anchored
+        // on a mid-run member snaps to the front of the run (the resolver
+        // proposes run boundaries already; this is the structural backstop
+        // for any other caller).
+        let anchorID = withinOwnSplitGroup ? targetID : splitRunStart(before: targetID)
+
         for spaceIndex in spaces.indices {
-            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == targetID }) {
+            if let itemIndex = spaces[spaceIndex].pinnedItems.firstIndex(where: { $0.id == anchorID }) {
                 spaces[spaceIndex].pinnedItems.insert(
                     contentsOf: moved.map(SidebarPinnedItem.tab), at: itemIndex
                 )
@@ -629,7 +675,7 @@ final class TerminalSessionStore: ObservableObject {
             var insertedInFolder = false
             spaces[spaceIndex].modifyFolders { folder in
                 guard !insertedInFolder,
-                      let index = folder.sessions.firstIndex(where: { $0.id == targetID }) else {
+                      let index = folder.sessions.firstIndex(where: { $0.id == anchorID }) else {
                     return
                 }
                 folder.sessions.insert(contentsOf: moved, at: index)
@@ -639,7 +685,7 @@ final class TerminalSessionStore: ObservableObject {
                 save()
                 return
             }
-            if let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == targetID }) {
+            if let index = spaces[spaceIndex].ephemeralSessions.firstIndex(where: { $0.id == anchorID }) {
                 spaces[spaceIndex].ephemeralSessions.insert(contentsOf: moved, at: index)
                 save()
                 return
@@ -675,7 +721,14 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     /// Removes matching sessions from every space and returns them in display order.
-    private func removeSessions(with sessionIDs: Set<TerminalSession.ID>) -> [TerminalSession] {
+    /// `leavingSplits` controls the split side effect: true (every close and
+    /// real relocation) ejects the removed tabs from their containers; false
+    /// is reserved for the intra-group reorder (see `insert(_:before:)`),
+    /// where the rows only swap places inside their own split group and the
+    /// container must survive the round trip.
+    private func removeSessions(
+        with sessionIDs: Set<TerminalSession.ID>, leavingSplits: Bool = true
+    ) -> [TerminalSession] {
         var moved: [TerminalSession] = []
         for index in spaces.indices {
             // One pass over the interleaved pinned list keeps display order.
@@ -707,12 +760,16 @@ final class TerminalSessionStore: ObservableObject {
             moved += spaces[index].ephemeralSessions.filter { sessionIDs.contains($0.id) }
             spaces[index].ephemeralSessions.removeAll { sessionIDs.contains($0.id) }
         }
-        // Leaving one's spot means leaving one's split: every caller here
-        // either closes the tab or relocates it (pin/unpin, drag reorder,
-        // move to folder/space), and a relocated pane exits its container
-        // so members always stay adjacent. Splits never re-home a session
-        // through this path (they insert directly), so this can't misfire.
-        removeFromSplitContainers(sessionIDs)
+        // Leaving one's spot usually means leaving one's split: closes and
+        // relocations (pin/unpin, drag to a new home, move to folder/space)
+        // exit the container so members always stay adjacent. The exception
+        // is the intra-group reorder, which shuffles rows WITHIN their own
+        // group and passes leavingSplits: false. Splits never re-home a
+        // session through this path (they insert directly), so this can't
+        // misfire.
+        if leavingSplits {
+            removeFromSplitContainers(sessionIDs)
+        }
         return moved
     }
 

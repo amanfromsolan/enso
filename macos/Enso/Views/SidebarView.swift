@@ -1349,12 +1349,15 @@ private struct SpacePage: View {
     private static let rowGap: CGFloat = 4
 
     /// The sidebar's visual order, flattened; shared by drop projection and
-    /// selection ranges.
+    /// selection ranges. Passes the split containers so the flatten hoists
+    /// group members exactly as `pinnedEntries`/`groupedTabEntries` render
+    /// them — the two orders must never diverge.
     private var flatRows: [SidebarFlatRow] {
         flattenSidebar(
             space: space,
             collapsedFolderIDs: store.collapsedFolderIDs,
-            selection: store.selection
+            selection: store.selection,
+            splitContainers: store.splitContainers
         )
     }
 

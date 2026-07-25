@@ -87,6 +87,15 @@ final class SplitLayoutHostView: NSView {
     var paneCornerRadius: CGFloat = 10
 
     private var tree: SplitNode?
+    /// The tree with the in-flight divider drag applied. Divider drags stay
+    /// LOCAL until mouse-up: routing every mouse event through the store's
+    /// @Published containers re-evaluated every observing view (the whole
+    /// sidebar) 60+ times a second for zero visible change there. During a
+    /// drag the host lays out from this working copy; release pushes the
+    /// final ratio through the store once, which also persists it.
+    private var dragTree: SplitNode?
+    /// The dragged divider's latest (path, ratio), committed on mouse-up.
+    private var pendingDragRatio: (path: SplitPath, ratio: Double)?
     private var surfaces: [TerminalSession.ID: GhosttySurfaceView] = [:]
     /// One card per pane, holding that pane's header and surface. When the
     /// layout is split each card wears the app's terminal-card chrome
@@ -129,6 +138,12 @@ final class SplitLayoutHostView: NSView {
         surfaces: [TerminalSession.ID: GhosttySurfaceView],
         focusedID: TerminalSession.ID?
     ) {
+        // A structural change under an active drag (pane closed, tab
+        // switched) invalidates the working copy; the store's tree wins.
+        if dragTree != nil, tree?.leafIDs != self.tree?.leafIDs {
+            dragTree = nil
+            pendingDragRatio = nil
+        }
         self.tree = tree
         self.focusedID = focusedID
         self.sessions = sessions
@@ -170,6 +185,9 @@ final class SplitLayoutHostView: NSView {
                 return card
             }()
             card.setChrome(enabled: isSplitLayout, cornerRadius: paneCornerRadius)
+            // The focused pane of a split wears the accent ring (the card
+            // gates it off chrome, so an unsplit tab never rings).
+            card.setFocused(id == focusedID)
 
             if let surface = surfaces[id] {
                 if surface.superview !== card.content {
@@ -208,6 +226,7 @@ final class SplitLayoutHostView: NSView {
             guard let rootView = headerRootView(for: id) else { continue }
             if let header = headers[id] {
                 header.rootView = rootView
+                card.headerView = header
             } else {
                 let header = NSHostingView(rootView: rootView)
                 header.sizingOptions = []
@@ -220,6 +239,7 @@ final class SplitLayoutHostView: NSView {
                 header.safeAreaRegions = []
                 headers[id] = header
                 card.content.addSubview(header)
+                card.headerView = header
             }
         }
 
@@ -241,6 +261,20 @@ final class SplitLayoutHostView: NSView {
     private func focusPane(_ id: TerminalSession.ID) {
         guard let surface = surfaces[id] else { return }
         window?.makeFirstResponder(surface)
+        // Move the focus ring on the click itself; the store publish that
+        // onFocusGained triggers confirms the same state a beat later.
+        focusedID = id
+        for (cardID, card) in cards {
+            card.setFocused(cardID == id)
+        }
+        // The badge tint keys off focus: rebuild the hosted headers so the
+        // gray/colored swap lands on the click, not on the store publish
+        // that follows.
+        for (headerID, header) in headers {
+            if let rootView = headerRootView(for: headerID) {
+                header.rootView = rootView
+            }
+        }
     }
 
     private func grantFocus(to surface: GhosttySurfaceView) {
@@ -265,17 +299,30 @@ final class SplitLayoutHostView: NSView {
     /// The gap between pane cards — window chrome showing through. The
     /// divider's grab strip extends a few points past the gap onto the
     /// card edges (see grabOutset), like standard split views, so the
-    /// narrow gap stays comfortable to hit.
-    static let dividerThickness: CGFloat = 5
+    /// gap stays comfortable to hit.
+    static let dividerThickness: CGFloat = 8
 
     /// How far the divider's invisible grab strip (and hover dots)
     /// overhang the neighboring card edges on each side.
     static let dividerGrabOutset: CGFloat = 4
 
+    /// The absolute floor a divider drag leaves each pane, in points —
+    /// room for the header band plus a few lines of terminal. The purely
+    /// proportional clamp (SplitBranch.minRatio) compounds under nesting
+    /// into slivers; the drag clamps against the real region instead (see
+    /// SplitDividerView.clampedRatio).
+    static let minPaneExtent: CGFloat = 160
+
     /// The in-pane header band: two lines (title, then cwd breadcrumb)
     /// centered in the same 46pt the old header strip used, sitting on the
     /// terminal background inside the pane.
     static let paneHeaderHeight: CGFloat = 46
+
+    /// Below this pane height the header collapses entirely and the
+    /// surface takes every point: the band plus ~3 lines of terminal is
+    /// the least that still reads as a terminal with a title — a pane must
+    /// never render as a title with no terminal under it.
+    static let headerCollapseHeight: CGFloat = paneHeaderHeight + 40
 
     /// The responsive compact gate: a pane whose laid-out width drops
     /// below this goes compact. 500pt lands a 50/50 horizontal split
@@ -296,7 +343,8 @@ final class SplitLayoutHostView: NSView {
         return PaneHeaderView(
             session: session,
             store: store,
-            compact: compactHeaders[id] ?? false
+            compact: compactHeaders[id] ?? false,
+            focused: id == focusedID
         ) { [weak self] in
             self?.focusPane(id)
         }
@@ -318,7 +366,9 @@ final class SplitLayoutHostView: NSView {
     }
 
     private func layoutPanes() {
-        guard let tree, bounds.width > 0, bounds.height > 0 else {
+        // Mid-drag the working copy wins, so panes track the divider live
+        // without a store round trip.
+        guard let tree = dragTree ?? tree, bounds.width > 0, bounds.height > 0 else {
             dividers.values.forEach { $0.removeFromSuperview() }
             dividers = [:]
             return
@@ -342,7 +392,10 @@ final class SplitLayoutHostView: NSView {
             // width, so window resizes and divider drags respond live.
             updateHeaderVariant(for: id, paneWidth: paneRect.width)
             cards[id]?.frame = paneRect
-            let headerHeight = min(Self.paneHeaderHeight, paneRect.height)
+            // A pane squeezed under the collapse threshold hides its header
+            // outright: whatever height remains belongs to the surface.
+            let headerHeight = paneRect.height < Self.headerCollapseHeight ? 0 : Self.paneHeaderHeight
+            headers[id]?.isHidden = headerHeight == 0
             headers[id]?.frame = CGRect(
                 x: 0, y: 0,
                 width: paneRect.width, height: headerHeight
@@ -384,10 +437,10 @@ final class SplitLayoutHostView: NSView {
             let divider = dividers[path] ?? {
                 let view = SplitDividerView()
                 view.onDrag = { [weak self] path, ratio in
-                    self?.onRatioChange?(path, ratio)
+                    self?.dragDividerRatio(path: path, to: ratio)
                 }
                 view.onDragEnded = { [weak self] in
-                    self?.onRatioCommit?()
+                    self?.commitDividerDrag()
                 }
                 dividers[path] = view
                 return view
@@ -409,20 +462,46 @@ final class SplitLayoutHostView: NSView {
             used.insert(path)
         }
     }
+
+    // MARK: - Divider drags
+
+    /// Live divider drag: applies the ratio to the local working tree and
+    /// relays out directly, so the panes follow the pointer without the
+    /// store (and every sidebar row observing it) hearing each mouse event.
+    private func dragDividerRatio(path: SplitPath, to ratio: Double) {
+        guard let base = dragTree ?? tree else { return }
+        dragTree = base.updatingRatio(at: path, to: ratio)
+        pendingDragRatio = (path, ratio)
+        layoutPanes()
+    }
+
+    /// Mouse-up: the drag's final ratio goes through the store exactly once
+    /// — one publish for the whole gesture — and the existing commit path
+    /// persists it.
+    private func commitDividerDrag() {
+        if let pending = pendingDragRatio {
+            onRatioChange?(pending.path, pending.ratio)
+        }
+        dragTree = nil
+        pendingDragRatio = nil
+        onRatioCommit?()
+    }
 }
 
 /// One draggable split divider: an invisible strip spanning the chrome
 /// gap between two pane cards (overhanging their edges a few points),
 /// converting pointer position into the parent split's first-child
-/// ratio. The strip itself draws nothing — the gap is the visual — but
-/// hovering fades in a small three-dot grab affordance, oriented with
-/// the drag axis, and the resize cursor covers the strip.
+/// ratio. The strip itself draws nothing at rest — the gap is the visual
+/// — but hovering fades in a quiet affordance pair: three grab dots and
+/// a whisper-opacity seam line along the divider's long axis, both kept
+/// visible through a drag. The resize cursor covers the strip.
 final class SplitDividerView: NSView {
     var path = SplitPath()
     var direction: SplitDirection = .horizontal {
         didSet {
             dots.direction = direction
             layoutDots()
+            layoutSeamLine()
             dots.needsDisplay = true
         }
     }
@@ -434,13 +513,32 @@ final class SplitDividerView: NSView {
 
     /// The hover affordance: three quiet dots centered in the gap.
     private let dots = SplitDividerDotsView()
+    /// The hover/drag seam line: the sidebar insertion line's language
+    /// (2pt, rounded caps, accent) at a whisper opacity, running along the
+    /// divider's long axis so what's being grabbed reads without shouting.
+    private let seamLine = SeamLineView()
+    /// Keeps the affordance up while the pointer is dragging outside the
+    /// strip (tracking exits don't apply mid-drag, but be explicit).
+    private var isDragging = false
+
+    /// The seam line's thickness; cornerRadius at half fully rounds the caps.
+    private static let seamLineThickness: CGFloat = 2
+    /// Inset from the divider's ends, keeping the rounded caps clear of
+    /// the pane cards' rounded corners.
+    private static let seamLineEndInset: CGFloat = 6
 
     override var isFlipped: Bool { true }
 
     init() {
         super.init(frame: .zero)
+        seamLine.wantsLayer = true
+        seamLine.layer?.cornerRadius = Self.seamLineThickness / 2
+        seamLine.alphaValue = 0
+        addSubview(seamLine)
+        applySeamLineColor()
         dots.wantsLayer = true
         dots.alphaValue = 0
+        // Dots above the line, centered on it.
         addSubview(dots)
     }
 
@@ -452,17 +550,48 @@ final class SplitDividerView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         layoutDots()
+        layoutSeamLine()
     }
 
     private func layoutDots() {
         let size = direction == .horizontal
-            ? NSSize(width: SplitDividerDotsView.length, height: SplitDividerDotsView.thickness)
-            : NSSize(width: SplitDividerDotsView.thickness, height: SplitDividerDotsView.length)
+            ? NSSize(width: SplitDividerDotsView.thickness, height: SplitDividerDotsView.length)
+            : NSSize(width: SplitDividerDotsView.length, height: SplitDividerDotsView.thickness)
         dots.frame = NSRect(
             x: (bounds.width - size.width) / 2,
             y: (bounds.height - size.height) / 2,
             width: size.width, height: size.height
         )
+    }
+
+    /// The seam line runs the divider's long axis, centered across the gap.
+    private func layoutSeamLine() {
+        let t = Self.seamLineThickness
+        let inset = Self.seamLineEndInset
+        seamLine.frame = direction == .horizontal
+            ? NSRect(
+                x: (bounds.width - t) / 2, y: inset,
+                width: t, height: max(bounds.height - inset * 2, 0)
+            )
+            : NSRect(
+                x: inset, y: (bounds.height - t) / 2,
+                width: max(bounds.width - inset * 2, 0), height: t
+            )
+    }
+
+    /// The sidebar insertion line's accent, taken down to a whisper —
+    /// hover feedback, not a drag indicator. Re-resolved on appearance
+    /// changes because CALayer colors don't adapt on their own.
+    private func applySeamLineColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            seamLine.layer?.backgroundColor = NSColor.controlAccentColor
+                .withAlphaComponent(0.35).cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applySeamLineColor()
     }
 
     override func updateTrackingAreas() {
@@ -476,19 +605,21 @@ final class SplitDividerView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        fadeDots(to: 1)
+        fadeAffordance(to: 1)
     }
 
     override func mouseExited(with event: NSEvent) {
-        fadeDots(to: 0)
+        guard !isDragging else { return }
+        fadeAffordance(to: 0)
     }
 
     /// Quick opacity-only transition — a hover affordance, not a motion
     /// effect.
-    private func fadeDots(to alpha: CGFloat) {
+    private func fadeAffordance(to alpha: CGFloat) {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             dots.animator().alphaValue = alpha
+            seamLine.animator().alphaValue = alpha
         }
     }
 
@@ -498,37 +629,65 @@ final class SplitDividerView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // Drag starts on the first mouseDragged; nothing to record — the
-        // ratio is absolute (pointer position within the region).
+        // Nothing to record for the ratio — it's absolute (pointer position
+        // within the region) — but the affordance must survive the drag
+        // even when the pointer leaves the strip.
+        isDragging = true
+        fadeAffordance(to: 1)
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let superview else { return }
         let point = superview.convert(event.locationInWindow, from: nil)
         let thickness = SplitLayoutHostView.dividerThickness
+        let usable: CGFloat
         let ratio: Double
         if direction == .horizontal {
-            let usable = regionRect.width - thickness
+            usable = regionRect.width - thickness
             guard usable > 0 else { return }
             ratio = (point.x - regionRect.minX - thickness / 2) / usable
         } else {
-            let usable = regionRect.height - thickness
+            usable = regionRect.height - thickness
             guard usable > 0 else { return }
             ratio = (point.y - regionRect.minY - thickness / 2) / usable
         }
-        onDrag?(path, SplitBranch.clampRatio(ratio))
+        onDrag?(path, Self.clampedRatio(ratio, usable: usable))
+    }
+
+    /// The drag-time ratio clamp: converts the absolute pane floor
+    /// (SplitLayoutHostView.minPaneExtent) into a per-region ratio bound,
+    /// so no drag can squeeze a pane into a sliver no matter how splits
+    /// nest. A region too small to give both panes the floor pins the
+    /// divider at the midpoint. `SplitBranch.clampRatio` stays as the
+    /// persistence backstop for ratios arriving outside a drag.
+    static func clampedRatio(_ ratio: Double, usable: CGFloat) -> Double {
+        let minExtent = SplitLayoutHostView.minPaneExtent
+        guard usable >= minExtent * 2 else { return 0.5 }
+        let minRatio = max(minExtent / usable, SplitBranch.minRatio)
+        return min(1 - minRatio, max(minRatio, ratio))
     }
 
     override func mouseUp(with event: NSEvent) {
+        isDragging = false
+        if !bounds.contains(convert(event.locationInWindow, from: nil)) {
+            fadeAffordance(to: 0)
+        }
         onDragEnded?()
+    }
+
+    /// Display-only layer host for the seam line; never intercepts the
+    /// divider's clicks.
+    private final class SeamLineView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
 /// The divider's hover affordance: three small dots in the system's
 /// secondary ink (appearance-adaptive, quiet on the frost), laid out
-/// along the drag axis — a horizontal row between side-by-side cards, a
-/// vertical column between stacked ones. Display only; never intercepts
-/// the divider's clicks.
+/// along the divider's LONG axis — a vertical column on the seam between
+/// side-by-side cards, a horizontal row on the seam between stacked ones
+/// — and sized to sit centered within the gap. Display only; never
+/// intercepts the divider's clicks.
 final class SplitDividerDotsView: NSView {
     var direction: SplitDirection = .horizontal
 
@@ -544,9 +703,11 @@ final class SplitDividerDotsView: NSView {
         let d = Self.dotDiameter
         for index in 0..<3 {
             let offset = CGFloat(index) * (d + Self.dotGap)
+            // A horizontal split's divider is a vertical seam: dots stack
+            // top-to-bottom. A vertical split's divider runs left-to-right.
             let rect = direction == .horizontal
-                ? NSRect(x: offset, y: (bounds.height - d) / 2, width: d, height: d)
-                : NSRect(x: (bounds.width - d) / 2, y: offset, width: d, height: d)
+                ? NSRect(x: (bounds.width - d) / 2, y: offset, width: d, height: d)
+                : NSRect(x: offset, y: (bounds.height - d) / 2, width: d, height: d)
             NSBezierPath(ovalIn: rect).fill()
         }
     }
@@ -569,6 +730,39 @@ final class PaneCardView: NSView {
     /// Rounded clipping container for the pane's header and surface.
     let content: NSView = FlippedContentView()
 
+    /// The focused pane's ring: a 2pt accent stroke hugging the card's
+    /// rounded rect (same radius, centered on the edge, so it reads as a
+    /// ring around the card rather than an inset box). Only split layouts
+    /// wear it — an unsplit tab has no siblings to disambiguate, so it
+    /// keeps zero resting chrome. A dedicated shape layer ABOVE the
+    /// content, deliberately independent of the outer layer's shadowPath:
+    /// the shadow's synchronous-path plumbing (see updateShadowPath) was
+    /// fiddly to get right and the ring must never disturb it.
+    private let ringLayer = CAShapeLayer()
+    private var isFocused = false
+
+    /// Unfocused dim: a scrim in the terminal's own background color, so
+    /// content recedes toward its background by the same perceptual step
+    /// in light and dark themes alike (Ghostty's unfocused-split
+    /// treatment — an alpha fade would instead blend toward whatever
+    /// chrome sits behind the card, flipping character between themes).
+    /// A bare CALayer never participates in hit-testing.
+    private let scrimLayer = CALayer()
+    private static let scrimOpacity: Float = 0.25
+
+    /// The pane's header hosting view. The focus treatment fades it —
+    /// title, breadcrumb, and all — so an unfocused pane's header reads
+    /// as deactivated the way a background window's titlebar does. The
+    /// terminal body itself stays at full strength.
+    weak var headerView: NSView? {
+        didSet {
+            guard headerView !== oldValue else { return }
+            applyRingVisibility(animated: false)
+        }
+    }
+
+    static let focusRingWidth: CGFloat = 6
+
     private var chromeEnabled = false
     private var cornerRadius: CGFloat = 0
 
@@ -585,6 +779,20 @@ final class PaneCardView: NSView {
         content.frame = bounds
         content.autoresizingMask = [.width, .height]
         addSubview(content)
+        // Inside the clipped content so the rounded corners contain it;
+        // zPosition lifts it above the surface and header backing layers.
+        scrimLayer.backgroundColor = NSColor(GhosttyRuntime.shared.themeBackground).cgColor
+        scrimLayer.opacity = 0
+        scrimLayer.zPosition = 10
+        content.layer?.addSublayer(scrimLayer)
+        // Added after the content subview so the stroke draws above the
+        // card's clipped edge (its outer half lives past the bounds, which
+        // masksToBounds = false on this view leaves visible).
+        ringLayer.fillColor = nil
+        ringLayer.lineWidth = Self.focusRingWidth
+        ringLayer.opacity = 0
+        layer?.addSublayer(ringLayer)
+        applyRingColor()
     }
 
     @available(*, unavailable)
@@ -609,11 +817,25 @@ final class PaneCardView: NSView {
             layer?.shadowOpacity = 0
         }
         updateShadowPath()
+        updateRingPath()
+        // A chrome flip (split ⇄ unsplit) snaps rather than fades: the
+        // whole card treatment changes in the same commit.
+        applyRingVisibility(animated: false)
+    }
+
+    /// Focus moved between panes: fade the ring over rather than popping
+    /// it. Only meaningful on split cards — the chrome gate above keeps an
+    /// unsplit tab's lone card ringless no matter what focus says.
+    func setFocused(_ focused: Bool) {
+        guard focused != isFocused else { return }
+        isFocused = focused
+        applyRingVisibility(animated: true)
     }
 
     override func layout() {
         super.layout()
         updateShadowPath()
+        updateRingPath()
     }
 
     /// The one guaranteed-synchronous hook on every resize. The first
@@ -628,6 +850,7 @@ final class PaneCardView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateShadowPath()
+        updateRingPath()
     }
 
     private func updateShadowPath() {
@@ -643,9 +866,67 @@ final class PaneCardView: NSView {
         )
     }
 
+    /// The ring chases the card frame like the shadow path does, but with
+    /// implicit animations off — a divider drag resizes cards every mouse
+    /// event, and the ring must track rigidly, never wobble after the
+    /// frame.
+    private func updateRingPath() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ringLayer.frame = bounds
+        scrimLayer.frame = content.bounds
+        let radius = min(cornerRadius, min(bounds.width, bounds.height) / 2)
+        ringLayer.path = CGPath(
+            roundedRect: bounds,
+            cornerWidth: radius, cornerHeight: radius,
+            transform: nil
+        )
+        CATransaction.commit()
+    }
+
+    /// Shows the ring only while this card is the focused pane OF A SPLIT,
+    /// and drops the unfocused siblings to 90% so the eye lands on the
+    /// live pane. The focus question doesn't exist for a lone card, so the
+    /// unsplit tab keeps zero resting chrome and full brightness.
+    private func applyRingVisibility(animated: Bool) {
+        CATransaction.begin()
+        if animated {
+            CATransaction.setAnimationDuration(0.1)
+        } else {
+            CATransaction.setDisableActions(true)
+        }
+        ringLayer.opacity = chromeEnabled && isFocused ? 1 : 0
+        scrimLayer.opacity = chromeEnabled && !isFocused ? Self.scrimOpacity : 0
+        CATransaction.commit()
+
+        // The content view's backing layer ignores CATransaction for
+        // implicit animation, so the dim goes through the view animator.
+        let headerAlpha: CGFloat = chromeEnabled && !isFocused ? 0.55 : 1
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.1
+                headerView?.animator().alphaValue = headerAlpha
+            }
+        } else {
+            headerView?.alphaValue = headerAlpha
+        }
+    }
+
+    /// Accent (respects the user's system accent setting) at a weight that
+    /// reads clearly without shouting; the unfocused cards keep the quiet
+    /// ink hairline. Re-resolved on appearance changes because CALayer
+    /// colors don't adapt on their own.
+    private func applyRingColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            ringLayer.strokeColor = NSColor.controlAccentColor
+                .withAlphaComponent(0.7).cgColor
+        }
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyBorderColor()
+        applyRingColor()
     }
 
     /// The single card's hairline is `Theme.ink` at 9% — white ink on the
@@ -674,20 +955,25 @@ final class PaneCardView: NSView {
 /// wide panes — an unsplit tab, a full-width stacked pane, or even a
 /// horizontal split in a very wide window — render the ORIGINAL
 /// pre-splits header strip verbatim (FullPaneHeader): title and
-/// breadcrumb inline on one row, double-click rename, window drag/zoom on
-/// the empty band. The stacked two-line treatment (CompactPaneHeader)
-/// appears only when a pane's width falls under the compact threshold.
+/// breadcrumb inline on one row. The stacked two-line treatment
+/// (CompactPaneHeader) appears only when a pane's width falls under the
+/// compact threshold. BOTH variants keep the band's contract: the title
+/// cluster owns its clicks (double-click renames inline), and the empty
+/// remainder is window chrome — drag to move, double-click to zoom —
+/// which matters most when a 50/50 split turns the whole window top into
+/// pane headers.
 struct PaneHeaderView: View {
     let session: TerminalSession
     let store: TerminalSessionStore
     let compact: Bool
+    let focused: Bool
     let onActivate: () -> Void
 
     var body: some View {
         if compact {
-            CompactPaneHeader(session: session, onActivate: onActivate)
+            CompactPaneHeader(session: session, store: store, focused: focused, onActivate: onActivate)
         } else {
-            FullPaneHeader(session: session, store: store)
+            FullPaneHeader(session: session, store: store, focused: focused)
         }
     }
 }
@@ -701,6 +987,9 @@ struct PaneHeaderView: View {
 private struct FullPaneHeader: View {
     let session: TerminalSession
     let store: TerminalSessionStore
+    /// False only for the unfocused members of a split: their badge grays
+    /// out, so the colored mark always names the pane holding the keyboard.
+    let focused: Bool
 
     @State private var isRenaming = false
     @State private var draftTitle = ""
@@ -717,6 +1006,7 @@ private struct FullPaneHeader: View {
                 // running; idle tabs keep today's dot — never an empty slot.
                 if let process = session.runningProcess {
                     HeaderProcessBadge(process: process, ink: terminalInk)
+                        .grayscale(focused ? 0 : 1)
                 } else {
                     // Idle terminal glyph, tinted like the tool badges;
                     // 24 pt from the full-bleed header artwork, same slot
@@ -730,30 +1020,21 @@ private struct FullPaneHeader: View {
                 }
 
                 if isRenaming {
-                    // An invisible twin of the title keeps the field exactly
-                    // as wide as the typed text — a fixed-width field would
-                    // shove the breadcrumb sideways the moment editing
-                    // starts. The trailing space gives the caret room.
-                    Text(draftTitle + " ")
-                        .font(.system(size: 15, weight: .regular))
-                        .lineLimit(1)
-                        .opacity(0)
-                        .overlay {
-                            TextField("", text: $draftTitle)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 15, weight: .regular))
-                                .foregroundStyle(terminalInk.opacity(0.9))
-                                .environment(\.colorScheme, terminalColorScheme)
-                                .focused($renameFieldFocused)
-                                .onSubmit {
-                                    commitRename()
-                                    restoreTerminalFocus()
-                                }
-                                .onExitCommand {
-                                    isRenaming = false
-                                    restoreTerminalFocus()
-                                }
+                    PaneRenameField(
+                        fontSize: 15,
+                        ink: terminalInk,
+                        colorScheme: terminalColorScheme,
+                        draftTitle: $draftTitle,
+                        focused: $renameFieldFocused,
+                        onCommit: {
+                            commitRename()
+                            restoreTerminalFocus()
+                        },
+                        onCancel: {
+                            isRenaming = false
+                            restoreTerminalFocus()
                         }
+                    )
                 } else {
                     Text(session.title)
                         .font(.system(size: 15, weight: .regular))
@@ -902,31 +1183,78 @@ private struct HeaderProcessBadge: View {
 
 /// The narrow-pane header: title with the working-directory breadcrumb
 /// stacked on a line BELOW, compact type. Appears only when a pane's
-/// laid-out width falls under the compact threshold. Display only — no
-/// buttons, no hover actions; clicking it focuses the pane's terminal.
-/// The badge keeps the full header's 24pt — the compact treatment shrinks
-/// type, never the mark.
+/// laid-out width falls under the compact threshold. The badge keeps the
+/// full header's 24pt — the compact treatment shrinks type, never the
+/// mark. Same band contract as the full header: only the badge+text
+/// cluster claims clicks (single click focuses this pane's terminal,
+/// double-click renames inline), while the empty trailing band belongs to
+/// the window drag handle — with a 50/50 ⌘D split both headers span the
+/// window top, and losing drag/zoom there made the window feel nailed
+/// down.
 private struct CompactPaneHeader: View {
     let session: TerminalSession
+    let store: TerminalSessionStore
+    /// Same contract as FullPaneHeader: unfocused split members gray
+    /// their badge.
+    let focused: Bool
     let onActivate: () -> Void
+
+    @State private var isRenaming = false
+    @State private var draftTitle = ""
+    @FocusState private var renameFieldFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            PaneHeaderBadge(process: session.runningProcess, ink: ink)
-                .frame(width: 24, height: 24)
+            HStack(spacing: 8) {
+                PaneHeaderBadge(process: session.runningProcess, ink: ink)
+                    .grayscale(focused ? 0 : 1)
+                    .frame(width: 24, height: 24)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(session.title)
-                    .font(.system(size: 11.5, weight: .regular))
-                    .foregroundStyle(ink.opacity(0.9))
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    if isRenaming {
+                        PaneRenameField(
+                            fontSize: 11.5,
+                            ink: ink,
+                            colorScheme: terminalColorScheme,
+                            draftTitle: $draftTitle,
+                            focused: $renameFieldFocused,
+                            onCommit: {
+                                commitRename()
+                                restoreTerminalFocus()
+                            },
+                            onCancel: {
+                                isRenaming = false
+                                restoreTerminalFocus()
+                            }
+                        )
+                    } else {
+                        Text(session.title)
+                            .font(.system(size: 11.5, weight: .regular))
+                            .foregroundStyle(ink.opacity(0.9))
+                            .lineLimit(1)
+                    }
 
-                PaneHeaderBreadcrumb(
-                    path: session.workingDirectory,
-                    ink: ink,
-                    compact: true
-                )
+                    PaneHeaderBreadcrumb(
+                        path: session.workingDirectory,
+                        ink: ink,
+                        compact: true
+                    )
+                }
             }
+            .contentShape(Rectangle())
+            // One immediate gesture reading the raw click count (the
+            // sidebar rows' pattern): pairing single+double TapGestures
+            // would hold every click for the double-click interval. The
+            // first click focuses this pane's terminal — never steals the
+            // keyboard for the header — and the second begins the rename.
+            .simultaneousGesture(TapGesture().onEnded {
+                guard !isRenaming else { return }
+                switch NSApp.currentEvent?.clickCount {
+                case 1: onActivate()
+                case 2: beginRename()
+                default: break
+                }
+            })
 
             Spacer(minLength: 0)
         }
@@ -934,10 +1262,47 @@ private struct CompactPaneHeader: View {
         // Row centered in the fixed 46pt band, icon centered against the
         // two-line text block.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        // Never steals the keyboard: a click routes focus to this pane's
-        // terminal (which also syncs the sidebar selection).
-        .onTapGesture { onActivate() }
+        // The band beyond the cluster is window chrome — drag to move,
+        // double-click to zoom — in AppKit for the same reason as the full
+        // header (see FullPaneHeader's note on WindowDragHandle).
+        .background(WindowDragHandle())
+        // Click-away while renaming: keep the edit and let the click do
+        // its normal job — same contract as the full header's rename.
+        .background(
+            RenameClickAway(active: isRenaming) {
+                commitRename()
+            }
+        )
+        .onChange(of: renameFieldFocused) { _, focused in
+            if !focused, isRenaming {
+                commitRename()
+            }
+        }
+    }
+
+    // MARK: Rename
+
+    private func beginRename() {
+        guard !isRenaming else { return }
+        draftTitle = session.title
+        isRenaming = true
+        renameFieldFocused = true
+    }
+
+    /// Commit doubles as cancel: a blanked or untouched title leaves the
+    /// session alone.
+    private func commitRename() {
+        guard isRenaming else { return }
+        isRenaming = false
+        let trimmed = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != session.title else { return }
+        store.rename(session, to: trimmed)
+    }
+
+    /// Ending a rename leaves first responder parked nowhere, so Return
+    /// stops reaching the shell; hand the keyboard back to the terminal.
+    private func restoreTerminalFocus() {
+        GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
     }
 
     /// Ink keyed to the terminal background's luminance, not the app
@@ -945,6 +1310,44 @@ private struct CompactPaneHeader: View {
     /// strip did.
     private var ink: Color {
         GhosttyRuntime.shared.terminalColorScheme == .light ? .black : .white
+    }
+
+    /// Appearance for the rename field's editing chrome, keyed off the
+    /// terminal background rather than the app appearance.
+    private var terminalColorScheme: ColorScheme {
+        GhosttyRuntime.shared.terminalColorScheme
+    }
+}
+
+/// The inline-rename field both header variants share: an invisible twin
+/// of the draft keeps the field exactly as wide as the typed text — a
+/// fixed-width field would shove the breadcrumb sideways the moment
+/// editing starts — and the trailing space gives the caret room. Only the
+/// type size differs between the full (15pt) and compact (11.5pt) headers.
+private struct PaneRenameField: View {
+    let fontSize: CGFloat
+    let ink: Color
+    let colorScheme: ColorScheme
+    @Binding var draftTitle: String
+    var focused: FocusState<Bool>.Binding
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        Text(draftTitle + " ")
+            .font(.system(size: fontSize, weight: .regular))
+            .lineLimit(1)
+            .opacity(0)
+            .overlay {
+                TextField("", text: $draftTitle)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: fontSize, weight: .regular))
+                    .foregroundStyle(ink.opacity(0.9))
+                    .environment(\.colorScheme, colorScheme)
+                    .focused(focused)
+                    .onSubmit(onCommit)
+                    .onExitCommand(perform: onCancel)
+            }
     }
 }
 

@@ -70,6 +70,10 @@ struct SidebarFlatRow: Equatable, Identifiable {
     let kind: Kind
     let parentFolderID: TerminalFolder.ID?
     let zone: Zone
+    /// The split container this row is a member of, when it renders inside
+    /// a split group's run; the resolver treats a run as one unit for tabs
+    /// dragged in from outside it.
+    let splitContainerID: SplitContainer.ID?
 
     var depth: Int { parentFolderID == nil ? 0 : 1 }
 }
@@ -77,38 +81,92 @@ struct SidebarFlatRow: Equatable, Identifiable {
 /// The single source of the sidebar's visible order: selection ranges and
 /// drop projection both derive from this, so they can never drift from what
 /// renders. Collapsed folders contribute only their own row, plus the active
-/// tab that peeks out beneath them.
+/// tab that peeks out beneath them. Split-container members are hoisted to
+/// the first member's position within their collection — the exact grouping
+/// the sidebar's display entries render — so the flatten can never disagree
+/// with the group boxes on screen, even when members drifted apart in the
+/// model.
 func flattenSidebar(
     space: SidebarSpace,
     collapsedFolderIDs: Set<TerminalFolder.ID>,
-    selection: TerminalSession.ID?
+    selection: TerminalSession.ID?,
+    splitContainers: [SplitContainer]
 ) -> [SidebarFlatRow] {
     var rows: [SidebarFlatRow] = []
-    for item in space.pinnedItems {
-        switch item {
-        case .tab(let session):
-            rows.append(SidebarFlatRow(id: session.id, kind: .tab, parentFolderID: nil, zone: .pinned))
-        case .folder(let folder):
-            let collapsed = collapsedFolderIDs.contains(folder.id)
-            rows.append(SidebarFlatRow(
-                id: folder.id, kind: .folder(collapsed: collapsed), parentFolderID: nil, zone: .pinned
-            ))
-            if !collapsed {
-                for session in folder.sessions {
-                    rows.append(SidebarFlatRow(
-                        id: session.id, kind: .tab, parentFolderID: folder.id, zone: .pinned
-                    ))
-                }
-            } else if let selection, folder.sessions.contains(where: { $0.id == selection }) {
+
+    func containerOf(_ sessionID: TerminalSession.ID) -> SplitContainer? {
+        splitContainers.first { $0.tree.contains(sessionID) }
+    }
+
+    /// Appends one flat tab list with split members hoisted: at the first
+    /// member's position the whole group's rows are emitted (in list
+    /// order) and later members are skipped — mirroring the view's grouped
+    /// display entries.
+    func appendTabs(
+        _ tabs: [TerminalSession], parentFolderID: TerminalFolder.ID?, zone: SidebarFlatRow.Zone
+    ) {
+        var consumed: Set<TerminalSession.ID> = []
+        for session in tabs {
+            guard !consumed.contains(session.id) else { continue }
+            guard let container = containerOf(session.id) else {
                 rows.append(SidebarFlatRow(
-                    id: selection, kind: .tab, parentFolderID: folder.id, zone: .pinned
+                    id: session.id, kind: .tab, parentFolderID: parentFolderID,
+                    zone: zone, splitContainerID: nil
+                ))
+                continue
+            }
+            for member in tabs.filter({ container.tree.contains($0.id) }) {
+                consumed.insert(member.id)
+                rows.append(SidebarFlatRow(
+                    id: member.id, kind: .tab, parentFolderID: parentFolderID,
+                    zone: zone, splitContainerID: container.id
                 ))
             }
         }
     }
-    for session in space.ephemeralSessions {
-        rows.append(SidebarFlatRow(id: session.id, kind: .tab, parentFolderID: nil, zone: .ephemeral))
+
+    // Loose pinned tabs group against the space's WHOLE loose list, not a
+    // contiguous slice: a group whose members drifted apart in the model
+    // (even across an intervening folder) still flattens as one run at the
+    // first member's position, exactly as the view hoists it.
+    var consumedPinned: Set<TerminalSession.ID> = []
+    for item in space.pinnedItems {
+        switch item {
+        case .tab(let session):
+            guard !consumedPinned.contains(session.id) else { continue }
+            guard let container = containerOf(session.id) else {
+                rows.append(SidebarFlatRow(
+                    id: session.id, kind: .tab, parentFolderID: nil,
+                    zone: .pinned, splitContainerID: nil
+                ))
+                continue
+            }
+            for member in space.pinnedSessions.filter({ container.tree.contains($0.id) }) {
+                consumedPinned.insert(member.id)
+                rows.append(SidebarFlatRow(
+                    id: member.id, kind: .tab, parentFolderID: nil,
+                    zone: .pinned, splitContainerID: container.id
+                ))
+            }
+        case .folder(let folder):
+            let collapsed = collapsedFolderIDs.contains(folder.id)
+            rows.append(SidebarFlatRow(
+                id: folder.id, kind: .folder(collapsed: collapsed), parentFolderID: nil,
+                zone: .pinned, splitContainerID: nil
+            ))
+            if !collapsed {
+                appendTabs(folder.sessions, parentFolderID: folder.id, zone: .pinned)
+            } else if let selection, folder.sessions.contains(where: { $0.id == selection }) {
+                // The peeking row renders as a lone session row outside any
+                // group chrome, so it carries no run membership.
+                rows.append(SidebarFlatRow(
+                    id: selection, kind: .tab, parentFolderID: folder.id,
+                    zone: .pinned, splitContainerID: nil
+                ))
+            }
+        }
     }
+    appendTabs(space.ephemeralSessions, parentFolderID: nil, zone: .ephemeral)
     return rows
 }
 
@@ -226,9 +284,12 @@ struct SidebarDropResolver {
         case .folder(let id):
             return folderResolution(y: location.y, draggedFolder: id)
         case .tabs(let ids):
-            let proposal = location.y < zoneBoundaryY
+            var proposal = location.y < zoneBoundaryY
                 ? pinnedTabProposal(at: location, horizontalDelta: horizontalDelta)
                 : ephemeralTabProposal(y: location.y)
+            proposal = snappingToSplitRunBoundary(
+                proposal, y: location.y, horizontalDelta: horizontalDelta, draggedIDs: Set(ids)
+            )
             // The dragged rows' own slot: a drop would change nothing, so
             // show nothing — but it isn't a forbidden position either.
             if isNoOpTarget(proposal.target, draggedIDs: Set(ids)) {
@@ -236,6 +297,65 @@ struct SidebarDropResolver {
             }
             return .proposal(proposal)
         }
+    }
+
+    // MARK: Split-group runs
+
+    /// A split group's rows act as one unit for tabs from outside it: a
+    /// proposal that would land between two members snaps to the nearest
+    /// run boundary (the pointer's half of the run decides which), so a
+    /// drop can never interleave strangers into a split group. The group's
+    /// own members keep the interior slots — reordering within the group
+    /// stays valid. Mirrors the store's anchor snapping in
+    /// `insert(_:before:)`, so the previewed line and the commit agree.
+    private func snappingToSplitRunBoundary(
+        _ proposal: SidebarDropProposal,
+        y: CGFloat,
+        horizontalDelta: CGFloat,
+        draggedIDs: Set<TerminalSession.ID>
+    ) -> SidebarDropProposal {
+        guard case .insertBefore(let anchorID) = proposal.target else { return proposal }
+        let isPinned = pinnedRows.contains { $0.row.id == anchorID }
+        let zone = isPinned ? pinnedRows : ephemeralRows
+        guard let index = zone.firstIndex(where: { $0.row.id == anchorID }),
+              let containerID = zone[index].row.splitContainerID else { return proposal }
+
+        // The contiguous run around the anchor sharing its container
+        // (flatten hoists members adjacent, so this is the whole group).
+        var start = index
+        while start > 0, zone[start - 1].row.splitContainerID == containerID { start -= 1 }
+        var end = index
+        while end + 1 < zone.count, zone[end + 1].row.splitContainerID == containerID { end += 1 }
+
+        // Members shuffling among themselves keep the interior slot; the
+        // slot before the run's first row already IS a boundary.
+        if draggedIDs.allSatisfy({ id in zone[start...end].contains { $0.row.id == id } }) {
+            return proposal
+        }
+        guard index > start else { return proposal }
+
+        let runFrame = zone[start].frame.union(zone[end].frame)
+        if y < runFrame.midY {
+            return SidebarDropProposal(
+                target: .insertBefore(zone[start].row.id),
+                indicator: line(at: zone[start].frame.minY, spanning: zone[start].frame)
+            )
+        }
+        if isPinned {
+            // The pinned gap logic already knows what follows the run — a
+            // sibling row, a folder edge, or the end of the zone.
+            return tabGapProposal(after: end, horizontalDelta: horizontalDelta)
+        }
+        if end + 1 < zone.count {
+            return SidebarDropProposal(
+                target: .insertBefore(zone[end + 1].row.id),
+                indicator: line(at: zone[end + 1].frame.minY, spanning: zone[end + 1].frame)
+            )
+        }
+        return SidebarDropProposal(
+            target: .appendToEphemeral,
+            indicator: line(at: zone[end].frame.maxY, spanning: zone[end].frame)
+        )
     }
 
     // MARK: Tabs
