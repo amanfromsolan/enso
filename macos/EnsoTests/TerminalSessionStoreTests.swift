@@ -326,6 +326,375 @@ struct TerminalSessionStoreTests {
             == [workSelected.id, workDormant.id])
     }
 
+    // MARK: - Sleep / wake
+
+    @Test func putToSleepKeepsSelectionAndCapturesWhatWasRunning() throws {
+        let dir = try makeTempDirectory("sleep")
+        var sleeper = TerminalSession(title: "agent", workingDirectory: dir, status: .attention)
+        sleeper.runningProcess = .claude
+        let neighbor = TerminalSession(title: "shell", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [sleeper, neighbor]),
+            select: sleeper.id
+        )
+
+        store.putToSleep(sessionID: sleeper.id)
+        let slept = try #require(store.sessions.first { $0.id == sleeper.id })
+        #expect(slept.isSleeping)
+        // The process died with the surface, and the attention dot leads
+        // nowhere anymore — but the sleeping card remembers what ran.
+        #expect(slept.runningProcess == nil)
+        #expect(slept.sleepingProcess == .claude)
+        #expect(slept.status == .idle)
+        // Sleeping the selected tab keeps it selected: the workspace's
+        // sleeping card is the feedback, not a selection jump that makes
+        // sleep look like close.
+        #expect(store.selection == sleeper.id)
+
+        // A background sleep never touches selection.
+        store.wake(sessionID: sleeper.id)
+        store.putToSleep(sessionID: neighbor.id)
+        #expect(store.selection == sleeper.id)
+    }
+
+    @Test func selectingSleepingTabWakesIt() throws {
+        let dir = try makeTempDirectory("wake")
+        let awake = TerminalSession(title: "a", workingDirectory: dir)
+        let sleeper = TerminalSession(title: "b", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [awake, sleeper]),
+            select: awake.id
+        )
+
+        store.putToSleep(sessionID: sleeper.id)
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == true)
+
+        // Click to wake: a committed selection is all it takes.
+        store.selection = sleeper.id
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == false)
+    }
+
+    @Test func cyclingPreviewsDoNotWakeSleepingTabs() throws {
+        let dir = try makeTempDirectory("cycle")
+        let awake = TerminalSession(title: "a", workingDirectory: dir)
+        let sleeper = TerminalSession(title: "b", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [awake, sleeper]),
+            select: awake.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+
+        // Ctrl-Tab previews pass through tabs the user never chose; only
+        // the committed pick wakes.
+        store.isCyclingSelection = true
+        store.selection = sleeper.id
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == true)
+
+        store.isCyclingSelection = false
+        store.recordSelectionRecency()
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == false)
+    }
+
+    @Test func sleepingAPaneLeavesItsSplitSiblingsAwake() throws {
+        let dir = try makeTempDirectory("split-sleep")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+        let pane = try #require(store.selection)
+        #expect(pane != source.id)
+
+        // Sleep is strictly per pane: the sibling keeps running and the
+        // container stays intact — the slept pane's region shows the
+        // in-pane moon, not a dissolved split.
+        store.putToSleep(sessionID: source.id)
+        #expect(store.sessions.first { $0.id == source.id }?.isSleeping == true)
+        #expect(store.sessions.first { $0.id == pane }?.isSleeping == false)
+        #expect(store.splitContainer(containing: source.id) != nil)
+
+        // And the wake is just as scoped.
+        store.wake(sessionID: source.id)
+        #expect(store.sessions.first { $0.id == source.id }?.isSleeping == false)
+    }
+
+    @Test func busyAgentRequiresARunningAgentWithoutTheAttentionDot() throws {
+        let dir = try makeTempDirectory("busy")
+        var working = TerminalSession(title: "working", workingDirectory: dir)
+        working.runningProcess = .claude
+        var waiting = TerminalSession(title: "waiting", workingDirectory: dir, status: .attention)
+        waiting.runningProcess = .codex
+        var tool = TerminalSession(title: "tool", workingDirectory: dir)
+        tool.runningProcess = .editor
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [working, waiting, tool])
+        )
+
+        // Selecting clears attention, so pin the selection elsewhere first.
+        store.selection = tool.id
+        #expect(store.busyAgent(inTab: working.id) == .claude)
+        // The attention dot means the agent is waiting on the user — idle,
+        // safe to sleep without asking.
+        #expect(store.busyAgent(inTab: waiting.id) == nil)
+        // Non-agent tools never warrant the confirmation.
+        #expect(store.busyAgent(inTab: tool.id) == nil)
+    }
+
+    @Test func closingASleepingTabRemovesItWithoutWakingOrSelecting() throws {
+        let dir = try makeTempDirectory("close-sleeping")
+        let selected = TerminalSession(title: "a", workingDirectory: dir)
+        let sleeper = TerminalSession(title: "b", workingDirectory: dir)
+        let bystander = TerminalSession(title: "c", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [selected, sleeper, bystander]),
+            select: selected.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+
+        // The sleeping row's × removes the tab for real: gone from the
+        // sidebar, selection untouched — no wake, no reselect.
+        store.close(sessionID: sleeper.id)
+        #expect(!store.sessions.contains { $0.id == sleeper.id })
+        #expect(store.selection == selected.id)
+    }
+
+    @Test func closingTheSelectedTabHandsSelectionToAnAwakeRow() throws {
+        let dir = try makeTempDirectory("close-handoff")
+        let selected = TerminalSession(title: "a", workingDirectory: dir)
+        let sleeper = TerminalSession(title: "b", workingDirectory: dir)
+        let awake = TerminalSession(title: "c", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [selected, sleeper, awake]),
+            select: selected.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+
+        // Selecting wakes, so the close handoff must skip the sleeping
+        // neighbor — its shell must not spawn unasked.
+        store.close(sessionID: selected.id)
+        #expect(store.selection == awake.id)
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == true)
+    }
+
+    @Test func launchKeepsASleepingLastSelectionAsleep() throws {
+        let dir = try makeTempDirectory("launch-sleeping")
+        let sleeper = TerminalSession(title: "a", workingDirectory: dir, isSleeping: true)
+        let other = TerminalSession(title: "b", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [sleeper, other]),
+            select: sleeper.id
+        )
+
+        // The relaunch shape: whatever was selected at quit is selected
+        // again — and if it was asleep, it comes back asleep, showing its
+        // sleeping card rather than spawning a shell nobody asked for.
+        #expect(store.selection == sleeper.id)
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == true)
+    }
+
+    @Test func activateSpaceLandsOnAnAwakeRowWhenTheRememberedOneSleeps() throws {
+        let dir = try makeTempDirectory("space-landing")
+        let homeTab = TerminalSession(title: "home", workingDirectory: dir)
+        let workSleeper = TerminalSession(title: "w-sleeping", workingDirectory: dir, isSleeping: true)
+        let workAwake = TerminalSession(title: "w-awake", workingDirectory: dir)
+        let allSleeperA = TerminalSession(title: "p-a", workingDirectory: dir, isSleeping: true)
+        let allSleeperB = TerminalSession(title: "p-b", workingDirectory: dir, isSleeping: true)
+        let work = SidebarSpace(
+            name: "Work",
+            pinnedFolders: [TerminalFolder(title: "w", sessions: [workSleeper, workAwake])],
+            lastSelection: workSleeper.id
+        )
+        let parked = SidebarSpace(
+            name: "Parked",
+            pinnedFolders: [TerminalFolder(title: "p", sessions: [allSleeperA, allSleeperB])],
+            lastSelection: allSleeperA.id
+        )
+        let store = TerminalSessionStore(
+            spaces: [
+                SidebarSpace(name: "Home", ephemeralSessions: [homeTab], lastSelection: homeTab.id),
+                work,
+                parked,
+            ],
+            persistToDisk: false
+        )
+
+        // The user picked a space, not its sleeping remembered tab: land
+        // on the first awake row instead, waking nothing.
+        store.activateSpace(work.id)
+        #expect(store.selection == workAwake.id)
+        #expect(store.sessions.first { $0.id == workSleeper.id }?.isSleeping == true)
+
+        // A space that is asleep wall to wall keeps its remembered card —
+        // there is nothing awake to prefer, and nothing wakes.
+        store.activateSpace(parked.id)
+        #expect(store.selection == allSleeperA.id)
+        #expect(store.sessions.first { $0.id == allSleeperA.id }?.isSleeping == true)
+    }
+
+    @Test func switcherCancelRestoresASleepingOriginWithoutWaking() throws {
+        let dir = try makeTempDirectory("switcher-cancel")
+        let sleeper = TerminalSession(title: "a", workingDirectory: dir)
+        let other = TerminalSession(title: "b", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [sleeper, other]),
+            select: sleeper.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+        #expect(store.selection == sleeper.id)
+
+        // Ctrl-Tab away from the sleeping card, then Esc back: the origin
+        // must come back still asleep — a cancel is not a pick.
+        let switcher = TabSwitcher()
+        switcher.attach(to: store)
+        switcher.begin(backwards: false)
+        #expect(store.selection == other.id)
+        switcher.cancel()
+        #expect(store.selection == sleeper.id)
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == true)
+    }
+
+    @Test func closingOnePaneOfAFullySleepingSplitKeepsTheSurvivorAsleep() throws {
+        let dir = try makeTempDirectory("split-close-sleeping")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+        let pane = try #require(store.selection)
+        // Each pane slept on its own — sleep is per pane.
+        store.putToSleep(sessionID: source.id)
+        store.putToSleep(sessionID: pane)
+        #expect(store.sessions.allSatisfy { $0.isSleeping })
+
+        // Closing the selected sleeping pane hands over to the surviving
+        // member — as its sleeping card, never as a freshly woken shell.
+        store.close(sessionID: pane)
+        #expect(store.selection == source.id)
+        #expect(store.sessions.first { $0.id == source.id }?.isSleeping == true)
+    }
+
+    @Test func wakingABackgroundTabMountsItsSurfaces() throws {
+        let dir = try makeTempDirectory("background-wake")
+        let selected = TerminalSession(title: "a", workingDirectory: dir)
+        let sleeper = TerminalSession(title: "b", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [selected, sleeper]),
+            select: selected.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+
+        var mounted: [TerminalSession.ID] = []
+        store.wakeSurfaceMounter = { mounted.append($0.id) }
+
+        // Context-menu Wake on a non-selected row: the workspace host only
+        // renders the selection, so the wake itself must mount the surface
+        // (which is what consumes the wake marker and spawns the resume).
+        store.wake(sessionID: sleeper.id)
+        #expect(mounted == [sleeper.id])
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == false)
+        #expect(store.selection == selected.id)
+    }
+
+    @Test func sleepingTabIsImmuneToEphemeralExpiry() throws {
+        let dir = try makeTempDirectory("expiry")
+        let defaults = UserDefaults.standard
+        let previousTTL = defaults.object(forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+        defaults.set(24, forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+        defer {
+            if let previousTTL {
+                defaults.set(previousTTL, forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+            } else {
+                defaults.removeObject(forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+            }
+        }
+
+        let stamp = Date.now.addingTimeInterval(-72 * 3600)
+        let current = TerminalSession(title: "current", workingDirectory: dir)
+        // An unpinned sleeper (slept, then unpinned or moved): parked on
+        // purpose, so the expiry sweep must never close it.
+        let sleeper = TerminalSession(
+            title: "sleeper", workingDirectory: dir, lastActivity: stamp, isSleeping: true
+        )
+        let stale = TerminalSession(title: "stale", workingDirectory: dir, lastActivity: stamp)
+        let store = TerminalSessionStore(
+            spaces: [SidebarSpace(
+                name: "Main",
+                ephemeralSessions: [current, sleeper, stale],
+                lastSelection: current.id
+            )],
+            persistToDisk: false
+        )
+
+        store.pruneExpiredEphemeralSessions()
+        #expect(store.sessions.contains { $0.id == sleeper.id })
+        #expect(!store.sessions.contains { $0.id == stale.id })
+    }
+
+    @Test func commandCloseIsTwoStepForPinnedTabs() throws {
+        let dir = try makeTempDirectory("two-step")
+        let pinned = TerminalSession(title: "pinned", workingDirectory: dir)
+        let other = TerminalSession(title: "other", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [pinned, other]),
+            select: pinned.id
+        )
+
+        // ⌘W on a pinned awake tab sleeps it; ⌘W again closes for real.
+        #expect(store.selectedTabSleepsInsteadOfClosing)
+        store.closeSelectedSession()
+        #expect(store.sessions.first { $0.id == pinned.id }?.isSleeping == true)
+        #expect(store.selection == pinned.id)
+        #expect(!store.selectedTabSleepsInsteadOfClosing)
+        store.closeSelectedSession()
+        #expect(!store.sessions.contains { $0.id == pinned.id })
+
+        // Unpinned tabs keep the one-step close.
+        let ephemeral = TerminalSession(title: "temp", workingDirectory: dir)
+        let ephemeralStore = TerminalSessionStore(
+            spaces: [SidebarSpace(name: "Main", ephemeralSessions: [ephemeral])],
+            persistToDisk: false
+        )
+        #expect(!ephemeralStore.selectedTabSleepsInsteadOfClosing)
+        ephemeralStore.closeSelectedSession()
+        #expect(!ephemeralStore.sessions.contains { $0.id == ephemeral.id })
+    }
+
+    @Test func splittingASleepingTabWakesItFirst() throws {
+        let dir = try makeTempDirectory("split-wake")
+        let sleeper = TerminalSession(title: "a", workingDirectory: dir)
+        let other = TerminalSession(title: "b", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [sleeper, other]),
+            select: other.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+        store.setSelection(sleeper.id, waking: false)
+
+        // ⌘D means "I want to work here": the sleeping source wakes, then
+        // splits — no half-asleep container with an unreachable hole.
+        store.splitSelection(direction: .horizontal)
+        #expect(store.sessions.first { $0.id == sleeper.id }?.isSleeping == false)
+        #expect(store.splitContainer(containing: sleeper.id) != nil)
+    }
+
+    @Test func eagerRestoreCandidatesSkipSleepingTabs() throws {
+        let dir = try makeTempDirectory("sleeping-candidates")
+        let selected = TerminalSession(title: "selected", workingDirectory: dir)
+        let dormant = TerminalSession(title: "dormant", workingDirectory: dir)
+        let sleeper = TerminalSession(title: "sleeper", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [selected, dormant, sleeper]),
+            select: selected.id
+        )
+
+        store.putToSleep(sessionID: sleeper.id)
+        // A background warm-up spawning a sleeping tab's agent would defeat
+        // the sleep — it waits for its click.
+        #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id) == [dormant.id])
+    }
+
     // MARK: - Persistence compatibility
 
     /// State files written before the field existed must keep decoding.
@@ -343,5 +712,38 @@ struct TerminalSessionStoreTests {
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(TerminalFolder.self, from: data)
         #expect(decoded.lastWorkingDirectory == "/tmp/project")
+    }
+
+    @Test func sessionDecodesWithoutIsSleepingKey() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","title":"main","workingDirectory":"/tmp",\
+        "status":"Running","accent":"blue","lastActivity":774059000.0}
+        """
+        let session = try JSONDecoder().decode(TerminalSession.self, from: Data(json.utf8))
+        #expect(!session.isSleeping)
+    }
+
+    @Test func sessionRoundTripsSleepState() throws {
+        let original = TerminalSession(
+            title: "main", workingDirectory: "/tmp", isSleeping: true, sleepingProcess: .claude
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(TerminalSession.self, from: data)
+        #expect(decoded.isSleeping)
+        // The sleeping card's "what was running" summary survives relaunch.
+        #expect(decoded.sleepingProcess == .claude)
+    }
+
+    /// A future build's process kind must degrade to the plain-shell
+    /// summary, never fail the whole tab's decode.
+    @Test func sessionToleratesAnUnknownSleepingProcess() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","title":"main","workingDirectory":"/tmp",\
+        "status":"Running","accent":"blue","lastActivity":774059000.0,\
+        "isSleeping":true,"sleepingProcess":"hal9000"}
+        """
+        let session = try JSONDecoder().decode(TerminalSession.self, from: Data(json.utf8))
+        #expect(session.isSleeping)
+        #expect(session.sleepingProcess == nil)
     }
 }

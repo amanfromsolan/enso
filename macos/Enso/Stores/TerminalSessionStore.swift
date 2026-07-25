@@ -12,7 +12,30 @@ final class TerminalSessionStore: ObservableObject {
             touch(selection)
             recordRecency(selection)
             clearAttention(selection)
+            wakeIfSleeping(selection)
         }
+    }
+
+    /// While set, a selection assignment skips only the wake side effect;
+    /// touch, recency, and attention behave like any assignment. Shaped
+    /// like isCyclingSelection, but scoped to one setSelection call.
+    private var suppressWakeOnSelection = false
+
+    /// THE programmatic selection assignment. Only genuine user picks may
+    /// wake a sleeping tab — a row tap, the switcher's committed pick, a
+    /// palette row, the sleeping card's wake — so every transition that
+    /// lands on a tab the user didn't aim at (space switches, close
+    /// fallbacks, scene restoration, the switcher's Esc) passes
+    /// `waking: false` and, at worst, parks the workspace on the sleeping
+    /// card instead of spawning a shell unasked.
+    func setSelection(_ sessionID: TerminalSession.ID?, waking: Bool) {
+        guard !waking else {
+            selection = sessionID
+            return
+        }
+        suppressWakeOnSelection = true
+        selection = sessionID
+        suppressWakeOnSelection = false
     }
     /// Rows highlighted for multi-select actions (folder creation, bulk close).
     @Published var multiSelection: Set<TerminalSession.ID> = []
@@ -112,7 +135,10 @@ final class TerminalSessionStore: ObservableObject {
         if activeSpace.sessions.isEmpty, let first = self.spaces.first(where: { !$0.sessions.isEmpty }) {
             self.activeSpaceID = first.id
         }
-        selection = activeSpace.lastSelection ?? activeSpace.sessions.first?.id
+        // Non-waking on purpose: launch restores the exact shape the app
+        // quit in, and a selection that was asleep then comes back asleep,
+        // showing its sleeping card.
+        setSelection(activeSpace.lastSelection ?? activeSpace.sessions.first?.id, waking: false)
 
         if persistToDisk {
             let timer = Timer(timeInterval: 30 * 60, repeats: true) { [weak self] _ in
@@ -162,7 +188,10 @@ final class TerminalSessionStore: ObservableObject {
         guard spaces.contains(where: { $0.id == spaceID }) else { return }
         if spaceID == activeSpaceID {
             guard let sessionID else { return }
-            selection = sessionID
+            // Non-waking: callers passing an explicit id (reveal, tab
+            // creation) decide themselves whether the landing is a pick
+            // that wakes.
+            setSelection(sessionID, waking: false)
             multiSelection = [sessionID]
             save()
             return
@@ -172,14 +201,28 @@ final class TerminalSessionStore: ObservableObject {
         // a harmless no-op.
         withSpace(activeSpaceID) { $0.lastSelection = selection }
         activeSpaceID = spaceID
-        selection = sessionID ?? activeSpace.lastSelection.flatMap { last in
-            activeSpace.sessions.contains { $0.id == last } ? last : nil
-        } ?? activeSpace.sessions.first?.id
+        setSelection(sessionID ?? landingSelection(in: activeSpace), waking: false)
         multiSelection = selection.map { [$0] } ?? []
         save()
         // Warm-up follows the user: drop the old space's unfired restore
         // ticks and sweep the space now in front of them.
         scheduleEagerRestoreSweep()
+    }
+
+    /// The space's landing selection when a transition names none: the
+    /// remembered one while it is still present AND awake. A sleeping
+    /// remembered tab is skipped for the first awake row — the user picked
+    /// a space, not that tab, and parking them on a sleeping card they
+    /// never chose reads wrong — unless the whole space is asleep, where
+    /// the remembered card is the most honest thing to show.
+    private func landingSelection(in space: SidebarSpace) -> TerminalSession.ID? {
+        let sessions = space.sessions
+        if let remembered = space.lastSelection.flatMap({ last in sessions.first { $0.id == last } }) {
+            if !remembered.isSleeping || sessions.allSatisfy({ $0.isSleeping }) {
+                return remembered.id
+            }
+        }
+        return (sessions.first { !$0.isSleeping } ?? sessions.first)?.id
     }
 
     @discardableResult
@@ -417,6 +460,12 @@ final class TerminalSessionStore: ObservableObject {
     /// renders, regardless of split geometry.
     func splitSelection(direction: SplitDirection) {
         guard let selection, let source = selectedSession else { return }
+        // ⌘D on a sleeping tab means "I want to work here": wake it first,
+        // so the split opens with both panes live instead of one card
+        // still asleep beside the fresh shell.
+        if source.isSleeping {
+            wake(sessionID: selection)
+        }
         let session = Self.makeSession(
             workingDirectory: source.workingDirectory,
             accentIndex: sessions.count
@@ -669,9 +718,28 @@ final class TerminalSessionStore: ObservableObject {
 
     // MARK: - Closing
 
+    /// Whether ⌘W (and the palette's close command) would put the selected
+    /// tab to sleep instead of closing it: pinned awake tabs get the
+    /// two-step exit — sleep first, close the sleeping tab second — so one
+    /// keystroke can never silently destroy a pinned tab or the saved
+    /// conversation a sleep promised to keep. The menu and palette read
+    /// this to title the command and run the busy confirmation to match.
+    var selectedTabSleepsInsteadOfClosing: Bool {
+        guard let selection,
+              let session = sessions.first(where: { $0.id == selection }) else { return false }
+        return isPinned(selection) && !session.isSleeping
+    }
+
+    /// ⌘W. The caller runs the busy confirmation first when
+    /// selectedTabSleepsInsteadOfClosing says the close is really a sleep;
+    /// this just performs.
     func closeSelectedSession() {
         guard let selection else { return }
-        close(sessionID: selection)
+        if selectedTabSleepsInsteadOfClosing {
+            putToSleep(sessionID: selection)
+        } else {
+            close(sessionID: selection)
+        }
     }
 
     func close(sessionID: TerminalSession.ID) {
@@ -690,8 +758,14 @@ final class TerminalSessionStore: ObservableObject {
         if let selection, sessionIDs.contains(selection),
            let container = splitContainer(containing: selection),
            let selectionIndex = orderedActive.firstIndex(where: { $0.id == selection }) {
-            splitFallback = orderedActive.enumerated()
+            let survivors = orderedActive.enumerated()
                 .filter { container.tree.contains($0.element.id) && !sessionIDs.contains($0.element.id) }
+            // Prefer an awake survivor: the handoff must not park the user
+            // on a sleeping pane while awake ones exist. A fully sleeping
+            // container still hands over to its nearest member — shown as
+            // the sleeping card, never woken by the handoff.
+            let awake = survivors.filter { !$0.element.isSleeping }
+            splitFallback = (awake.isEmpty ? survivors : awake)
                 .min { abs($0.offset - selectionIndex) < abs($1.offset - selectionIndex) }?
                 .element.id
         }
@@ -714,14 +788,145 @@ final class TerminalSessionStore: ObservableObject {
         if let selection, sessionIDs.contains(selection) {
             let remaining = activeSpace.sessions
             if remaining.isEmpty {
-                self.selection = nil
+                setSelection(nil, waking: false)
             } else if let splitFallback {
-                self.selection = splitFallback
+                setSelection(splitFallback, waking: false)
             } else {
-                self.selection = remaining[min(anchorIndex ?? 0, remaining.count - 1)].id
+                // Prefer an awake row for the handoff; a close is not a
+                // pick, so even the only-sleeping-rows-left case lands
+                // non-waking and shows the sleeping card.
+                let awake = remaining.filter { !$0.isSleeping }
+                let pool = awake.isEmpty ? remaining : awake
+                setSelection(pool[min(anchorIndex ?? 0, pool.count - 1)].id, waking: false)
             }
         }
         save()
+    }
+
+    // MARK: - Sleep / wake
+
+    /// Pinned tabs never die from their row affordance — they go to sleep:
+    /// the shell (and anything running in it) ends to free resources, but
+    /// the tab keeps its row, its working directory, and — via
+    /// AgentSessionStore — the agent conversation to resume on wake.
+    /// Sleep is strictly per tab: a pane of a split sleeps alone, its
+    /// siblings keep running and its region shows the in-pane sleeping
+    /// card. Sleeping the selected tab keeps it selected: the workspace's
+    /// sleeping card IS the feature's feedback, and with a collapsed
+    /// folder or hidden sidebar a selection jump would make sleep look
+    /// exactly like close. Background sleeps never touch selection. One
+    /// plain entry point on purpose, so a future auto-sleep (idle timeout,
+    /// sleep-on-quit) can call it too. The set form exists for bulk
+    /// context-menu sleeps — one marker write for the whole batch.
+    func putToSleep(sessionIDs: Set<TerminalSession.ID>) {
+        let targets = sessionIDs.filter { id in
+            sessions.first { $0.id == id }?.isSleeping == false
+        }
+        guard !targets.isEmpty else { return }
+
+        if persistToDisk {
+            // One store call for the whole group (one marker write).
+            // Remember which agent to resume before the shells die; only
+            // adapter-backed agents (claude, codex) can come back, and the
+            // dormant fallback for a never-woken tab lives in recordSleep.
+            let agentsByTab = targets.reduce(into: [UUID: TabProcess?]()) { result, id in
+                let running = sessions.first(where: { $0.id == id })?.runningProcess
+                result[id] = running.flatMap { process in
+                    AgentSessionAdapterRegistry.all.contains { $0.agentID == process.rawValue }
+                        ? process : nil
+                }
+            }
+            AgentSessionStore.shared.recordSleep(forTabs: agentsByTab)
+        }
+        for id in targets {
+            GhosttySurfaceManager.shared.closeSurface(for: id)
+            // A sleeping tab's attention banner leads nowhere; drop it with
+            // the dot.
+            onAttentionCleared?(id)
+            update(id) { item in
+                item.isSleeping = true
+                // The sleeping card's "what was running" summary, captured
+                // before detection is cleared with the shell.
+                item.sleepingProcess = item.runningProcess
+                item.runningProcess = nil
+                item.status = .idle
+                // A sleeping tab is deliberately parked; the expiry clock
+                // (should it ever be unpinned) starts fresh, not pre-aged.
+                item.lastActivity = .now
+            }
+        }
+        multiSelection.subtract(targets)
+        save()
+    }
+
+    func putToSleep(sessionID: TerminalSession.ID) {
+        putToSleep(sessionIDs: [sessionID])
+    }
+
+    /// Wakes a sleeping tab: clears the flags, then mounts its surface
+    /// itself — a fresh shell in the saved working directory, consuming
+    /// the wake restore so a saved agent conversation resumes in place.
+    /// Per tab like sleep: a pane of a split wakes alone. The mount can't
+    /// be left to the workspace host: it only renders the selection, so a
+    /// background wake (context menu, palette) would otherwise clear the
+    /// flag while the marker sat unconsumed and no shell ever spawned.
+    func wake(sessionID: TerminalSession.ID) {
+        guard sessions.first(where: { $0.id == sessionID })?.isSleeping == true else { return }
+        update(sessionID) { item in
+            item.isSleeping = false
+            item.sleepingProcess = nil
+            item.lastActivity = .now
+        }
+        save()
+        // Idempotent for the visible tab: the host's next render asks for
+        // the same surface this mount created.
+        if let live = sessions.first(where: { $0.id == sessionID }) {
+            mountWokenSurface(for: live)
+        }
+    }
+
+    /// Injectable stand-in for the surface mount a wake performs — the
+    /// real mount drives GhosttyRuntime, which unit tests can't host (see
+    /// eagerRestoreSweepOverride for the pattern). nil in production.
+    var wakeSurfaceMounter: ((TerminalSession) -> Void)?
+
+    private func mountWokenSurface(for session: TerminalSession) {
+        if let wakeSurfaceMounter {
+            wakeSurfaceMounter(session)
+            return
+        }
+        // Unit stores drive no real surfaces, mirroring how they skip the
+        // shared AgentSessionStore.
+        guard persistToDisk else { return }
+        wireSurfaceCallbacks(GhosttySurfaceManager.shared.view(for: session), for: session.id)
+    }
+
+    /// Committed selection of a sleeping tab wakes it — "click to wake"
+    /// needs no extra plumbing anywhere tabs get picked. Guarded like
+    /// recency and attention: Ctrl-Tab previews and setSelection's
+    /// non-waking transitions pass through tabs the user never chose, and
+    /// neither must spawn shells.
+    private func wakeIfSleeping(_ sessionID: TerminalSession.ID?) {
+        guard let sessionID, !isCyclingSelection, !suppressWakeOnSelection else { return }
+        guard sessions.first(where: { $0.id == sessionID })?.isSleeping == true else { return }
+        wake(sessionID: sessionID)
+    }
+
+    /// The agent still working in the tab, if one is — the gate for the
+    /// put-to-sleep confirmation, per tab like sleep itself. "Working" is
+    /// the best signal already live in the app: the agent CLI is the tab's
+    /// foreground process and the attention dot hasn't marked it as waiting
+    /// for the user. An agent sitting at its prompt in the focused tab
+    /// reads as working too — over-warning beats killing a response
+    /// mid-stream.
+    func busyAgent(inTab sessionID: TerminalSession.ID) -> TabProcess? {
+        guard let session = sessions.first(where: { $0.id == sessionID }),
+              !session.isSleeping,
+              session.status != .attention,
+              let process = session.runningProcess,
+              AgentSessionAdapterRegistry.all.contains(where: { $0.agentID == process.rawValue })
+        else { return nil }
+        return process
     }
 
     /// Reorders: moves a folder so it sits immediately before the given
@@ -936,7 +1141,9 @@ final class TerminalSessionStore: ObservableObject {
         let budget = budget ?? remainingAgentWakeBudget
         return Array(
             activeSpace.sessions
-                .filter { $0.id != selection && mayRestore($0.id) }
+                // Sleeping tabs wait for their click — a background warm-up
+                // spawning their agent would defeat the sleep.
+                .filter { $0.id != selection && !$0.isSleeping && mayRestore($0.id) }
                 .sorted {
                     // Swift's sort is unstable, so equal lastActivity (bulk
                     // state imports, freshly seeded spaces) needs a stable
@@ -969,12 +1176,14 @@ final class TerminalSessionStore: ObservableObject {
             let tick = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 // Re-resolved at fire time: the tab may have closed during
-                // the stagger (its surface must not come back), its restore
-                // may have evaporated (toggled off or consumed — the tab
-                // must stay lazy), and its cwd may have changed. view(for:)
-                // is idempotent, so a tab the user already switched to is a
+                // the stagger (its surface must not come back), gone to
+                // sleep (waking it is the user's call), its restore may
+                // have evaporated (toggled off or consumed — the tab must
+                // stay lazy), and its cwd may have changed. view(for:) is
+                // idempotent, so a tab the user already switched to is a
                 // no-op.
                 guard let live = self.sessions.first(where: { $0.id == sessionID }),
+                      !live.isSleeping,
                       AgentSessionStore.shared.hasPendingRestore(forTab: sessionID)
                 else { return }
                 self.wireSurfaceCallbacks(GhosttySurfaceManager.shared.view(for: live), for: sessionID)
@@ -1272,7 +1481,10 @@ final class TerminalSessionStore: ObservableObject {
         guard hours > 0 else { return }
         let cutoff = Date.now.addingTimeInterval(-TimeInterval(hours) * 3600)
         let expired = spaces.flatMap(\.ephemeralSessions).filter {
-            $0.lastActivity < cutoff && $0.id != selection
+            // Sleeping tabs are deliberately parked, never expired: an
+            // unpinned sleeper quietly closing would delete the very
+            // conversation the sleep promised to keep.
+            !$0.isSleeping && $0.lastActivity < cutoff && $0.id != selection
         }
         guard !expired.isEmpty else { return }
         close(sessionIDs: Set(expired.map(\.id)))
@@ -1292,10 +1504,12 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     /// Called by the switcher on commit, after cycling suppressed recording
-    /// (and attention clearing — the committed pick is the acknowledgment).
+    /// (and attention clearing — the committed pick is the acknowledgment;
+    /// likewise waking, since a preview must not spawn shells).
     func recordSelectionRecency() {
         recordRecency(selection)
         clearAttention(selection)
+        wakeIfSleeping(selection)
     }
 
     /// Every session in recency order across spaces (active space first),
@@ -1319,6 +1533,10 @@ final class TerminalSessionStore: ObservableObject {
         guard let space = spaces.first(where: { $0.sessions.contains { $0.id == sessionID } })
         else { return false }
         activateSpace(space.id, selecting: sessionID)
+        // A reveal is a genuine pick (palette row, notification click):
+        // activateSpace lands the selection non-waking, so a sleeping
+        // target wakes here, exactly like clicking its sidebar row.
+        wakeIfSleeping(sessionID)
         return true
     }
 

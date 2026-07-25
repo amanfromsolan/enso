@@ -180,6 +180,21 @@ struct AgentSessionStoreTests {
         #expect(record?.endReason == nil)
     }
 
+    /// The fold starts at the last reset line (a perf cut for sleep's
+    /// in-click re-compaction). The backward scan's substring gate can be
+    /// tripped by a hook payload that merely CONTAINS a reset-looking
+    /// fragment; only a parsed top-level event may move the start, or the
+    /// launch line's context would be silently dropped.
+    @Test func compactionTailStartIgnoresResetLookingPayloads() {
+        let record = AgentSessionStore.compactRecord(tabID: UUID(), mapLines: [
+            #"{"v":1,"event":"launch","agent":"claude","sessionId":"aaa","cwd":"/tmp/proj","configDir":"/tmp/custom","ts":100}"#,
+            #"{"v":1,"event":"hook","agent":"claude","payload":{"hook_event_name":"SessionStart","session_id":"bbb","cwd":"/tmp/proj","event":"launch"},"ts":200}"#,
+        ])
+        #expect(record?.sessionID == "bbb")
+        // Only reachable if the fold really started at the launch line.
+        #expect(record?.configDir == "/tmp/custom")
+    }
+
     @Test func compactionSkipsGarbageLines() {
         let record = AgentSessionStore.compactRecord(tabID: UUID(), mapLines: [
             "not json at all",
@@ -607,7 +622,12 @@ struct AgentSessionStoreTests {
             hookLine(agent: "claude", name: "SessionEnd", sessionID: sessionID, extra: #","reason":"logout""#, ts: Date.now.timeIntervalSince1970),
         ])
 
-        let store = makeStore(root: root)
+        // A private suite (see restoreStateMutationsPublish): this test
+        // flips the enabled toggle, and tests suspended in their own
+        // bootstrap await must not observe the flip through the shared
+        // suite.
+        let suite = "AgentSessionStoreTests-mayRestore"
+        let store = makeStore(root: root, suite: suite)
         await bootstrapResolved(store, knownTabIDs: [restorableTab, untouchedTab, cleanTab])
         #expect(store.mayRestore(forTab: restorableTab))
         #expect(!store.mayRestore(forTab: cleanTab))
@@ -625,9 +645,10 @@ struct AgentSessionStoreTests {
 
         // …and so does the Settings toggle, for tabs never consumed.
         #expect(store.mayRestore(forTab: untouchedTab))
-        UserDefaults(suiteName: "AgentSessionStoreTests")!
+        UserDefaults(suiteName: suite)!
             .set(false, forKey: AgentSessionStore.restoreEnabledDefaultsKey)
         #expect(!store.mayRestore(forTab: untouchedTab))
+        UserDefaults(suiteName: suite)!.removePersistentDomain(forName: suite)
     }
 
     @Test func restorabilityResolutionGatesMayRestoreUntilItLands() async throws {
@@ -741,6 +762,205 @@ struct AgentSessionStoreTests {
         let file = root.appendingPathComponent("agent-sessions/\(tabID.uuidString.lowercased()).jsonl")
         #expect(!fm.fileExists(atPath: file.path))
         #expect(store.records[tabID] == nil)
+    }
+
+    // MARK: - Sleep / wake
+
+    @Test func sleepParksTabOutsideLaunchRestoreAndWakeResumes() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-1111-1111-1111-111111111111"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let store = makeStore(root: root)
+        await bootstrapResolved(store, knownTabIDs: [tabID])
+        #expect(store.mayRestore(forTab: tabID))
+
+        // Asleep, the tab leaves the launch machinery entirely: no dormant
+        // badge, no eager warm slot, no launch restore.
+        store.recordSleep(forTab: tabID, agent: .claude)
+        #expect(!store.mayRestore(forTab: tabID))
+        #expect(store.dormantAgent(forTab: tabID) == nil)
+        #expect(!store.hasPendingRestore(forTab: tabID))
+        #expect(store.consumeRestore(forTab: tabID) == nil)
+
+        // The wake resumes the same conversation, consumed at most once.
+        let restore = store.consumeWakeRestore(forTab: tabID)
+        #expect(restore?.command == "claude --resume \(sessionID)")
+        #expect(store.consumeWakeRestore(forTab: tabID) == nil)
+    }
+
+    @Test func sleepingADormantTabRemembersItsAgentForTheWake() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-2222-2222-2222-222222222222"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let store = makeStore(root: root)
+        await bootstrapResolved(store, knownTabIDs: [tabID])
+        // The tab slept before its pending restore ever ran (no live
+        // process, so the caller passes nil): the dormant agent is what the
+        // wake should bring back.
+        store.recordSleep(forTab: tabID, agent: nil)
+        #expect(!store.mayRestore(forTab: tabID))
+        #expect(store.consumeWakeRestore(forTab: tabID)?.command == "claude --resume \(sessionID)")
+    }
+
+    @Test func codexWakeResumesEvenWhenTheQuitSnapshotWouldRefuse() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-3333-3333-3333-333333333333"
+        try writeCodexRollout(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            hookLine(agent: "codex", name: "SessionStart", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+        // A quit snapshot that does NOT list the tab: the launch machinery
+        // rightly refuses this resume — the sleep marker is what carries
+        // "codex was running here" across the gap instead.
+        try writeQuitSnapshotFile(root: root, tabs: [:])
+
+        let store = makeStore(root: root)
+        store.bootstrap(knownTabIDs: [tabID])
+        #expect(store.consumeRestore(forTab: tabID) == nil)
+
+        store.recordSleep(forTab: tabID, agent: .codex)
+        #expect(
+            store.consumeWakeRestore(forTab: tabID)?.command
+                == "codex resume \(sessionID) -c check_for_update_on_startup=false"
+        )
+    }
+
+    @Test func sleepMarkerSurvivesRelaunch() async throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-4444-4444-4444-444444444444"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let first = makeStore(root: root)
+        first.bootstrap(knownTabIDs: [tabID])
+        first.recordSleep(forTab: tabID, agent: .claude)
+
+        // A fresh app run: the marker (persisted beside the map files)
+        // still parks the tab, and its wake still resumes.
+        let second = makeStore(root: root)
+        await bootstrapResolved(second, knownTabIDs: [tabID])
+        #expect(!second.mayRestore(forTab: tabID))
+        #expect(second.consumeRestore(forTab: tabID) == nil)
+        #expect(second.consumeWakeRestore(forTab: tabID)?.command == "claude --resume \(sessionID)")
+    }
+
+    @Test func closingASleepingTabDropsItsWakeMarker() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-5555-5555-5555-555555555555"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let store = makeStore(root: root)
+        store.bootstrap(knownTabIDs: [tabID])
+        store.recordSleep(forTab: tabID, agent: .claude)
+        store.removeRecords(forTabs: [tabID])
+        #expect(store.consumeWakeRestore(forTab: tabID) == nil)
+
+        // The persisted marker is gone too, not just the in-memory copy.
+        let relaunched = makeStore(root: root)
+        #expect(relaunched.consumeWakeRestore(forTab: tabID) == nil)
+    }
+
+    @Test func bootstrapGarbageCollectsSleepMarkersForUnknownTabs() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: "x", ts: 100),
+        ])
+
+        let first = makeStore(root: root)
+        first.bootstrap(knownTabIDs: [tabID])
+        first.recordSleep(forTab: tabID, agent: .claude)
+
+        // The tab is gone from the state file by the next launch; its
+        // marker must not linger and gate a future tab id.
+        let second = makeStore(root: root)
+        second.bootstrap(knownTabIDs: [])
+        #expect(second.consumeWakeRestore(forTab: tabID) == nil)
+    }
+
+    @Test func recordSleepBeforeRestorabilityResolvesStillWritesTheMarker() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-6666-6666-6666-666666666666"
+        try writeCodexRollout(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            hookLine(agent: "codex", name: "SessionStart", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+        try writeQuitSnapshotFile(root: root, tabs: [tabID.uuidString.lowercased(): "codex"])
+
+        let store = makeStore(root: root)
+        // No await: restorability is still resolving on its background
+        // task, exactly the window where sleeping a dormant tab used to
+        // record nothing — after which a codex conversation would be gone
+        // for good at the next quit (the quit snapshot won't list a
+        // sleeping tab). The fallback runs the adapter policy directly.
+        store.bootstrap(knownTabIDs: [tabID])
+        store.recordSleep(forTab: tabID, agent: nil)
+        #expect(
+            store.consumeWakeRestore(forTab: tabID)?.command
+                == "codex resume \(sessionID) -c check_for_update_on_startup=false"
+        )
+    }
+
+    @Test func wakeResumeIgnoresTheRelaunchRestoreToggle() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+        let sessionID = "55555555-7777-7777-7777-777777777777"
+        try writeClaudeTranscript(root: root, sessionID: sessionID)
+        try writeMapFile(root: root, tabID: tabID, lines: [
+            launchLine(agent: "claude", sessionID: sessionID, ts: Date.now.timeIntervalSince1970),
+        ])
+
+        let suite = "AgentSessionStoreTests-wake-toggle"
+        let store = makeStore(root: root, suite: suite)
+        store.bootstrap(knownTabIDs: [tabID])
+        // "Resume on relaunch" off: launch restore stays gated, but a
+        // sleep is the user's own explicit promise — its wake resumes
+        // regardless, or the busy alert's "picks back up" would be a lie.
+        UserDefaults(suiteName: suite)!.set(false, forKey: AgentSessionStore.restoreEnabledDefaultsKey)
+        store.recordSleep(forTab: tabID, agent: .claude)
+        #expect(store.consumeRestore(forTab: tabID) == nil)
+        #expect(store.consumeWakeRestore(forTab: tabID)?.command == "claude --resume \(sessionID)")
+        UserDefaults(suiteName: suite)!.removePersistentDomain(forName: suite)
+    }
+
+    @Test func plainShellSleepRecordsNoWakeMarker() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let tabID = UUID()
+
+        let store = makeStore(root: root)
+        store.bootstrap(knownTabIDs: [tabID])
+        // No agent running, nothing recorded, nothing dormant: the wake is
+        // just a fresh prompt.
+        store.recordSleep(forTab: tabID, agent: nil)
+        #expect(store.consumeWakeRestore(forTab: tabID) == nil)
     }
 
     // MARK: - Resume input

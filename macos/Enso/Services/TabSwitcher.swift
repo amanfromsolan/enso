@@ -80,7 +80,10 @@ final class TabSwitcher: ObservableObject {
         return event
     }
 
-    private func begin(backwards: Bool) {
+    // begin/advance/commit/cancel are internal (not private) so the cycle
+    // semantics — notably cancel never waking a sleeping origin — stay
+    // unit-testable without synthesizing NSEvents.
+    func begin(backwards: Bool) {
         guard let store else { return }
         let ordered = store.recencyOrderedSessions(inSpace: store.activeSpaceID)
         guard ordered.count > 1 else { return }
@@ -102,21 +105,25 @@ final class TabSwitcher: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
-    private func advance(by delta: Int) {
+    func advance(by delta: Int) {
         guard isActive, !sessions.isEmpty else { return }
         highlightedIndex = (highlightedIndex + delta + sessions.count) % sessions.count
         store?.selection = sessions[highlightedIndex].id
     }
 
-    private func commit() {
+    func commit() {
         finish()
         store?.recordSelectionRecency()
     }
 
-    private func cancel() {
+    func cancel() {
         let restore = originalSelection
         finish()
-        store?.selection = restore
+        // Esc is not a pick: the origin may itself be a sleeping tab (the
+        // user slept it and Ctrl-Tabbed away for a look), and finish() has
+        // already cleared isCyclingSelection — a plain assignment here
+        // would wake it. Restore without side effects.
+        store?.setSelection(restore, waking: false)
     }
 
     private func finish() {
@@ -156,9 +163,14 @@ struct TabSwitcherHUD: View {
     }
 
     private func row(_ session: TerminalSession, isHighlighted: Bool) -> some View {
-        // Detected-process badge when something is running, the terminal
-        // glyph otherwise — the same pairing the palette's tab rows use.
-        let icon: PaletteItem.Icon = if let process = session.runningProcess {
+        // The moon for a sleeping tab, the detected-process badge when
+        // something is running, the terminal glyph otherwise — the same
+        // pairing the palette's tab rows use. Sleeping rows trade the
+        // folder context for the tab's directory: parked tabs all look
+        // alike, and the cwd is what tells them apart.
+        let icon: PaletteItem.Icon = if session.isSleeping {
+            .sleeping
+        } else if let process = session.runningProcess {
             .process(process)
         } else {
             .idleTerminal
@@ -166,8 +178,10 @@ struct TabSwitcherHUD: View {
         return PaletteRowView(
             icon: icon,
             title: session.title,
-            context: store.activeSpace.folder(containing: session.id)?.title,
-            showsFolderGlyph: true,
+            context: session.isSleeping
+                ? session.displayWorkingDirectory
+                : store.activeSpace.folder(containing: session.id)?.title,
+            showsFolderGlyph: !session.isSleeping,
             isHighlighted: isHighlighted
         )
     }

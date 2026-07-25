@@ -41,35 +41,7 @@ final class QuitGuard {
         // Cancel is second, so it inherits Esc automatically.
         alert.addButton(withTitle: "Cancel")
 
-        // Center the alert over the app window, not the screen. The modal
-        // session re-centers the panel when it orders it front, so an origin
-        // set here alone can be overridden — but the main queue is drained by
-        // the modal run loop (NSModalPanelRunLoopMode is a common mode), so
-        // an async block re-asserting the origin runs right after the panel
-        // shows, after that centering. Setting it up front too keeps the
-        // panel from visibly jumping on the first frame.
-        if let host = NSApp.keyWindow
-            ?? NSApp.mainWindow
-            ?? NSApp.windows.first(where: \.isVisible) {
-            // The panel's frame is only meaningful once the alert has laid
-            // out its content; layout() forces that before measuring.
-            alert.layout()
-            let size = alert.window.frame.size
-            var origin = NSPoint(
-                x: host.frame.midX - size.width / 2,
-                y: host.frame.midY - size.height / 2
-            )
-            // Keep the dialog on the host's screen when the window hangs
-            // near or off an edge.
-            if let screen = (host.screen ?? NSScreen.main)?.visibleFrame {
-                origin.x = min(max(origin.x, screen.minX), screen.maxX - size.width)
-                origin.y = min(max(origin.y, screen.minY), screen.maxY - size.height)
-            }
-            alert.window.setFrameOrigin(origin)
-            DispatchQueue.main.async { [window = alert.window] in
-                window.setFrameOrigin(origin)
-            }
-        }
+        alert.centerOverAppWindow()
 
         // ⌘Q again should confirm, but the alert has no button bound to it,
         // so a monitor scoped to the modal session clicks Quit for the chord
@@ -109,6 +81,42 @@ final class QuitGuard {
             result[session.id] = process.rawValue
         }
         AgentSessionStore.shared.writeQuitSnapshot(agentsByTab: agentsByTab)
+    }
+}
+
+extension NSAlert {
+    /// Centers the alert over the app window, not the screen — shared by
+    /// the quit and put-to-sleep confirmations. The modal session
+    /// re-centers the panel when it orders it front, so an origin set here
+    /// alone can be overridden — but the main queue is drained by the
+    /// modal run loop (NSModalPanelRunLoopMode is a common mode), so an
+    /// async block re-asserting the origin runs right after the panel
+    /// shows, after that centering. Setting it up front too keeps the
+    /// panel from visibly jumping on the first frame. Call after the
+    /// buttons are configured, right before runModal.
+    @MainActor
+    func centerOverAppWindow() {
+        guard let host = NSApp.keyWindow
+            ?? NSApp.mainWindow
+            ?? NSApp.windows.first(where: \.isVisible) else { return }
+        // The panel's frame is only meaningful once the alert has laid
+        // out its content; layout() forces that before measuring.
+        layout()
+        let size = window.frame.size
+        var origin = NSPoint(
+            x: host.frame.midX - size.width / 2,
+            y: host.frame.midY - size.height / 2
+        )
+        // Keep the dialog on the host's screen when the window hangs
+        // near or off an edge.
+        if let screen = (host.screen ?? NSScreen.main)?.visibleFrame {
+            origin.x = min(max(origin.x, screen.minX), screen.maxX - size.width)
+            origin.y = min(max(origin.y, screen.minY), screen.maxY - size.height)
+        }
+        window.setFrameOrigin(origin)
+        DispatchQueue.main.async { [window] in
+            window.setFrameOrigin(origin)
+        }
     }
 }
 

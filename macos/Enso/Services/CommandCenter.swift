@@ -342,10 +342,14 @@ final class CommandCenter: ObservableObject {
         store: TerminalSessionStore
     ) -> PaletteItem {
         let folder = Self.folder(of: session.id, in: space)
-        // Resolved at build time, like the title: a tab running a detected
-        // process shows its badge, an idle one the terminal glyph — the
-        // same pairing the sidebar rows use.
-        let icon: PaletteItem.Icon = if let process = session.runningProcess {
+        // Resolved at build time, like the title: a sleeping tab shows the
+        // moon, a tab running a detected process its badge, an idle one the
+        // terminal glyph — the same pairing the sidebar rows use. Sleeping
+        // rows trade the folder context for the tab's directory: parked
+        // tabs all look alike, and the cwd is what tells them apart.
+        let icon: PaletteItem.Icon = if session.isSleeping {
+            .sleeping
+        } else if let process = session.runningProcess {
             .process(process)
         } else {
             .idleTerminal
@@ -354,8 +358,8 @@ final class CommandCenter: ObservableObject {
             id: "tab-\(session.id)",
             icon: icon,
             title: session.title,
-            context: folder?.title,
-            contextSymbol: folder == nil ? nil : "folder",
+            context: session.isSleeping ? session.displayWorkingDirectory : folder?.title,
+            contextSymbol: (folder == nil || session.isSleeping) ? nil : "folder",
             verb: "Switch",
             section: .recentTabs,
             kindLabel: "Tab"
@@ -650,15 +654,41 @@ final class CommandCenter: ObservableObject {
                 }
             })
 
+            // ⌘W's two-step exit, mirrored: for a pinned awake tab the
+            // close slot IS the sleep command (searching "close" still
+            // finds it via the alias); sleeping and unpinned tabs keep the
+            // real Close.
+            let sleepsOnClose = store.selectedTabSleepsInsteadOfClosing
             commands.append(PaletteItem(
                 id: "cmd-close-tab",
-                icon: .symbol("xmark"),
-                title: "Close Tab",
-                context: nil,
-                verb: "Run"
+                icon: .symbol(sleepsOnClose ? "moon.zzz" : "xmark"),
+                title: sleepsOnClose ? "Put Tab to Sleep" : "Close Tab",
+                context: "⌘W",
+                verb: "Run",
+                searchAliases: sleepsOnClose ? ["Close Tab", "Sleep Tab"] : []
             ) { [weak store] in
-                store?.closeSelectedSession()
+                guard let store, let selection = store.selection else { return }
+                if store.selectedTabSleepsInsteadOfClosing {
+                    guard SleepConfirmation.consentsToSleep(store, sessionIDs: [selection]) else { return }
+                }
+                store.closeSelectedSession()
             })
+
+            // Wake sits beside the close slot whenever the selected tab
+            // sleeps, so the keyboard-only path back is one palette away.
+            if store.selectedSession?.isSleeping == true {
+                commands.append(PaletteItem(
+                    id: "cmd-wake-tab",
+                    icon: .symbol("sun.max"),
+                    title: "Wake Tab",
+                    context: nil,
+                    verb: "Run",
+                    searchAliases: ["Resume Tab"]
+                ) { [weak store] in
+                    guard let store, let selection = store.selection else { return }
+                    store.wake(sessionID: selection)
+                })
+            }
 
             commands.append(PaletteItem(
                 id: "cmd-close-other-tabs",
@@ -776,6 +806,8 @@ struct PaletteItem: Identifiable {
         case process(TabProcess)
         /// Idle tab: the terminal glyph, tinted like the row's other marks.
         case idleTerminal
+        /// Sleeping tab: the moon, matching the sidebar's sleep indicator.
+        case sleeping
     }
 
     /// Drives the grouped section headers in the palette.
@@ -1021,6 +1053,12 @@ struct PaletteRowView: View {
                 .aspectRatio(contentMode: .fit)
                 .foregroundStyle(Theme.ink.opacity(isHighlighted ? 0.9 : 0.4))
                 .frame(width: 22, height: 22)
+        case .sleeping:
+            // The sidebar's moon at chrome-row scale, same quiet ink as the
+            // idle glyph it stands in for.
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.ink.opacity(isHighlighted ? 0.8 : 0.4))
         case .symbol(let name):
             Image(systemName: name)
                 .font(.system(size: 16, weight: .medium))

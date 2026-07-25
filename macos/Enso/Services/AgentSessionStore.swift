@@ -27,6 +27,13 @@ final class AgentSessionStore: ObservableObject {
     private(set) var quitSnapshot: QuitSnapshot?
     /// Restore is offered at most once per tab per app run.
     private var consumedTabIDs: Set<UUID> = []
+    /// Tabs the user put to sleep, mapped to the agent to resume on wake —
+    /// the sleep analog of the quit snapshot. While a tab is listed here it
+    /// is parked outside the launch restore machinery (no dormant badge, no
+    /// eager warm, no launch restore): its conversation comes back only
+    /// through consumeWakeRestore when the tab's fresh surface spawns.
+    /// Persisted to .sleeping-tabs.json so sleep survives a relaunch.
+    private var sleepingAgentsByTab: [UUID: String] = [:]
     /// Tabs whose adapter said "restorable" when bootstrap ran the full
     /// policy once, disk checks included. Resolved on a background task —
     /// the adapters' policies read transcripts and scan rollout trees, I/O
@@ -74,6 +81,9 @@ final class AgentSessionStore: ObservableObject {
         )
         self.defaults = defaults
         self.lastPublishedIsEnabled = defaults.object(forKey: Self.restoreEnabledDefaultsKey) as? Bool ?? true
+        self.sleepingAgentsByTab = Self.loadSleepingTabs(
+            at: self.directory.appendingPathComponent(Self.sleepingTabsFileName)
+        )
         // object nil, not `defaults`: the notification is posted by the
         // UserDefaults INSTANCE that wrote, and @AppStorage writes through
         // its own instance of the same domain — identity filtering would
@@ -117,6 +127,12 @@ final class AgentSessionStore: ObservableObject {
         directory.appendingPathComponent(".quit-snapshot.json")
     }
 
+    private static let sleepingTabsFileName = ".sleeping-tabs.json"
+
+    private var sleepingTabsURL: URL {
+        directory.appendingPathComponent(Self.sleepingTabsFileName)
+    }
+
     // MARK: - Launch
 
     /// Called once at startup, after the tab store loaded state.json:
@@ -128,6 +144,13 @@ final class AgentSessionStore: ObservableObject {
         quitSnapshot = consumeQuitSnapshot()
         records = [:]
         consumedTabIDs = []
+        // Sleep markers whose tab no longer exists are as dead as their map
+        // files; a stale one would silently gate that tab id's restores.
+        let staleSleepers = sleepingAgentsByTab.keys.filter { !knownTabIDs.contains($0) }
+        if !staleSleepers.isEmpty {
+            staleSleepers.forEach { sleepingAgentsByTab[$0] = nil }
+            saveSleepingTabs()
+        }
         guard let files = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
         for file in files where file.pathExtension == "jsonl" {
             guard let tabID = UUID(uuidString: file.deletingPathExtension().lastPathComponent) else { continue }
@@ -212,12 +235,13 @@ final class AgentSessionStore: ObservableObject {
     }
 
     /// The gate chain every restore decision goes through: nil when restore
-    /// is off, already consumed, the launch argv was rejected by the
+    /// is off, already consumed, the tab is asleep (its conversation waits
+    /// for consumeWakeRestore instead), the launch argv was rejected by the
     /// sanitizer, or the adapter's policy says there is nothing to bring
     /// back. Shared so the consuming path and the eager sweep's pending
     /// check can never drift apart.
     private func pendingRestore(forTab tabID: UUID) -> AgentRestore? {
-        guard isEnabled, !consumedTabIDs.contains(tabID) else { return nil }
+        guard isEnabled, !consumedTabIDs.contains(tabID), sleepingAgentsByTab[tabID] == nil else { return nil }
         guard let record = records[tabID],
               let adapter = adapters[record.agent],
               let command = adapter.restoreCommand(for: record, quitSnapshot: quitSnapshot, now: .now)
@@ -252,7 +276,9 @@ final class AgentSessionStore: ObservableObject {
     /// dormant badge reads it per row. The full gate chain still runs at
     /// each staggered tick.
     func mayRestore(forTab tabID: UUID) -> Bool {
-        isEnabled && !consumedTabIDs.contains(tabID) && restorableAtLaunch.contains(tabID)
+        isEnabled && !consumedTabIDs.contains(tabID)
+            && sleepingAgentsByTab[tabID] == nil
+            && restorableAtLaunch.contains(tabID)
     }
 
     /// The agent mark a dormant tab should wear in the sidebar — the tab
@@ -284,6 +310,106 @@ final class AgentSessionStore: ObservableObject {
         value.replacingOccurrences(of: "'", with: "'\\''")
     }
 
+    // MARK: - Sleep / wake
+
+    /// Tabs going to sleep together — one tab, or every pane of its split:
+    /// their shells (and agents) are about to be deliberately terminated
+    /// while the tabs keep their sidebar rows. Each in-memory record is
+    /// refreshed from the tab's map file first — hook events since
+    /// bootstrap (a /clear's fresh session id, cwd moves) live only on
+    /// disk — and the agent to resume on wake is remembered: the live one
+    /// the caller detected, or the dormant one whose pending launch
+    /// restore never got to run. Plain shell tabs record nothing; their
+    /// wake is just a fresh prompt. One marker write for the whole group.
+    func recordSleep(forTabs agentsByTab: [UUID: TabProcess?]) {
+        guard !agentsByTab.isEmpty else { return }
+        objectWillChange.send()
+        var markersChanged = false
+        for (tabID, agent) in agentsByTab {
+            let file = directory.appendingPathComponent("\(tabID.uuidString.lowercased()).jsonl")
+            if let record = Self.compactRecord(tabID: tabID, mapFileAt: file) {
+                records[tabID] = record
+            }
+            guard let sleeping = agent?.rawValue ?? dormantSleepAgent(forTab: tabID),
+                  adapters[sleeping] != nil else { continue }
+            sleepingAgentsByTab[tabID] = sleeping
+            markersChanged = true
+        }
+        if markersChanged {
+            saveSleepingTabs()
+        }
+    }
+
+    func recordSleep(forTab tabID: UUID, agent: TabProcess?) {
+        recordSleep(forTabs: [tabID: agent])
+    }
+
+    /// The agent a dormant tab's pending restore would have resumed — the
+    /// full adapter policy, not the bootstrap snapshot: launch-time
+    /// restorability resolves on a background task, and sleeping a dormant
+    /// tab inside that window (or after its launch restore was consumed)
+    /// must still write the marker, or a codex conversation is gone for
+    /// good at the next quit — the quit snapshot won't list a sleeping
+    /// tab. The policy check stays: blanket-recording any record's agent
+    /// would wake cleanly-ended sessions into spurious resumes.
+    private func dormantSleepAgent(forTab tabID: UUID) -> String? {
+        guard let record = records[tabID],
+              let adapter = adapters[record.agent],
+              adapter.restoreCommand(for: record, quitSnapshot: quitSnapshot, now: .now) != nil
+        else { return nil }
+        return record.agent
+    }
+
+    /// The agent a sleeping tab will resume on wake, if one was recorded —
+    /// the sleeping card reads this for its "Claude was working…" summary.
+    func sleepingAgent(forTab tabID: UUID) -> TabProcess? {
+        sleepingAgentsByTab[tabID].flatMap(TabProcess.init(rawValue:))
+    }
+
+    /// The resume a sleeping tab's fresh surface should run on wake.
+    /// Consuming clears the sleep marker (the tab rejoins the normal launch
+    /// machinery), then runs the same adapter policy an app-restart restore
+    /// does — against a synthetic quit snapshot listing the tab, because a
+    /// sleep IS a clean stop with the agent running. Nil for tabs that
+    /// weren't asleep, plain-shell sleepers, and sessions the adapter can
+    /// no longer bring back. Deliberately NOT gated on isEnabled: the
+    /// Settings toggle governs relaunch restore, while a sleep is the
+    /// user's own explicit promise that the conversation comes back.
+    func consumeWakeRestore(forTab tabID: UUID) -> AgentRestore? {
+        guard let agent = sleepingAgentsByTab[tabID] else { return nil }
+        objectWillChange.send()
+        sleepingAgentsByTab[tabID] = nil
+        saveSleepingTabs()
+        guard let record = records[tabID], record.agent == agent,
+              let adapter = adapters[agent]
+        else { return nil }
+        let sleepSnapshot = QuitSnapshot(
+            ts: Date.now.timeIntervalSince1970,
+            tabs: [tabID.uuidString.lowercased(): agent]
+        )
+        guard let command = adapter.restoreCommand(for: record, quitSnapshot: sleepSnapshot, now: .now)
+        else { return nil }
+        return AgentRestore(record: record, command: command)
+    }
+
+    private static func loadSleepingTabs(at url: URL) -> [UUID: String] {
+        guard let data = try? Data(contentsOf: url),
+              let raw = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return raw.reduce(into: [:]) { result, entry in
+            guard let tabID = UUID(uuidString: entry.key) else { return }
+            result[tabID] = entry.value
+        }
+    }
+
+    private func saveSleepingTabs() {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let raw = Dictionary(
+            uniqueKeysWithValues: sleepingAgentsByTab.map { ($0.key.uuidString.lowercased(), $0.value) }
+        )
+        guard let data = try? JSONEncoder().encode(raw) else { return }
+        try? data.write(to: sleepingTabsURL, options: .atomic)
+    }
+
     // MARK: - Lifecycle hooks
 
     /// Closed tabs can never restore their conversation; drop the map files
@@ -293,14 +419,22 @@ final class AgentSessionStore: ObservableObject {
     /// or ranking answer could actually change; plain shell tabs close
     /// without touching observers.
     func removeRecords(forTabs tabIDs: Set<UUID>) {
-        if tabIDs.contains(where: { records[$0] != nil || restorableAtLaunch.contains($0) }) {
+        if tabIDs.contains(where: {
+            records[$0] != nil || restorableAtLaunch.contains($0) || sleepingAgentsByTab[$0] != nil
+        }) {
             objectWillChange.send()
         }
+        let hadSleepers = tabIDs.contains { sleepingAgentsByTab[$0] != nil }
         for tabID in tabIDs {
             records[tabID] = nil
             restorableAtLaunch.remove(tabID)
+            // A closed tab's wake can never come either.
+            sleepingAgentsByTab[tabID] = nil
             let file = directory.appendingPathComponent("\(tabID.uuidString.lowercased()).jsonl")
             try? FileManager.default.removeItem(at: file)
+        }
+        if hadSleepers {
+            saveSleepingTabs()
         }
     }
 
@@ -327,9 +461,15 @@ final class AgentSessionStore: ObservableObject {
     /// user-session events reset the record, hook events override the
     /// session id (which is how /clear's freshly minted id lands) and
     /// remember clean ends. Unparseable lines are skipped, never fatal.
+    ///
+    /// The fold starts at the LAST reset line, not line one: a reset wipes
+    /// everything before it, so earlier lines can't influence the result —
+    /// and sleep re-compacts on the main thread inside the click while map
+    /// files grow without bound, so the whole-file parse would eventually
+    /// be felt.
     static func compactRecord(tabID: UUID, mapLines: [String]) -> AgentSessionRecord? {
         var record: AgentSessionRecord?
-        for line in mapLines {
+        for line in mapLines[foldStartIndex(of: mapLines)...] {
             guard let data = line.data(using: .utf8),
                   let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let kind = event["event"] as? String else { continue }
@@ -385,6 +525,25 @@ final class AgentSessionStore: ObservableObject {
             }
         }
         return record
+    }
+
+    /// Where the fold may safely begin: the last launch/user-session line.
+    /// Scans backwards with a cheap substring gate and JSON-parses only the
+    /// candidates it flags — the substring can occur inside a hook payload,
+    /// so the parsed event field is what's trusted.
+    private static func foldStartIndex(of mapLines: [String]) -> Int {
+        for index in mapLines.indices.reversed() {
+            let line = mapLines[index]
+            guard line.contains("\"event\":\"launch\"") || line.contains("\"event\":\"user-session\"")
+            else { continue }
+            guard let data = line.data(using: .utf8),
+                  let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let kind = event["event"] as? String,
+                  kind == "launch" || kind == "user-session"
+            else { continue }
+            return index
+        }
+        return mapLines.startIndex
     }
 
     /// Decodes a wrapper-recorded argv: base64 of NUL-delimited tokens with

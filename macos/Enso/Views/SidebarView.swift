@@ -997,7 +997,15 @@ private struct SpacePage: View {
             // tab's first real command, and hiding the fresh badge
             // behind the spinner read as the icon skipping that command.
             Group {
-                if let process = session.runningProcess {
+                if session.isSleeping {
+                    // Sleeping tab: the moon takes the badge slot. Process
+                    // detection died with the shell, and the dormant badge
+                    // machinery is paused while the tab sleeps, so nothing
+                    // below can claim it.
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
+                } else if let process = session.runningProcess {
                     ProcessBadgeView(process: process, isSelected: isSelected)
                 } else if let dormant = agentSessions.dormantAgent(forTab: session.id) {
                     // An agent session lives here but isn't running yet
@@ -1043,7 +1051,10 @@ private struct SpacePage: View {
                 Text(session.title)
                     .font(PaletteFont.text(14, .regular))
                     .tracking(PaletteFont.tracking)
-                    .foregroundStyle(Theme.text(isSelected ? 0.95 : 0.62))
+                    // Sleeping rows ghost toward the background.
+                    .foregroundStyle(Theme.text(
+                        session.isSleeping ? (isSelected ? 0.55 : 0.38) : (isSelected ? 0.95 : 0.62)
+                    ))
                     .lineLimit(1)
                     .nameShimmer(namer.namingSessions.contains(session.id))
                     // Rename only when the double-click lands on the
@@ -1057,16 +1068,29 @@ private struct SpacePage: View {
 
             Spacer(minLength: 0)
             if hoveredSessionID == session.id && !isRenaming {
-                // Hover-revealed × on the tab row; same frame and insets as
-                // the folder header's trailing icons.
+                // Hover-revealed action on the tab row; same frame and
+                // insets as the folder header's trailing icons. An awake
+                // pinned tab is put to sleep (−) instead of closed; a
+                // sleeping row (and any unpinned tab) gets the × that
+                // really removes it — a pinned tab's exit is two deliberate
+                // steps, − to sleep and then × to close. The button's own
+                // tooltip wins over the sleeping row's wake tooltip while
+                // the pointer is on it (innermost help applies).
+                let sleeps = store.isPinned(session.id) && !session.isSleeping
                 HoverIconButton(
-                    help: "Close Tab",
+                    help: sleeps ? "Put to Sleep" : "Close Tab",
                     size: 24,
                     idleTint: 0.5,
                     washOpacity: 0.09,
-                    action: { store.close(sessionID: session.id) }
+                    action: {
+                        if sleeps {
+                            requestSleep(session)
+                        } else {
+                            store.close(sessionID: session.id)
+                        }
+                    }
                 ) {
-                    Image(systemName: "xmark")
+                    Image(systemName: sleeps ? "minus" : "xmark")
                         .font(.system(size: 10, weight: .bold))
                 }
             } else if session.status == .attention {
@@ -1093,6 +1117,7 @@ private struct SpacePage: View {
             )
         )
         .contentShape(Rectangle())
+        .modifier(SleepingRowHelp(isSleeping: session.isSleeping))
         .modifier(RowPressScale())
         .onHover { hovering in
             if hovering {
@@ -1237,11 +1262,44 @@ private struct SpacePage: View {
             }
         }
 
+        // Sleep mirrors the row's − affordance, and covers multi-selects —
+        // bulk-parking a batch of pinned agent tabs is the obvious use.
+        // Wake keys off the sleeping state alone, so a sleeping tab that
+        // was unpinned still offers it.
+        let sleepTargets = targets.filter { id in
+            store.isPinned(id) && store.sessions.first { $0.id == id }?.isSleeping == false
+        }
+        if !sleepTargets.isEmpty {
+            Button(
+                sleepTargets.count > 1 ? "Put \(sleepTargets.count) Tabs to Sleep" : "Put to Sleep",
+                systemImage: "moon.zzz"
+            ) {
+                requestSleep(sleepTargets)
+            }
+        }
+        if targets.count == 1, session.isSleeping {
+            Button("Wake", systemImage: "sun.max") {
+                store.wake(sessionID: session.id)
+            }
+        }
+
         Divider()
 
         Button("Close\(plural)", systemImage: "xmark") {
             store.close(sessionIDs: targets)
         }
+    }
+
+    /// The − affordance (row button, context menu, bulk): an idle group
+    /// sleeps instantly; one whose agent looks busy gets the shared
+    /// confirmation first — one alert covering the whole group.
+    private func requestSleep(_ sessionIDs: Set<TerminalSession.ID>) {
+        guard SleepConfirmation.consentsToSleep(store, sessionIDs: sessionIDs) else { return }
+        store.putToSleep(sessionIDs: sessionIDs)
+    }
+
+    private func requestSleep(_ session: TerminalSession) {
+        requestSleep([session.id])
     }
 
     private func handleTap(_ session: TerminalSession) {
@@ -1257,7 +1315,9 @@ private struct SpacePage: View {
             } else {
                 store.multiSelection.insert(session.id)
             }
-            store.selection = session.id
+            // ⌘-click is gathering a set, not visiting a tab — like
+            // shift-click, it must not wake a sleeping row it touches.
+            store.setSelection(session.id, waking: false)
         } else if flags.contains(.shift), let anchor = store.selection {
             let order = visibleOrder()
             if let from = order.firstIndex(of: anchor), let to = order.firstIndex(of: session.id) {
@@ -1570,6 +1630,21 @@ private struct ProcessBadgeView: View {
                 .aspectRatio(contentMode: .fit)
                 .foregroundStyle(Color.blue.opacity(isSelected ? 0.95 : 0.45))
                 .frame(width: 16, height: 16)
+        }
+    }
+}
+
+/// Attaches the wake tooltip only while the row sleeps: `.help` isn't
+/// documented to suppress an empty string's bubble, so awake rows get no
+/// tooltip registered at all.
+private struct SleepingRowHelp: ViewModifier {
+    let isSleeping: Bool
+
+    func body(content: Content) -> some View {
+        if isSleeping {
+            content.help("Sleeping — click to wake")
+        } else {
+            content
         }
     }
 }

@@ -30,6 +30,13 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
             return
         }
 
+        // An unsplit sleeping tab renders nothing here: the workspace
+        // overlay draws the full sleeping card in the single-card chrome.
+        if container == nil, session.isSleeping {
+            host.apply(tree: nil, sessions: [:], surfaces: [:], focusedID: nil)
+            return
+        }
+
         // A split tab shows its whole container; a plain tab is a
         // single-leaf "tree" through the same layout path.
         let tree: SplitNode = container?.tree ?? .leaf(session.id)
@@ -40,9 +47,14 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
             // Resolved against the live store so a pane's surface spawns
             // with its session's current working directory.
             guard let live = store.sessions.first(where: { $0.id == id }) else { continue }
+            sessions[id] = live
+            // A sleeping pane keeps its card — the host shows the in-pane
+            // sleeping view in the terminal's place — but mounts no
+            // surface: creating one would respawn the very shell the sleep
+            // just put down.
+            guard !live.isSleeping else { continue }
             let surface = GhosttySurfaceManager.shared.view(for: live)
             store.wireSurfaceCallbacks(surface, for: id)
-            sessions[id] = live
             surfaces[id] = surface
         }
 
@@ -96,6 +108,9 @@ final class SplitLayoutHostView: NSView {
     /// Living INSIDE the pane region — never above or across the split —
     /// is what lets the dividers run edge to edge.
     private var headers: [TerminalSession.ID: NSHostingView<PaneHeaderView>] = [:]
+    /// The moon view a sleeping pane wears where its terminal would be;
+    /// one per sleeping pane, removed the moment the pane wakes.
+    private var sleepOverlays: [TerminalSession.ID: NSHostingView<PaneSleepingView>] = [:]
     private var focusedID: TerminalSession.ID?
     /// The pane last handed first responder by this host. Focus is granted
     /// only when the focused pane changes (or its surface is newly
@@ -120,13 +135,21 @@ final class SplitLayoutHostView: NSView {
 
         // A pane that left the layout (switched tab, closed pane) takes
         // its card — header included — with it; its surface detaches but
-        // keeps running in the surface manager.
-        for (id, card) in cards where surfaces[id] == nil || sessions[id] == nil {
+        // keeps running in the surface manager. Sleeping panes are still
+        // panes (session without surface), so only a missing session
+        // removes the card.
+        for (id, card) in cards where sessions[id] == nil {
             self.surfaces[id]?.removeFromSuperview()
             card.removeFromSuperview()
             cards.removeValue(forKey: id)
             headers.removeValue(forKey: id)
+            sleepOverlays.removeValue(forKey: id)
             compactHeaders.removeValue(forKey: id)
+        }
+        // A pane that fell asleep in place keeps its card but its dead
+        // surface view must not linger under the moon.
+        for (id, surface) in self.surfaces where surfaces[id] == nil {
+            surface.removeFromSuperview()
         }
         self.surfaces = surfaces
 
@@ -136,8 +159,7 @@ final class SplitLayoutHostView: NSView {
         let isSplitLayout = if case .split = tree { true } else { false }
 
         var newlyAttached = false
-        for id in surfaces.keys {
-            guard sessions[id] != nil, let surface = surfaces[id] else { continue }
+        for id in sessions.keys {
             let card = cards[id] ?? {
                 let card = PaneCardView()
                 cards[id] = card
@@ -149,10 +171,34 @@ final class SplitLayoutHostView: NSView {
             }()
             card.setChrome(enabled: isSplitLayout, cornerRadius: paneCornerRadius)
 
-            if surface.superview !== card.content {
-                surface.autoresizingMask = []
-                card.content.addSubview(surface)
-                newlyAttached = true
+            if let surface = surfaces[id] {
+                if surface.superview !== card.content {
+                    surface.autoresizingMask = []
+                    card.content.addSubview(surface)
+                    newlyAttached = true
+                }
+                // A woken pane drops its moon.
+                if let overlay = sleepOverlays.removeValue(forKey: id) {
+                    overlay.removeFromSuperview()
+                }
+            } else {
+                // Sleeping pane: the moon view sits where the terminal
+                // would. Clicking it is a pick, like clicking a live
+                // pane's surface — selection follows, and the selection
+                // observer wakes just this pane.
+                let sessionID = id
+                let rootView = PaneSleepingView { [weak self] in
+                    self?.store?.selection = sessionID
+                }
+                if let overlay = sleepOverlays[id] {
+                    overlay.rootView = rootView
+                } else {
+                    let overlay = NSHostingView(rootView: rootView)
+                    overlay.sizingOptions = []
+                    overlay.safeAreaRegions = []
+                    sleepOverlays[id] = overlay
+                    card.content.addSubview(overlay)
+                }
             }
 
             // Headers live inside the card, above the surface. Which
@@ -301,10 +347,14 @@ final class SplitLayoutHostView: NSView {
                 x: 0, y: 0,
                 width: paneRect.width, height: headerHeight
             )
-            surfaces[id]?.frame = CGRect(
+            // The moon view of a sleeping pane claims the exact region its
+            // terminal would.
+            let bodyRect = CGRect(
                 x: 0, y: headerHeight,
                 width: paneRect.width, height: max(paneRect.height - headerHeight, 0)
             )
+            surfaces[id]?.frame = bodyRect
+            sleepOverlays[id]?.frame = bodyRect
         case .split(let branch):
             let thickness = Self.dividerThickness
             let firstRect: CGRect
@@ -935,6 +985,34 @@ private struct PaneHeaderBreadcrumb: View {
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// What a sleeping pane shows where its terminal would be: the moon and a
+/// quiet wake hint on the pane's theme background. No button — like a
+/// sidebar row, focusing the pane is what wakes it, and the whole region
+/// is the click target.
+struct PaneSleepingView: View {
+    let onWake: () -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 4)
+            Text("Sleeping")
+                .font(.system(size: 13, weight: .semibold))
+            Text("Click to wake")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onWake)
+        // Ink keyed to the terminal background's luminance, like the pane
+        // headers — the view sits on the Ghostty theme, not app chrome.
+        .colorScheme(GhosttyRuntime.shared.terminalColorScheme)
     }
 }
 

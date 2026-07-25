@@ -27,6 +27,8 @@ struct TerminalRootView: View {
 
     /// Whether the selected tab is a pane of a split container — the
     /// workspace then renders per-pane cards instead of the single card.
+    /// True even when the selected pane sleeps: the split still renders,
+    /// with that pane wearing its in-pane moon.
     private var isSplitSelection: Bool {
         guard let selection = store.selection else { return false }
         return store.splitContainer(containing: selection) != nil
@@ -338,7 +340,9 @@ struct TerminalRootView: View {
             return
         }
 
-        store.selection = id
+        // Non-waking: scene restoration is not a click, so a tab asleep at
+        // quit comes back selected but still asleep, showing its card.
+        store.setSelection(id, waking: false)
     }
 }
 

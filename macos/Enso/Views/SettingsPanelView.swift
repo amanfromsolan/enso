@@ -417,14 +417,17 @@ private struct TabsSettings: View {
             }
 
             if resumeAgentSessions {
+                // "Pick up", never "wake": sleep/wake vocabulary belongs
+                // exclusively to the deliberate put-to-sleep feature, and
+                // these describe relaunch restore.
                 Picker("When Enso opens…", selection: $agentWakePolicy) {
-                    Text("Wake as I visit").tag(TerminalSessionStore.AgentWakePolicy.onVisit)
-                    Text("Wake recent tabs first").tag(TerminalSessionStore.AgentWakePolicy.recent)
-                    Text("Wake everything").tag(TerminalSessionStore.AgentWakePolicy.all)
+                    Text("Pick up as I visit").tag(TerminalSessionStore.AgentWakePolicy.onVisit)
+                    Text("Pick up recent tabs first").tag(TerminalSessionStore.AgentWakePolicy.recent)
+                    Text("Pick up everything").tag(TerminalSessionStore.AgentWakePolicy.all)
                 }
 
                 if agentWakePolicy == .recent {
-                    LabeledContent("Tabs to wake right away") {
+                    LabeledContent("Tabs to pick up right away") {
                         HStack(spacing: 8) {
                             Text("\(agentWakeRecentCount)")
                                 .monospacedDigit()
@@ -444,15 +447,16 @@ private struct TabsSettings: View {
         }
     }
 
-    /// The explainer under the wake picker doubles as the introduction to
-    /// the sidebar's tinted "asleep" badge, so the setting and the badge
-    /// teach each other.
+    /// The explainer under the pick-up picker doubles as the introduction
+    /// to the sidebar's tinted dormant badge, so the setting and the badge
+    /// teach each other. Deliberately free of sleep/wake words — those
+    /// belong to the put-to-sleep feature, a different state.
     private var wakeCaption: String {
         switch agentWakePolicy {
         case .onVisit:
-            "Sleeping agent tabs wear a tinted badge and wake the moment you click them."
+            "Agent tabs pick their conversation back up the moment you click them."
         case .recent:
-            "Your \(agentWakeRecentCount) most recent agent tabs pick up right away; the rest sleep with a tinted badge until you click."
+            "Your \(agentWakeRecentCount) most recent agent tabs pick up right away; the rest wear a tinted badge until you click them."
         case .all:
             "Every agent restarts the moment Enso opens — heavier on memory while they all spin up."
         }

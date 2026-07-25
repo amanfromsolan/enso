@@ -221,12 +221,29 @@ struct TerminalSession: Identifiable, Hashable, Codable {
     var status: Status
     var accent: SessionAccent
     var lastActivity: Date
+    /// Asleep: the tab keeps its row but its shell is gone — put down on
+    /// purpose to free resources, with the working directory (and any agent
+    /// conversation, via AgentSessionStore) saved for the wake. Persisted so
+    /// a sleeping tab is still asleep after a relaunch. A plain flag rather
+    /// than a status case so a future auto-sleep only has to flip it.
+    var isSleeping: Bool
+    /// What was detected in the foreground when the tab went to sleep;
+    /// powers the sleeping card's "Claude was working in …" summary.
+    /// Persisted with the flag (a relaunch must still know) and cleared on
+    /// wake.
+    var sleepingProcess: TabProcess?
     /// Live foreground-process detection; session-only, resets to a plain
     /// shell on relaunch, so it is not persisted.
     var runningProcess: TabProcess?
 
+    /// The cwd the way people read it: home-relative with a tilde.
+    var displayWorkingDirectory: String {
+        (workingDirectory as NSString).abbreviatingWithTildeInPath
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, title, titleOrigin, workingDirectory, branch, status, accent, lastActivity
+        case id, title, titleOrigin, workingDirectory, branch, status, accent, lastActivity,
+             isSleeping, sleepingProcess
     }
 
     init(
@@ -237,7 +254,9 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         branch: String? = nil,
         status: Status = .running,
         accent: SessionAccent = .blue,
-        lastActivity: Date = .now
+        lastActivity: Date = .now,
+        isSleeping: Bool = false,
+        sleepingProcess: TabProcess? = nil
     ) {
         self.id = id
         self.title = title
@@ -247,6 +266,8 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         self.status = status
         self.accent = accent
         self.lastActivity = lastActivity
+        self.isSleeping = isSleeping
+        self.sleepingProcess = sleepingProcess
     }
 
     init(from decoder: Decoder) throws {
@@ -260,6 +281,11 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         status = try container.decode(Status.self, forKey: .status)
         accent = try container.decode(SessionAccent.self, forKey: .accent)
         lastActivity = try container.decode(Date.self, forKey: .lastActivity)
+        // Absent in state files written before sleep shipped. The process
+        // decode is tolerant on top: a raw value this build doesn't know
+        // degrades to the plain-shell summary instead of failing the tab.
+        isSleeping = try container.decodeIfPresent(Bool.self, forKey: .isSleeping) ?? false
+        sleepingProcess = (try? container.decodeIfPresent(TabProcess.self, forKey: .sleepingProcess)) ?? nil
         runningProcess = nil
     }
 }

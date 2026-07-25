@@ -16,10 +16,13 @@ final class GhosttySurfaceManager {
         }
         // Agent-session persistence: every surface gets the shim env (so
         // claude/codex launches are recorded), and a tab whose agent was
-        // running at quit types its restore command — a conversation resume
-        // or a fresh relaunch — into the fresh PTY.
+        // running at quit — or when the tab was put to sleep — types its
+        // restore command (a conversation resume or a fresh relaunch) into
+        // the fresh PTY. The launch path answers first; a sleeping tab is
+        // excluded from it and falls through to its wake restore.
         let agentStore = AgentSessionStore.shared
         let restore = agentStore.consumeRestore(forTab: session.id)
+            ?? agentStore.consumeWakeRestore(forTab: session.id)
         // ENSO_TAB_ID is the tab's core identity marker and is injected on
         // EVERY surface, unconditionally — agent-session persistence gates
         // on ENSO_SESSIONS_DIR (via spawnEnvironment), never on this.

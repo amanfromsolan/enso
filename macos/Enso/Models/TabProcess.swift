@@ -4,7 +4,8 @@ import SwiftUI
 /// title events plus the pty's resolved foreground process. Agents get their
 /// brand artwork, known tools a neutral-ink SF Symbol; an unrecognized live
 /// process shows the running-blue dot, and idle shells the plain grey one.
-enum TabProcess: String, Hashable {
+/// Codable so a sleeping tab's "what was running" survives in state.json.
+enum TabProcess: String, Hashable, Codable {
     // Agents with bundled brand icons.
     case claude
     case codex
