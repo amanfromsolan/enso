@@ -871,7 +871,12 @@ final class TerminalSessionStore: ObservableObject {
     /// card. Sleeping the selected tab keeps it selected: the workspace's
     /// sleeping card IS the feature's feedback, and with a collapsed
     /// folder or hidden sidebar a selection jump would make sleep look
-    /// exactly like close. Background sleeps never touch selection. One
+    /// exactly like close. The one exception is the focused pane of a
+    /// split with an awake sibling: the in-pane sleeping card stays
+    /// visible without selection, and a selected pane with no surface
+    /// would leave the keyboard pointing at nothing while the focus ring
+    /// crowned the moon — so the nearest awake sibling takes over, same
+    /// handoff as close(). Background sleeps never touch selection. One
     /// plain entry point on purpose, so a future auto-sleep (idle timeout,
     /// sleep-on-quit) can call it too. The set form exists for bulk
     /// context-menu sleeps — one marker write for the whole batch.
@@ -880,6 +885,24 @@ final class TerminalSessionStore: ObservableObject {
             sessions.first { $0.id == id }?.isSleeping == false
         }
         guard !targets.isEmpty else { return }
+
+        // Resolved before the targets are marked sleeping — the fallback
+        // must only consider siblings that stay awake.
+        var splitFallback: TerminalSession.ID?
+        if let selection, targets.contains(selection),
+           let container = splitContainer(containing: selection) {
+            let orderedActive = activeSpace.sessions
+            if let selectionIndex = orderedActive.firstIndex(where: { $0.id == selection }) {
+                splitFallback = orderedActive.enumerated()
+                    .filter {
+                        container.tree.contains($0.element.id)
+                            && !targets.contains($0.element.id)
+                            && !$0.element.isSleeping
+                    }
+                    .min { abs($0.offset - selectionIndex) < abs($1.offset - selectionIndex) }?
+                    .element.id
+            }
+        }
 
         if persistToDisk {
             // One store call for the whole group (one marker write).
@@ -913,6 +936,9 @@ final class TerminalSessionStore: ObservableObject {
             }
         }
         multiSelection.subtract(targets)
+        if let splitFallback {
+            setSelection(splitFallback, waking: false)
+        }
         save()
     }
 

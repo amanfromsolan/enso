@@ -259,7 +259,12 @@ final class SplitLayoutHostView: NSView {
     /// terminal. Focus syncs the sidebar selection via onFocusGained, so
     /// this one call covers both the already-selected and sibling case.
     private func focusPane(_ id: TerminalSession.ID) {
-        guard let surface = surfaces[id] else { return }
+        guard let surface = surfaces[id] else {
+            // A sleeping pane has no surface; treat its header click like
+            // any other pick of that tab — same path as the moon body.
+            store?.selection = id
+            return
+        }
         window?.makeFirstResponder(surface)
         // Move the focus ring on the click itself; the store publish that
         // onFocusGained triggers confirms the same state a beat later.
@@ -1004,7 +1009,14 @@ private struct FullPaneHeader: View {
                 // Leading slot mirrors the sidebar row: the detected-process
                 // badge supplants the accent dot while something known is
                 // running; idle tabs keep today's dot — never an empty slot.
-                if let process = session.runningProcess {
+                if session.isSleeping {
+                    // Sleeping pane: the moon takes the badge slot,
+                    // matching the sidebar row, palette, and switcher.
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(terminalInk.opacity(0.6))
+                        .frame(width: 24, height: 24)
+                } else if let process = session.runningProcess {
                     HeaderProcessBadge(process: process, ink: terminalInk)
                         .grayscale(focused ? 0 : 1)
                 } else {
@@ -1206,7 +1218,11 @@ private struct CompactPaneHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
-                PaneHeaderBadge(process: session.runningProcess, ink: ink)
+                PaneHeaderBadge(
+                    process: session.runningProcess,
+                    sleeping: session.isSleeping,
+                    ink: ink
+                )
                     .grayscale(focused ? 0 : 1)
                     .frame(width: 24, height: 24)
 
@@ -1425,10 +1441,16 @@ struct PaneSleepingView: View {
 /// type, never the mark.
 private struct PaneHeaderBadge: View {
     let process: TabProcess?
+    let sleeping: Bool
     let ink: Color
 
     var body: some View {
-        if let process {
+        if sleeping {
+            // The moon takes the badge slot, matching the sidebar row.
+            Image(systemName: "moon.zzz.fill")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(ink.opacity(0.6))
+        } else if let process {
             switch process.badge {
             case .agent(let base):
                 // Asset variants key off the terminal background, not the

@@ -419,6 +419,31 @@ struct TerminalSessionStoreTests {
         #expect(store.sessions.first { $0.id == source.id }?.isSleeping == false)
     }
 
+    @Test func sleepingTheFocusedPaneHandsSelectionToAnAwakeSibling() throws {
+        let dir = try makeTempDirectory("split-sleep-handoff")
+        let source = TerminalSession(title: "main", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [source]),
+            select: source.id
+        )
+        store.splitSelection(direction: .horizontal)
+        let pane = try #require(store.selection)
+        #expect(pane != source.id)
+
+        // The focused pane sleeps: with no live surface a selected moon
+        // would strand the keyboard, so the nearest awake sibling takes
+        // over — the same handoff close() makes. The split stays intact.
+        store.putToSleep(sessionID: pane)
+        #expect(store.selection == source.id)
+        #expect(store.sessions.first { $0.id == pane }?.isSleeping == true)
+        #expect(store.splitContainer(containing: pane) != nil)
+
+        // With every sibling asleep there is nothing to hand over to: the
+        // selection parks on the moon, exactly like the unsplit case.
+        store.putToSleep(sessionID: source.id)
+        #expect(store.selection == source.id)
+    }
+
     @Test func busyAgentRequiresARunningAgentWithoutTheAttentionDot() throws {
         let dir = try makeTempDirectory("busy")
         var working = TerminalSession(title: "working", workingDirectory: dir)
