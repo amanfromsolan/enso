@@ -10,7 +10,7 @@ final class GhosttySurfaceManager {
 
     private init() {}
 
-    func view(for session: TerminalSession) -> GhosttySurfaceView {
+    func view(for session: TerminalSession, fontSize: Float? = nil) -> GhosttySurfaceView {
         if let existing = views[session.id] {
             return existing
         }
@@ -36,7 +36,8 @@ final class GhosttySurfaceManager {
             environmentVariables: environment,
             initialInput: restore.map {
                 agentStore.resumeInput(for: $0, currentWorkingDirectory: session.workingDirectory)
-            }
+            },
+            fontSize: fontSize
         )
         views[session.id] = view
         return view
@@ -45,6 +46,13 @@ final class GhosttySurfaceManager {
     /// The live view for a session, if one was already created.
     func existingView(for sessionID: TerminalSession.ID) -> GhosttySurfaceView? {
         views[sessionID]
+    }
+
+    /// The live font size of a session's surface, nil when no surface
+    /// exists (or it runs at the config default). Read at sleep time so
+    /// the wake can respawn at the same zoom.
+    func fontSize(for sessionID: TerminalSession.ID) -> Float? {
+        views[sessionID]?.currentFontSize
     }
 
     /// Hands the keyboard back to a session's terminal after a modal or

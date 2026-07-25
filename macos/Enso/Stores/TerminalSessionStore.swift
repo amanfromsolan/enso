@@ -919,6 +919,9 @@ final class TerminalSessionStore: ObservableObject {
             AgentSessionStore.shared.recordSleep(forTabs: agentsByTab)
         }
         for id in targets {
+            // The ⌘+/⌘- zoom lives in the surface; read it before the
+            // shell dies so the wake can respawn at the same size.
+            let fontSize = GhosttySurfaceManager.shared.fontSize(for: id)
             GhosttySurfaceManager.shared.closeSurface(for: id)
             // A sleeping tab's attention banner leads nowhere; drop it with
             // the dot.
@@ -929,6 +932,7 @@ final class TerminalSessionStore: ObservableObject {
                 // before detection is cleared with the shell.
                 item.sleepingProcess = item.runningProcess
                 item.runningProcess = nil
+                item.sleepingFontSize = fontSize
                 item.status = .idle
                 // A sleeping tab is deliberately parked; the expiry clock
                 // (should it ever be unpinned) starts fresh, not pre-aged.
@@ -954,17 +958,22 @@ final class TerminalSessionStore: ObservableObject {
     /// background wake (context menu, palette) would otherwise clear the
     /// flag while the marker sat unconsumed and no shell ever spawned.
     func wake(sessionID: TerminalSession.ID) {
-        guard sessions.first(where: { $0.id == sessionID })?.isSleeping == true else { return }
+        guard let sleeping = sessions.first(where: { $0.id == sessionID }),
+              sleeping.isSleeping else { return }
+        // Consumed by this wake's mount; cleared so a later fresh spawn
+        // (quit restore of the awake tab) uses the config default again.
+        let fontSize = sleeping.sleepingFontSize
         update(sessionID) { item in
             item.isSleeping = false
             item.sleepingProcess = nil
+            item.sleepingFontSize = nil
             item.lastActivity = .now
         }
         save()
         // Idempotent for the visible tab: the host's next render asks for
         // the same surface this mount created.
         if let live = sessions.first(where: { $0.id == sessionID }) {
-            mountWokenSurface(for: live)
+            mountWokenSurface(for: live, fontSize: fontSize)
         }
     }
 
@@ -973,7 +982,7 @@ final class TerminalSessionStore: ObservableObject {
     /// eagerRestoreSweepOverride for the pattern). nil in production.
     var wakeSurfaceMounter: ((TerminalSession) -> Void)?
 
-    private func mountWokenSurface(for session: TerminalSession) {
+    private func mountWokenSurface(for session: TerminalSession, fontSize: Float?) {
         if let wakeSurfaceMounter {
             wakeSurfaceMounter(session)
             return
@@ -981,7 +990,10 @@ final class TerminalSessionStore: ObservableObject {
         // Unit stores drive no real surfaces, mirroring how they skip the
         // shared AgentSessionStore.
         guard persistToDisk else { return }
-        wireSurfaceCallbacks(GhosttySurfaceManager.shared.view(for: session), for: session.id)
+        wireSurfaceCallbacks(
+            GhosttySurfaceManager.shared.view(for: session, fontSize: fontSize),
+            for: session.id
+        )
     }
 
     /// Committed selection of a sleeping tab wakes it — "click to wake"

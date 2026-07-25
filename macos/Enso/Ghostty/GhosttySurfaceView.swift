@@ -30,14 +30,20 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         }
     }
 
-    init(workingDirectory: String, environmentVariables: [String: String] = [:], initialInput: String? = nil) {
+    init(
+        workingDirectory: String,
+        environmentVariables: [String: String] = [:],
+        initialInput: String? = nil,
+        fontSize: Float? = nil
+    ) {
         // Non-zero initial frame so the renderer never sees empty bounds.
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         registerForDraggedTypes(Array(Self.dropTypes))
         createSurface(
             workingDirectory: workingDirectory,
             environmentVariables: environmentVariables,
-            initialInput: initialInput
+            initialInput: initialInput,
+            fontSize: fontSize
         )
     }
 
@@ -46,10 +52,20 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         fatalError("init(coder:) is not supported")
     }
 
+    /// The surface's live font size in points — ⌘+/⌘- zoom included — via
+    /// the same inherited-config read Ghostty uses for font-inheriting
+    /// splits. Nil once the surface is gone.
+    var currentFontSize: Float? {
+        guard let surface else { return nil }
+        let size = ghostty_surface_inherited_config(surface, GHOSTTY_SURFACE_CONTEXT_SPLIT).font_size
+        return size > 0 ? size : nil
+    }
+
     private func createSurface(
         workingDirectory: String,
         environmentVariables: [String: String],
-        initialInput: String?
+        initialInput: String?,
+        fontSize: Float?
     ) {
         GhosttyRuntime.shared.ensureStarted()
         guard let app = GhosttyRuntime.shared.app else { return }
@@ -61,6 +77,11 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         )
         config.userdata = Unmanaged.passUnretained(self).toOpaque()
         config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
+        if let fontSize {
+            // A wake respawning at the zoom the tab slept with; 0 (the
+            // config_new default) means the user's configured size.
+            config.font_size = fontSize
+        }
 
         // The C strings only need to outlive ghostty_surface_new (libghostty
         // copies the config into the surface), but every pointer must be

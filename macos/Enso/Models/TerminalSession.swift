@@ -232,6 +232,11 @@ struct TerminalSession: Identifiable, Hashable, Codable {
     /// Persisted with the flag (a relaunch must still know) and cleared on
     /// wake.
     var sleepingProcess: TabProcess?
+    /// The surface's font size (⌘+/⌘- zoom) when the tab went to sleep,
+    /// nil when it slept at the config default. Persisted with the flag so
+    /// a wake — even after a relaunch — spawns the shell at the size the
+    /// user left it. Cleared on wake, like sleepingProcess.
+    var sleepingFontSize: Float?
     /// Live foreground-process detection; session-only, resets to a plain
     /// shell on relaunch, so it is not persisted.
     var runningProcess: TabProcess?
@@ -243,7 +248,7 @@ struct TerminalSession: Identifiable, Hashable, Codable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, titleOrigin, workingDirectory, branch, status, accent, lastActivity,
-             isSleeping, sleepingProcess
+             isSleeping, sleepingProcess, sleepingFontSize
     }
 
     init(
@@ -256,7 +261,8 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         accent: SessionAccent = .blue,
         lastActivity: Date = .now,
         isSleeping: Bool = false,
-        sleepingProcess: TabProcess? = nil
+        sleepingProcess: TabProcess? = nil,
+        sleepingFontSize: Float? = nil
     ) {
         self.id = id
         self.title = title
@@ -268,6 +274,7 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         self.lastActivity = lastActivity
         self.isSleeping = isSleeping
         self.sleepingProcess = sleepingProcess
+        self.sleepingFontSize = sleepingFontSize
     }
 
     init(from decoder: Decoder) throws {
@@ -286,6 +293,7 @@ struct TerminalSession: Identifiable, Hashable, Codable {
         // degrades to the plain-shell summary instead of failing the tab.
         isSleeping = try container.decodeIfPresent(Bool.self, forKey: .isSleeping) ?? false
         sleepingProcess = (try? container.decodeIfPresent(TabProcess.self, forKey: .sleepingProcess)) ?? nil
+        sleepingFontSize = try container.decodeIfPresent(Float.self, forKey: .sleepingFontSize)
         runningProcess = nil
     }
 }

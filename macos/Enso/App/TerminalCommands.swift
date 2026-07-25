@@ -89,16 +89,12 @@ struct TerminalCommands: Commands {
             .keyboardShortcut("p", modifiers: [.command, .option])
             .disabled(store.selection == nil)
 
-            // ⌘W is two-step for pinned tabs: an awake one goes to sleep
-            // (with the busy confirmation), a sleeping one closes for real
-            // — one keystroke can never silently destroy a pinned tab or
-            // its saved conversation. The title tracks which step is next.
-            Button(closeTabTitle) {
+            // ⌘W closes outright, pinned or not — the keyboard gesture
+            // means "close" everywhere else on the Mac. Sleep stays on the
+            // row affordance, context menu, and palette.
+            Button("Close Tab") {
                 guard let selection = store.selection else { return }
-                if store.selectedTabSleepsInsteadOfClosing {
-                    guard SleepConfirmation.consentsToSleep(store, sessionIDs: [selection]) else { return }
-                }
-                store.closeSelectedSession()
+                store.close(sessionID: selection)
             }
             .keyboardShortcut("w", modifiers: .command)
             .disabled(store.selection == nil)
@@ -163,7 +159,4 @@ struct TerminalCommands: Commands {
         return "Unpin Tab"
     }
 
-    private var closeTabTitle: String {
-        store.selectedTabSleepsInsteadOfClosing ? "Put Tab to Sleep" : "Close Tab"
-    }
 }
