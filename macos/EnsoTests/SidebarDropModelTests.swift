@@ -63,10 +63,12 @@ struct SidebarDropModelTests {
     private func makeResolver(
         _ fixture: Fixture,
         collapsed: Set<UUID>,
-        selection: UUID? = nil
+        selection: UUID? = nil,
+        splitContainers: [SplitContainer] = []
     ) -> SidebarDropResolver {
         let rows = flattenSidebar(
-            space: fixture.space, collapsedFolderIDs: collapsed, selection: selection
+            space: fixture.space, collapsedFolderIDs: collapsed, selection: selection,
+            splitContainers: splitContainers
         )
         let (frames, divider) = layout(rows)
         return SidebarDropResolver(rows: rows, rowFrames: frames, dividerFrame: divider)
@@ -96,7 +98,9 @@ struct SidebarDropModelTests {
 
     @Test func flattenOrdersLooseThenFoldersThenEphemeral() {
         let fx = makeFixture()
-        let rows = flattenSidebar(space: fx.space, collapsedFolderIDs: [fx.folderG], selection: nil)
+        let rows = flattenSidebar(
+            space: fx.space, collapsedFolderIDs: [fx.folderG], selection: nil, splitContainers: []
+        )
         #expect(rows.map(\.id) == [fx.a, fx.b, fx.folderF, fx.f1, fx.f2, fx.folderG, fx.e1, fx.e2])
         #expect(rows[3].parentFolderID == fx.folderF)
         #expect(rows[5].kind == .folder(collapsed: true))
@@ -106,7 +110,7 @@ struct SidebarDropModelTests {
     @Test func flattenPeeksTheCollapsedFolderActiveTab() {
         let fx = makeFixture()
         let rows = flattenSidebar(
-            space: fx.space, collapsedFolderIDs: [fx.folderG], selection: fx.g1
+            space: fx.space, collapsedFolderIDs: [fx.folderG], selection: fx.g1, splitContainers: []
         )
         #expect(rows.map(\.id) == [
             fx.a, fx.b, fx.folderF, fx.f1, fx.f2, fx.folderG, fx.g1, fx.e1, fx.e2
@@ -117,7 +121,7 @@ struct SidebarDropModelTests {
     @Test func flattenHidesCollapsedFolderChildren() {
         let fx = makeFixture()
         let rows = flattenSidebar(
-            space: fx.space, collapsedFolderIDs: [fx.folderF, fx.folderG], selection: fx.a
+            space: fx.space, collapsedFolderIDs: [fx.folderF, fx.folderG], selection: fx.a, splitContainers: []
         )
         #expect(rows.map(\.id) == [fx.a, fx.b, fx.folderF, fx.folderG, fx.e1, fx.e2])
     }
@@ -309,7 +313,9 @@ struct SidebarDropModelTests {
         // Rows separated by the real 8pt gap: the gap above a loose tab
         // that follows a folder's children is the ambiguous slot.
         let fx = makeFixture()
-        let rows = flattenSidebar(space: fx.space, collapsedFolderIDs: [fx.folderG], selection: nil)
+        let rows = flattenSidebar(
+            space: fx.space, collapsedFolderIDs: [fx.folderG], selection: nil, splitContainers: []
+        )
         let (frames, divider) = layout(rows, gap: 8)
         let resolver = SidebarDropResolver(rows: rows, rowFrames: frames, dividerFrame: divider)
         // Layout: f2 192–222, G 230–260. Pointer in the 8pt gap at y=226.
@@ -334,7 +340,7 @@ struct SidebarDropModelTests {
             name: "Main",
             pinnedItems: [.tab(a), .folder(folder), .tab(b)]
         )
-        let rows = flattenSidebar(space: space, collapsedFolderIDs: [], selection: nil)
+        let rows = flattenSidebar(space: space, collapsedFolderIDs: [], selection: nil, splitContainers: [])
         #expect(rows.map(\.id) == [a.id, folder.id, f1.id, b.id])
         #expect(rows[3].parentFolderID == nil)
     }
@@ -351,7 +357,7 @@ struct SidebarDropModelTests {
             pinnedItems: [.tab(a), .folder(folder), .tab(b)],
             ephemeralSessions: [e1]
         )
-        let rows = flattenSidebar(space: space, collapsedFolderIDs: [], selection: nil)
+        let rows = flattenSidebar(space: space, collapsedFolderIDs: [], selection: nil, splitContainers: [])
         let (frames, divider) = layout(rows)
         let resolver = SidebarDropResolver(rows: rows, rowFrames: frames, dividerFrame: divider)
 
@@ -364,6 +370,85 @@ struct SidebarDropModelTests {
         #expect(
             resolver.resolve(at: CGPoint(x: 120, y: 125), dragging: .tabs([e1.id]), horizontalDelta: 0)
                 .proposal?.target == .insertBefore(b.id)
+        )
+    }
+
+    // MARK: Split-container grouping
+
+    private func makeSplitContainer(_ first: UUID, _ second: UUID) -> SplitContainer {
+        SplitContainer(tree: .split(SplitBranch(
+            direction: .horizontal, ratio: 0.5, first: .leaf(first), second: .leaf(second)
+        )))
+    }
+
+    @Test func flattenHoistsSplitMembersIntoOneRun() {
+        // Members drifted apart in the model: [m1, x, m2] with {m1, m2}
+        // split. The view renders the group hoisted at m1's position; the
+        // flatten must mirror it exactly — it is the drop projection's and
+        // shift-range's single source of visible order.
+        let m1 = TerminalSession(title: "m1", workingDirectory: "/tmp")
+        let x = TerminalSession(title: "x", workingDirectory: "/tmp")
+        let m2 = TerminalSession(title: "m2", workingDirectory: "/tmp")
+        let space = SidebarSpace(name: "Main", pinnedItems: [.tab(m1), .tab(x), .tab(m2)])
+        let container = makeSplitContainer(m1.id, m2.id)
+
+        let rows = flattenSidebar(
+            space: space, collapsedFolderIDs: [], selection: nil, splitContainers: [container]
+        )
+        #expect(rows.map(\.id) == [m1.id, m2.id, x.id])
+        #expect(rows[0].splitContainerID == container.id)
+        #expect(rows[1].splitContainerID == container.id)
+        #expect(rows[2].splitContainerID == nil)
+    }
+
+    @Test func flattenHoistsEphemeralSplitMembersAlike() {
+        let m1 = TerminalSession(title: "m1", workingDirectory: "/tmp")
+        let x = TerminalSession(title: "x", workingDirectory: "/tmp")
+        let m2 = TerminalSession(title: "m2", workingDirectory: "/tmp")
+        let space = SidebarSpace(name: "Main", ephemeralSessions: [m1, x, m2])
+        let container = makeSplitContainer(m1.id, m2.id)
+
+        let rows = flattenSidebar(
+            space: space, collapsedFolderIDs: [], selection: nil, splitContainers: [container]
+        )
+        #expect(rows.map(\.id) == [m1.id, m2.id, x.id])
+        #expect(rows.allSatisfy { $0.zone == .ephemeral })
+    }
+
+    @Test func outsideTabOverASplitRunSnapsToTheRunBoundary() {
+        // Pinned loose: m1 40–70, m2 70–100 (one split run), x 100–130.
+        let m1 = TerminalSession(title: "m1", workingDirectory: "/tmp")
+        let m2 = TerminalSession(title: "m2", workingDirectory: "/tmp")
+        let x = TerminalSession(title: "x", workingDirectory: "/tmp")
+        let e1 = TerminalSession(title: "e1", workingDirectory: "/tmp")
+        let space = SidebarSpace(
+            name: "Main",
+            pinnedItems: [.tab(m1), .tab(m2), .tab(x)],
+            ephemeralSessions: [e1]
+        )
+        let container = makeSplitContainer(m1.id, m2.id)
+        let rows = flattenSidebar(
+            space: space, collapsedFolderIDs: [], selection: nil, splitContainers: [container]
+        )
+        let (frames, divider) = layout(rows)
+        let resolver = SidebarDropResolver(rows: rows, rowFrames: frames, dividerFrame: divider)
+
+        // The slot between the members would interleave an outsider into
+        // the group: it snaps to the nearest run boundary instead. The run
+        // spans 40–100 with its midline at 70.
+        #expect(
+            resolver.resolve(at: CGPoint(x: 120, y: 65), dragging: .tabs([e1.id]), horizontalDelta: 0)
+                .proposal?.target == .insertBefore(m1.id)
+        )
+        #expect(
+            resolver.resolve(at: CGPoint(x: 120, y: 75), dragging: .tabs([e1.id]), horizontalDelta: 0)
+                .proposal?.target == .insertBefore(x.id)
+        )
+        // The group's own members keep the interior slots — a within-group
+        // reorder stays valid.
+        #expect(
+            resolver.resolve(at: CGPoint(x: 120, y: 48), dragging: .tabs([m2.id]), horizontalDelta: 0)
+                .proposal?.target == .insertBefore(m1.id)
         )
     }
 
