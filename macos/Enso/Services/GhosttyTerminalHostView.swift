@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Hosts the visible terminal area: a single surface for a plain tab, or
@@ -1068,14 +1069,33 @@ private struct FullPaneHeader: View {
             // cap the cluster at 80% so the header keeps visible breathing
             // room (and drag/zoom target) on the right. A max, not a fixed
             // width — short titles still hug their content.
-            .frame(
-                maxWidth: headerWidth > 0 ? headerWidth * 0.8 : nil,
-                alignment: .leading
-            )
+            .frame(maxWidth: titleClusterCap, alignment: .leading)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            // Trailing column. The DEV badge lives IN it rather than floating
+            // over the strip on a hand-computed inset, so the row's width is
+            // the layout's own arithmetic and not a padding to keep in sync.
+            HStack(spacing: 8) {
+                #if DEBUG
+                DevBadge()
+                    .frame(height: 22)
+                #endif
+
+                PaneHeaderControls(
+                    session: session,
+                    store: store,
+                    layout: controlLayout,
+                    ink: terminalInk
+                )
+            }
         }
-        .padding(.horizontal, 16)
+        // Leading 16 is the original strip's geometry and the badge must not
+        // move off it; the trailing side is tightened because a 30pt mark
+        // carries its own optical slack around a 15pt glyph — 16 there read
+        // as nearly double the inset it looks like.
+        .padding(.leading, 16)
+        .padding(.trailing, PaneHeaderControls.trailingInset)
         .frame(height: 46)
         .frame(maxWidth: .infinity)
         .onGeometryChange(for: CGFloat.self) { proxy in
@@ -1083,14 +1103,6 @@ private struct FullPaneHeader: View {
         } action: { width in
             headerWidth = width
         }
-        #if DEBUG
-        // Overlaid so the badge claims no room from the title cluster.
-        .overlay(alignment: .trailing) {
-            DevBadge()
-                .frame(height: 22)
-                .padding(.trailing, 12)
-        }
-        #endif
         // Drag + double-click-zoom handled in AppKit, not SwiftUI: a
         // WindowDragGesture claims the mouse-down to start dragging, so a
         // paired .onTapGesture(count: 2) never recognizes and zoom silently
@@ -1136,6 +1148,28 @@ private struct FullPaneHeader: View {
     /// stops reaching the shell; hand the keyboard back to the terminal.
     private func restoreTerminalFocus() {
         GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+    }
+
+    /// Which cluster this width can afford; a full header is normally wide
+    /// enough for the whole row, but the same collapse applies if it isn't.
+    private var controlLayout: PaneHeaderControls.Layout {
+        PaneHeaderControls.layout(forHeaderWidth: headerWidth)
+    }
+
+    /// The room the trailing cluster reserves. Constant while the layout is
+    /// — a pane falling asleep does not move the title or the DEV badge, so
+    /// nothing here has to animate alongside the cluster's own reflow.
+    private var controlsWidth: CGFloat {
+        PaneHeaderControls.reservedWidth(controlLayout)
+    }
+
+    /// The old 80% cap, now taken against what the trailing controls leave
+    /// behind rather than the whole strip: the cluster gets its room first,
+    /// the title truncates into what remains, and the header still keeps a
+    /// fifth of the rest as drag/zoom target.
+    private var titleClusterCap: CGFloat? {
+        guard headerWidth > 0 else { return nil }
+        return max((headerWidth - controlsWidth - 8) * 0.8, PaneHeaderControls.minTitleWidth)
     }
 
     /// Ink for the process badge: dark ink on a light terminal theme, light
@@ -1215,6 +1249,9 @@ private struct CompactPaneHeader: View {
     @State private var draftTitle = ""
     @FocusState private var renameFieldFocused: Bool
 
+    /// Measured strip width; decides which trailing cluster fits.
+    @State private var headerWidth: CGFloat = 0
+
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
@@ -1272,12 +1309,26 @@ private struct CompactPaneHeader: View {
                 }
             })
 
-            Spacer(minLength: 0)
+
+            Spacer(minLength: 8)
+
+            PaneHeaderControls(
+                session: session,
+                store: store,
+                layout: PaneHeaderControls.layout(forHeaderWidth: headerWidth),
+                ink: ink
+            )
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, PaneHeaderControls.trailingInset)
         // Row centered in the fixed 46pt band, icon centered against the
         // two-line text block.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            headerWidth = width
+        }
         // The band beyond the cluster is window chrome — drag to move,
         // double-click to zoom — in AppKit for the same reason as the full
         // header (see FullPaneHeader's note on WindowDragHandle).
@@ -1332,6 +1383,625 @@ private struct CompactPaneHeader: View {
     /// terminal background rather than the app appearance.
     private var terminalColorScheme: ColorScheme {
         GhosttyRuntime.shared.terminalColorScheme
+    }
+}
+
+/// The trailing controls both header variants carry: split right, split
+/// down, close. Sleep is deliberately NOT here — it stays the sidebar row's
+/// and the palette's business, where the pinned two-step exit already
+/// lives. A header too narrow for the row folds the splits into an overflow
+/// menu (see Layout), so no action becomes unreachable and the × keeps its
+/// place at the trailing edge either way. The cluster idle-fades —
+/// near-invisible while the pointer is still, alive the moment it moves (see
+/// PaneControlActivity) — so a header at rest stays the quiet strip it was.
+/// Ink comes from the header's luminance-derived color, so the glyphs read
+/// on any Ghostty theme.
+private struct PaneHeaderControls: View {
+    /// How much of the cluster the header can afford. `full` is the row of
+    /// marks; `collapsed` is the overflow menu plus close — close is never
+    /// folded away, so the ×'s position never moves.
+    enum Layout {
+        case full
+        case collapsed
+    }
+
+    let session: TerminalSession
+    let store: TerminalSessionStore
+    let layout: Layout
+    let ink: Color
+
+    @ObservedObject private var activity = PaneControlActivity.shared
+    @StateObject private var overflow = PaneOverflowMenu()
+    @State private var isHovered = false
+
+    /// Sized to read as real controls in the 46pt band — the same weight
+    /// class as the 24pt process badge across the strip, not hairline
+    /// glyphs.
+    static let buttonSize: CGFloat = 30
+    static let buttonSpacing: CGFloat = 2
+    /// What the cluster reads at while dormant: a ghost of itself, present
+    /// enough that the controls never feel like they appeared from nowhere.
+    static let dormantOpacity: Double = 0.12
+    /// The stretch of header the title cluster is owed before the controls
+    /// give up their full row — the 24pt badge plus a legible run of title.
+    static let minTitleWidth: CGFloat = 150
+    /// How close the marks sit to the pane's trailing edge. Smaller than the
+    /// header's leading inset on purpose: a mark is a 30pt box around a 15pt
+    /// glyph, so it brings ~7pt of its own margin and matching 16 to 16
+    /// would push the row visibly inboard of everything else in the strip.
+    static let trailingInset: CGFloat = 8
+
+    /// The header's leading inset, the trailing inset, and the gap before
+    /// the cluster; what the layout decision must set aside before either
+    /// side is laid out.
+    private static let headerInsets: CGFloat = 16 + trailingInset + 8
+
+    /// The footprint a layout occupies: the full row of marks, or the
+    /// overflow menu and close. Fixed for a given layout — the set never
+    /// changes under a pane — so the title budget and the DEV badge take
+    /// their room from it once and nothing in the strip ever has to move.
+    static func reservedWidth(_ layout: Layout) -> CGFloat {
+        let count: CGFloat = layout == .full ? 3 : 2
+        return count * buttonSize + (count - 1) * buttonSpacing
+    }
+
+    /// The layout a header of this width can afford, derived from the real
+    /// cluster geometry rather than a hand-tuned threshold: the full row
+    /// survives only while it still leaves the title its minimum.
+    static func layout(forHeaderWidth headerWidth: CGFloat) -> Layout {
+        guard headerWidth > 0 else { return .full }
+        return headerWidth - headerInsets - minTitleWidth >= reservedWidth(.full) ? .full : .collapsed
+    }
+
+    var body: some View {
+        HStack(spacing: Self.buttonSpacing) {
+            if layout == .full {
+                PaneHeaderControlButton(
+                    symbol: "square.split.2x1",
+                    tip: PaneControlTip(title: "Split Right", keys: ["⌘", "D"]),
+                    ink: ink
+                ) {
+                    split(.horizontal)
+                }
+
+                PaneHeaderControlButton(
+                    symbol: "square.split.1x2",
+                    tip: PaneControlTip(title: "Split Down", keys: ["⇧", "⌘", "D"]),
+                    ink: ink
+                ) {
+                    split(.vertical)
+                }
+            } else {
+                // An ordinary control button, not a SwiftUI Menu: the
+                // menuStyle wrappers impose their own label metrics and drop
+                // a custom one outright, which is exactly how the ellipsis
+                // came to render as nothing. The menu itself is a real
+                // NSMenu popped from the mark (see PaneOverflowMenu), so the
+                // glyph draws through the same path as its siblings and the
+                // open state arrives on a delegate instead of a global
+                // notification. The dots carry far less ink than an × or a
+                // split square, so they take a heavier, larger draw to sit at
+                // the same optical density.
+                PaneHeaderControlButton(
+                    symbol: "ellipsis",
+                    tip: PaneControlTip(title: "More Pane Actions"),
+                    ink: ink,
+                    glyphSize: 18,
+                    glyphWeight: .black,
+                    forcedHover: overflow.isOpen
+                ) {
+                    overflow.present(items: overflowItems)
+                }
+                .background(PaneOverflowAnchor(menu: overflow))
+            }
+
+            PaneHeaderControlButton(
+                symbol: "xmark",
+                tip: PaneControlTip(title: "Close Pane", keys: ["⌘", "W"]),
+                ink: ink
+            ) {
+                store.close(sessionID: session.id)
+            }
+        }
+        .frame(height: Self.buttonSize)
+        // Hover keeps the cluster awake even once the pointer stops: parking
+        // on a control must never fade it out from under the click. Hit
+        // testing stays on throughout — reaching a control means moving the
+        // pointer, which lights the cluster before any click can land, and
+        // gating it would cost the hover that holds the cluster open.
+        .opacity(isPresent ? 1 : Self.dormantOpacity)
+        .animation(.easeOut(duration: 0.15), value: isPresent)
+        .onHover { isHovered = $0 }
+        .onAppear { activity.addObserver() }
+        .onDisappear { activity.removeObserver() }
+    }
+
+    /// Everything the collapsed layout folded away. The chords ride as real
+    /// key equivalents so the menu draws them the way every AppKit menu
+    /// does; they bind only while the popup is tracking, so nothing here
+    /// contends with the menu bar's ⌘D.
+    private var overflowItems: [PaneOverflowMenu.Item] {
+        [
+            PaneOverflowMenu.Item(
+                title: "Split Right",
+                symbol: "square.split.2x1",
+                key: "d",
+                modifiers: .command
+            ) { split(.horizontal) },
+            PaneOverflowMenu.Item(
+                title: "Split Down",
+                symbol: "square.split.1x2",
+                key: "d",
+                modifiers: [.command, .shift]
+            ) { split(.vertical) },
+        ]
+    }
+
+    private var isPresent: Bool {
+        activity.isMoving || isHovered || overflow.isOpen
+    }
+
+    /// splitSelection grows the split from the store's SELECTION, so a
+    /// control in an unfocused pane's header hands that pane the selection
+    /// first — the new pane always opens beside the header that was clicked.
+    private func split(_ direction: SplitDirection) {
+        if store.selection != session.id {
+            store.setSelection(session.id, waking: true)
+        }
+        store.splitSelection(direction: direction)
+    }
+
+}
+
+/// One control in the pane header's trailing cluster: the sidebar's
+/// HoverIconButton treatment, redrawn in the terminal ink so it stays
+/// legible on the Ghostty theme instead of the app chrome, with the custom
+/// tooltip in place of `.help` — the stock one is slow, unstyleable, and
+/// would arrive in app-chrome colors on a terminal-colored strip.
+private struct PaneHeaderControlButton: View {
+    let symbol: String
+    let tip: PaneControlTip
+    let ink: Color
+    /// The ellipsis needs a heavier draw than the other marks to read at the
+    /// same weight; everything else takes the defaults.
+    var glyphSize: CGFloat = 15
+    var glyphWeight: Font.Weight = .semibold
+    /// Held lit while the mark's own menu is open, so the wash doesn't drop
+    /// the moment the popup takes the pointer.
+    var forcedHover = false
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @State private var anchor = PaneControlAnchorBox()
+
+    var body: some View {
+        Button {
+            PaneControlTooltip.shared.hide(from: anchor)
+            action()
+        } label: {
+            PaneHeaderControlGlyph(
+                symbol: symbol,
+                ink: ink,
+                hovered: isHovered || forcedHover,
+                size: glyphSize,
+                weight: glyphWeight
+            )
+        }
+        .buttonStyle(.plain)
+        .background(PaneControlAnchorView(box: anchor))
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                PaneControlTooltip.shared.show(tip, ink: ink, from: anchor)
+            } else {
+                PaneControlTooltip.shared.hide(from: anchor)
+            }
+        }
+        .onDisappear { PaneControlTooltip.shared.hide(from: anchor) }
+        .accessibilityLabel(tip.title)
+    }
+}
+
+/// The mark itself — glyph, frame, hover wash — factored out so every
+/// control in the cluster draws through one path.
+private struct PaneHeaderControlGlyph: View {
+    let symbol: String
+    let ink: Color
+    let hovered: Bool
+    var size: CGFloat = 15
+    var weight: Font.Weight = .semibold
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: weight))
+            .foregroundStyle(ink.opacity(hovered ? 0.9 : 0.55))
+            .frame(width: PaneHeaderControls.buttonSize, height: PaneHeaderControls.buttonSize)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(ink.opacity(hovered ? 0.1 : 0))
+            )
+            .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Pane control overflow menu
+
+/// The collapsed cluster's menu, as a real NSMenu popped from the ellipsis
+/// mark. SwiftUI's `Menu` was the obvious route and the wrong one: every
+/// macOS menu style imposes its own label metrics, which dropped the custom
+/// glyph entirely. Popping AppKit's menu ourselves keeps the mark an
+/// ordinary button and hands back genuine open/close callbacks, so the
+/// cluster's "stay present" state needs no global menu-tracking notification.
+@MainActor
+final class PaneOverflowMenu: NSObject, ObservableObject, NSMenuDelegate {
+    struct Item {
+        let title: String
+        let symbol: String
+        var key: String = ""
+        var modifiers: NSEvent.ModifierFlags = []
+        let action: () -> Void
+    }
+
+    @Published private(set) var isOpen = false
+    /// The mark the menu drops from; set by PaneOverflowAnchor.
+    weak var anchor: NSView?
+
+    func present(items: [Item]) {
+        guard let anchor else { return }
+        let menu = NSMenu()
+        menu.delegate = self
+        // Our own enablement, not the responder chain's guesswork.
+        menu.autoenablesItems = false
+        for item in items {
+            let entry = ActionItem(item)
+            entry.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)
+            menu.addItem(entry)
+        }
+        // Dropped from the mark's lower edge; the hosting view's flippedness
+        // decides which edge that is in local coordinates.
+        let origin = NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.maxY : 0)
+        menu.popUp(positioning: nil, at: origin, in: anchor)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isOpen = false
+    }
+
+    /// NSMenuItem carries a target/action pair, not a closure; this is the
+    /// thinnest bridge that lets the menu be described inline in the view.
+    private final class ActionItem: NSMenuItem {
+        private let handler: () -> Void
+
+        init(_ item: Item) {
+            handler = item.action
+            super.init(title: item.title, action: #selector(fire), keyEquivalent: item.key)
+            keyEquivalentModifierMask = item.modifiers
+            target = self
+        }
+
+        @available(*, unavailable)
+        required init(coder: NSCoder) {
+            fatalError("init(coder:) is not supported")
+        }
+
+        @objc private func fire() {
+            handler()
+        }
+    }
+}
+
+/// Hands the overflow menu the AppKit view to drop from — the ellipsis
+/// mark's own backing view. Never takes a click; the button in front owns
+/// them.
+private struct PaneOverflowAnchor: NSViewRepresentable {
+    let menu: PaneOverflowMenu
+
+    func makeNSView(context: Context) -> NSView {
+        let view = AnchorView()
+        menu.anchor = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        menu.anchor = nsView
+    }
+
+    private final class AnchorView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
+// MARK: - Pane control tooltip
+
+/// What a control's tooltip says: the action, and the chord that runs it
+/// from the keyboard. Every chord here runs the same store call its mark
+/// does — ⌘W is `close(sessionID:)` outright (TerminalCommands), the same
+/// as the ×. They act on the SELECTION, so on an unfocused pane's header
+/// the chord reaches the focused pane instead; that is the ordinary tab-UI
+/// contract (⌘W in Safari means the same), and it holds equally for the
+/// split marks. `keys` is empty when an action has no binding at all.
+private struct PaneControlTip: Equatable {
+    let title: String
+    var keys: [String] = []
+}
+
+/// A stable handle on one control's backing view, so the tooltip knows what
+/// it is anchored to and who asked for it.
+private final class PaneControlAnchorBox {
+    weak var view: NSView?
+}
+
+private struct PaneControlAnchorView: NSViewRepresentable {
+    let box: PaneControlAnchorBox
+
+    func makeNSView(context: Context) -> NSView {
+        let view = AnchorView()
+        box.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        box.view = nsView
+    }
+
+    private final class AnchorView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
+/// Presents the pane controls' tooltip in its own borderless child window.
+/// A SwiftUI overlay was not an option: the header is an NSHostingView 46pt
+/// tall inside a masked pane card, so anything drawn below the band is
+/// clipped away — and shrinking the tip to fit the band would be solving
+/// the wrong problem. A child window draws wherever it likes, orders and
+/// moves with its parent, and ignores the mouse entirely. One instance for
+/// the whole app, so only one tip is ever up.
+@MainActor
+private final class PaneControlTooltip {
+    static let shared = PaneControlTooltip()
+
+    /// Long enough that sweeping the cluster doesn't strobe tips, short
+    /// enough to feel like an answer rather than a wait.
+    private static let appearDelay: TimeInterval = 0.4
+    /// The gap between the mark's lower edge and the tip.
+    private static let anchorGap: CGFloat = 7
+
+    private var window: NSWindow?
+    private var owner: PaneControlAnchorBox?
+    private var isVisible = false
+    private var token = 0
+
+    private init() {}
+
+    func show(_ tip: PaneControlTip, ink: Color, from box: PaneControlAnchorBox) {
+        owner = box
+        token &+= 1
+        let pending = token
+        // Once a tip is already up, sweeping to a neighbour swaps at once —
+        // the delay is the cost of the first one only.
+        guard !isVisible else {
+            present(tip, ink: ink, from: box)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.appearDelay) { [weak self] in
+            guard let self, self.token == pending, self.owner === box else { return }
+            self.present(tip, ink: ink, from: box)
+        }
+    }
+
+    /// Only the control that asked for the current tip may dismiss it, so a
+    /// sweep's trailing exit can't cancel the tip its neighbour just raised.
+    func hide(from box: PaneControlAnchorBox) {
+        guard owner === box else { return }
+        owner = nil
+        token &+= 1
+        dismiss()
+    }
+
+    private func present(_ tip: PaneControlTip, ink: Color, from box: PaneControlAnchorBox) {
+        guard let anchor = box.view, let parent = anchor.window else { return }
+
+        let hosting = NSHostingView(rootView: PaneControlTooltipView(
+            tip: tip,
+            ink: ink,
+            surface: GhosttyRuntime.shared.themeBackground
+        ))
+        // Measured before the window adopts it: an unhosted NSHostingView
+        // still reports the fitting size of a fixed-size root, and a zero
+        // there would put up an invisible tip.
+        let size = hosting.fittingSize
+        guard size.width > 0, size.height > 0 else { return }
+
+        let window = self.window ?? makeWindow()
+        window.contentView = hosting
+        window.setContentSize(size)
+        window.invalidateShadow()
+
+        let onScreen = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        window.setFrameOrigin(NSPoint(
+            x: (onScreen.midX - size.width / 2).rounded(),
+            y: (onScreen.minY - size.height - Self.anchorGap).rounded()
+        ))
+
+        if window.parent !== parent {
+            window.parent?.removeChildWindow(window)
+            parent.addChildWindow(window, ordered: .above)
+        }
+        if !isVisible {
+            window.alphaValue = 0
+        }
+        isVisible = true
+        self.window = window
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            window.animator().alphaValue = 1
+        }
+    }
+
+    private func dismiss() {
+        guard isVisible, let window else { return }
+        isVisible = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1
+            window.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            guard let self, !self.isVisible, let window = self.window else { return }
+            window.parent?.removeChildWindow(window)
+            window.orderOut(nil)
+        }
+    }
+
+    private func makeWindow() -> NSWindow {
+        let window = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.transient, .ignoresCycle]
+        return window
+    }
+}
+
+/// The tooltip itself: the action at full ink, its chord as discrete
+/// keycaps beside it. This deliberately departs from SettingsPanelView's
+/// ShortcutRow, which lists chords as plain right-aligned glyph text to
+/// match System Settings — that is the right call in a settings list, and
+/// the wrong one on a chip-sized surface floating over a terminal, where a
+/// bare glyph run reads as punctuation rather than as keys. Every color
+/// derives from the header's ink and the live Ghostty background, never an
+/// app-chrome token or a system material: the tip sits on the terminal's
+/// theme, and only the same luminance math the header's ink uses can
+/// promise it stays legible there.
+private struct PaneControlTooltipView: View {
+    let tip: PaneControlTip
+    let ink: Color
+    let surface: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(tip.title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(ink.opacity(0.92))
+
+            if !tip.keys.isEmpty {
+                HStack(spacing: 3) {
+                    ForEach(tip.keys, id: \.self) { key in
+                        Text(key)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(ink.opacity(0.72))
+                            .frame(minWidth: 17, minHeight: 17)
+                            // Fill alone — a cap this small reads as a key
+                            // from its shape, and a hairline around it only
+                            // adds noise at the scale it draws.
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(ink.opacity(0.13))
+                            )
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                // The theme background carries the plate and an ink wash
+                // lifts it off the terminal behind it; the hairline only has
+                // to catch the edge where the two land close in luminance, so
+                // it stays a whisper — the shadow is doing most of the
+                // separating.
+                .fill(surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(ink.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(ink.opacity(0.07), lineWidth: 1)
+                )
+        )
+        .fixedSize()
+    }
+}
+
+/// The pointer clock the pane headers' trailing controls share. SwiftUI
+/// hover is unreliable over the terminal's NSView (it owns its own tracking
+/// areas), so a single local monitor — one for every pane, not one each —
+/// watches raw moves and publishes "the pointer is alive". A beat of
+/// stillness flips it back, and only the key window's events count, so a
+/// background window never keeps the clock running.
+@MainActor
+final class PaneControlActivity: ObservableObject {
+    static let shared = PaneControlActivity()
+
+    /// Stillness before the controls fade back out.
+    static let idleDelay: TimeInterval = 1.8
+
+    @Published private(set) var isMoving = false
+
+    private var observers = 0
+    private var lastMovement = Date.distantPast
+    private var fadeScheduled = false
+    nonisolated(unsafe) private var monitor: Any?
+
+    private init() {}
+
+    /// Ref-counted so the monitor exists exactly while some pane header is
+    /// on screen — panes come and go with every split and close.
+    func addObserver() {
+        observers += 1
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged]
+        ) { [weak self] event in
+            self?.noteMovement(in: event.window)
+            return event
+        }
+    }
+
+    func removeObserver() {
+        observers = max(observers - 1, 0)
+        guard observers == 0, let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+        isMoving = false
+    }
+
+    private func noteMovement(in window: NSWindow?) {
+        guard window?.isKeyWindow == true else { return }
+        lastMovement = Date()
+        if !isMoving {
+            isMoving = true
+        }
+        scheduleFade(after: Self.idleDelay)
+    }
+
+    /// One pending fade check at a time, re-armed for whatever stillness is
+    /// left when it lands — a move-heavy gesture must not queue a block per
+    /// mouse event.
+    private func scheduleFade(after delay: TimeInterval) {
+        guard !fadeScheduled else { return }
+        fadeScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.fadeScheduled = false
+            let still = Date().timeIntervalSince(self.lastMovement)
+            if still >= Self.idleDelay {
+                self.isMoving = false
+            } else {
+                self.scheduleFade(after: Self.idleDelay - still)
+            }
+        }
     }
 }
 
