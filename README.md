@@ -25,7 +25,11 @@ Enso is a native macOS terminal. Tabs show what's actually running in them, with
 
 - **🕵️ Icons for what's running:** Claude, Codex, Gemini, and Ollama show their real logos; vim, ssh, git, and docker get glyphs; idle shells show a default terminal icon.
 
+- **⌘D Splits:** put two terminals side by side or stacked, drag the gap to resize, and reach split and close from the controls in each pane's header. The pane you're typing in takes a ring while the others dim.
+
 - **🔁 Tabs that survive a restart:** tabs running Claude or Codex pick up right where they left off after a relaunch.
+
+- **🌙 Sleep a tab, keep the conversation:** park a pinned tab's shell to free the RAM, and wake it later with your Claude or Codex conversation intact.
 
 - **⌘T Command palette:** every tab, space, and command in one search. Jump with `⌘1–9`, rename inline, duplicate, close others, open in Finder.
 
@@ -33,7 +37,7 @@ Enso is a native macOS terminal. Tabs show what's actually running in them, with
 
 - **🌗 Feels like a Mac app:** native SwiftUI chrome that follows your system's light or dark look, while the terminal keeps your Ghostty theme.
 
-- **📌 A sidebar that never rots:** pin tabs to keep them forever, group them into folders, double-click to rename. Unpinned tabs quietly expire after 24 hours.
+- **📌 A sidebar that never rots:** pin tabs to keep them forever, group them into folders that nest as deep as you like, double-click to rename. Unpinned tabs quietly expire after 24 hours.
 
 ## Keyboard
 
@@ -41,6 +45,7 @@ Enso is a native macOS terminal. Tabs show what's actually running in them, with
 | --- | --- |
 | `⌘T` / `⌘P` | Command center |
 | `⌘N` | New tab |
+| `⌘D` / `⇧⌘D` | Split right / split down |
 | `⌘W` | Close tab |
 | `⌃Tab` | MRU tab switcher |
 | `⌘1–9` | Jump to tab |
