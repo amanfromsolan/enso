@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Enso Architecture — a field guide to the codebase</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ============ SIDEBAR ============ -->
+  <nav class="sidebar">
+    <div class="brand">
+      <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="49"/></svg>
+      <h1>Enso Architecture<span>a field guide to the codebase</span></h1>
+    </div>
+
+    <div class="nav-group">
+      <a class="nav-item" href="#overview">Overview</a>
+    </div>
+
+    <div class="nav-group">
+      <h2>File Breakdown</h2>
+      <a class="nav-item" href="#entrypoints"><span class="n">1</span>App Entrypoints</a>
+      <a class="nav-item" href="#ghostty-bridge"><span class="n">2</span>The Ghostty Bridge</a>
+      <a class="nav-item" href="#models"><span class="n">3</span>Models</a>
+      <a class="nav-item" href="#store"><span class="n">4</span>The Store</a>
+      <a class="nav-item" href="#services"><span class="n">5</span>Services</a>
+      <a class="nav-item" href="#views"><span class="n">6</span>Views</a>
+      <a class="nav-item" href="#support"><span class="n">7</span>Support &amp; Tests</a>
+    </div>
+
+    <div class="nav-group">
+      <h2>Handpicked Journeys</h2>
+      <a class="nav-item" href="#journey-new-tab">How a New Tab Flows</a>
+      <a class="nav-item" href="#journey-detection">Tab Process Detection</a>
+      <a class="nav-item" href="#journey-restore">Quit &amp; Resurrection</a>
+    </div>
+
+    <div class="nav-group">
+      <h2>Zooming Out</h2>
+      <a class="nav-item" href="#repo-map">The Repo Map</a>
+      <a class="nav-item" href="#reading-order">Reading Order</a>
+    </div>
+  </nav>
+
+  <!-- ============ SECOND-LEVEL RAIL ============ -->
+  <nav class="subnav" id="subnav">
+    <div class="subnav-group" data-for="entrypoints">
+      <h2>App Entrypoints</h2>
+      <p class="subnav-desc">Where the program starts: window setup, menu shortcuts, and the ⌘Q guard. ~460 lines.</p>
+      <button class="filetab starred">EnsoApp</button>
+      <button class="filetab">TerminalCommands</button>
+      <button class="filetab">QuitGuard</button>
+      <button class="filetab">ContentView</button>
+    </div>
+
+    <div class="subnav-group" data-for="ghostty-bridge">
+      <h2>Ghostty Bridge</h2>
+      <p class="subnav-desc">The only code that speaks C to libghostty: one runtime, one surface view, one manager. ~1,020 lines.</p>
+      <button class="filetab">GhosttyRuntime</button>
+      <button class="filetab">GhosttySurfaceView</button>
+      <button class="filetab">GhosttySurfaceManager</button>
+      <button class="filetab">GhosttyTerminalHostView</button>
+    </div>
+
+    <div class="subnav-group" data-for="models">
+      <h2>Models</h2>
+      <p class="subnav-desc">The nouns: tabs, spaces, folders, "what's running". Read these first. ~555 lines.</p>
+      <button class="filetab starred">TerminalSession</button>
+      <button class="filetab">TabProcess</button>
+      <button class="filetab">IconCatalog</button>
+    </div>
+
+    <div class="subnav-group" data-for="store">
+      <h2>The Store</h2>
+      <p class="subnav-desc">One file, one source of truth. Every view reads it, every command mutates through it.</p>
+      <button class="filetab starred">TerminalSessionStore</button>
+    </div>
+
+    <div class="subnav-group" data-for="services">
+      <h2>Services</h2>
+      <p class="subnav-desc">Each feature is one self-contained file, in four clusters. ~3,080 lines.</p>
+      <h3>Navigation</h3>
+      <button class="filetab">CommandCenter</button>
+      <button class="filetab">TabSwitcher</button>
+      <h3>Smart tabs</h3>
+      <button class="filetab">ForegroundProcessResolver</button>
+      <button class="filetab">TabAutoNamer</button>
+      <h3>Agents</h3>
+      <button class="filetab">AgentSessionStore</button>
+      <button class="filetab">AgentSessionAdapter</button>
+      <button class="filetab">AgentShimInstaller</button>
+      <button class="filetab">AgentLaunchSanitizer</button>
+      <h3>Updates</h3>
+      <button class="filetab">UpdateController</button>
+      <button class="filetab">ReleaseNotesParser</button>
+    </div>
+
+    <div class="subnav-group" data-for="views">
+      <h2>Views</h2>
+      <p class="subnav-desc">Pure SwiftUI rendering the store. The sidebar is most of Enso's personality. ~5,350 lines.</p>
+      <button class="filetab starred">TerminalRootView</button>
+      <button class="filetab">SidebarView</button>
+      <button class="filetab">SidebarDropModel</button>
+      <button class="filetab">TerminalHeaderView</button>
+      <button class="filetab">SettingsPanelView</button>
+      <button class="filetab">Supporting cast</button>
+    </div>
+
+    <div class="subnav-group" data-for="support">
+      <h2>Support &amp; Tests</h2>
+      <p class="subnav-desc">Chrome color tokens, and the tests that lock down the pure logic.</p>
+      <button class="filetab">AppTheme</button>
+      <button class="filetab">EnsoTests/</button>
+    </div>
+  </nav>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <div class="main-inner">
+
+      <!-- ===== OVERVIEW ===== -->
+      <section class="panel" id="overview" data-title="Overview">
+        <div class="sec-label"><b>Start here</b> — the 30-second version</div>
+        <h2>How Enso is <em>actually</em> put together</h2>
+        <p class="prose">
+          Enso looks like one app, but it's really <strong>two programs shaking hands</strong>:
+          a Swift app that draws all the chrome (sidebar, tabs, palettes), and
+          <strong>libghostty</strong> — Ghostty's terminal engine — which does the actual
+          terminal-ing. Once you see that split, every file in the repo has an obvious home.
+        </p>
+        <p class="prose">
+          When you press a key in Enso, here's the whole journey. The Swift layers are the
+          ones you'll edit 95% of the time; the Zig layer is a prebuilt library you mostly
+          just <em>talk to</em>.
+        </p>
+
+        <div class="stack">
+          <div class="stack-row swift">
+            <div>
+              <h3>You + the chrome <span>SwiftUI · you edit this</span></h3>
+              <p>Sidebar, tabs, spaces, command palette, settings. Ordinary SwiftUI views reading from one shared store.</p>
+            </div>
+            <span class="tag">macos/Enso/Views + Stores</span>
+          </div>
+          <div class="stack-arrow">▼</div>
+          <div class="stack-row swift">
+            <div>
+              <h3>The bridge <span>Swift ↔ C · small but crucial</span></h3>
+              <p>A handful of files that create terminal surfaces, forward your keystrokes, and receive callbacks ("title changed", "bell rang").</p>
+            </div>
+            <span class="tag">macos/Enso/Ghostty</span>
+          </div>
+          <div class="stack-arrow">▼</div>
+          <div class="stack-row zig">
+            <div>
+              <h3>libghostty <span>Zig · prebuilt, not in this repo</span></h3>
+              <p>Ghostty's engine as <code>GhosttyKit.xcframework</code>. Owns the PTY, spawns your shell, parses escape codes, renders with Metal on the GPU.</p>
+            </div>
+            <span class="tag">macos/GhosttyKit.xcframework (symlink)</span>
+          </div>
+          <div class="stack-arrow">▼</div>
+          <div class="stack-row os">
+            <div>
+              <h3>Your shell <span>macOS · zsh, claude, vim…</span></h3>
+              <p>A real process on your Mac. Enso watches what's running here to pick tab icons and names.</p>
+            </div>
+            <span class="tag">the actual work</span>
+          </div>
+        </div>
+
+        <p class="prose" style="margin-top:20px">
+          The one mental model to keep: <strong>Enso never touches terminal bytes.</strong>
+          It manages <em>sessions</em> (which tabs exist, what's pinned where, what's running
+          in them) and hands each session a rectangle for libghostty to paint in.
+        </p>
+        <div class="hint"><span class="dot"></span> pick a section from the sidebar, then a file from its tab row — dotted tabs are the best entry points</div>
+      </section>
+
+      <!-- ===== 1. APP ENTRYPOINTS ===== -->
+      <section class="panel" id="entrypoints" data-title="App Entrypoints">
+        <div class="filetabs">
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">EnsoApp.swift <span class="star">START HERE</span></div>
+                <div class="fp-path"><code>macos/Enso/EnsoApp.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">177 lines</span><div class="locbar"><i style="width:8%"></i></div></div>
+            </div>
+            <p class="fp-what">The <code>@main</code> entry point — creates every long-lived object and injects them into SwiftUI.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>This is the app's dependency graph in one file: it constructs the session store, the Ghostty runtime, the update controller, etc., and passes them down as environment objects. If you ever wonder "who owns X?", the answer starts here.</p>
+              <p>It also picks the <strong>Application Support folder per build identity</strong> — Dev, Next, and stable Enso each get their own, because two running builds sharing one <code>state.json</code> would silently overwrite each other's tabs (last writer wins).</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TerminalCommands.swift</div>
+                <div class="fp-path"><code>macos/Enso/App/TerminalCommands.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">140 lines</span><div class="locbar"><i style="width:6%"></i></div></div>
+            </div>
+            <p class="fp-what">The menu bar: ⌘N new tab, ⌘W close, ⌘1–9 jump, ⇧⌘P pin — each menu item calls into the store.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>SwiftUI <code>Commands</code> blocks. Nice property: shortcuts here are <em>declared</em>, not intercepted — macOS routes them, so they show up in the menus for free and never fight the terminal for keystrokes.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">QuitGuard.swift</div>
+                <div class="fp-path"><code>macos/Enso/App/QuitGuard.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">123 lines</span><div class="locbar"><i style="width:5%"></i></div></div>
+            </div>
+            <p class="fp-what">The "Quit Enso? You have running sessions" confirmation dialog.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Quitting kills every live shell, so any quit path (⌘Q, menu, Dock) with sessions running shows a native modal alert first. It runs <em>modally on purpose</em>: <code>NSApp.terminate</code> asks "should I terminate?" synchronously, and blocking on the answer means there's no messy async quit-state to track.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">ContentView.swift</div>
+                <div class="fp-path"><code>macos/Enso/ContentView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">20 lines</span><div class="locbar"><i style="width:1%"></i></div></div>
+            </div>
+            <p class="fp-what">Twenty lines. Just hands off to <code>TerminalRootView</code>. Skip it.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Xcode's default scaffold, kept as a thin shim. All the actual window layout lives in <code>Views/TerminalRootView.swift</code>.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 2. GHOSTTY BRIDGE ===== -->
+      <section class="panel" id="ghostty-bridge" data-title="The Ghostty Bridge">
+        <div class="filetabs">
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">GhosttyRuntime.swift</div>
+                <div class="fp-path"><code>macos/Enso/Ghostty/GhosttyRuntime.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">306 lines</span><div class="locbar"><i style="width:13%"></i></div></div>
+            </div>
+            <p class="fp-what">Boots libghostty once, loads its config, and pumps its event loop.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Owns the single <code>ghostty_app_t</code> instance: global init, config loading (your regular Ghostty config file works here — that's why the terminal keeps your Ghostty theme), and a main-thread tick loop driven by ghostty wakeups.</p>
+              <p>The tricky part it handles: <strong>libghostty's C callbacks fire on its internal threads</strong>, so this file catches them in nonisolated code and hops to the main actor before touching any UI.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">GhosttySurfaceView.swift</div>
+                <div class="fp-path"><code>macos/Enso/Ghostty/GhosttySurfaceView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">608 lines</span><div class="locbar"><i style="width:26%"></i></div></div>
+            </div>
+            <p class="fp-what">The actual terminal rectangle — an NSView that libghostty renders into.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>One instance = one live terminal ("surface"). libghostty owns the PTY, the shell process, and the Metal rendering; this view's job is to <strong>feed it input, focus, and size changes</strong> — keystrokes down, resize events down, "the title changed" notifications up.</p>
+              <p>It's 600 lines because keyboard handling on macOS is genuinely fiddly: dead keys, IME, modifier quirks, mouse reporting, drag-and-drop of file paths. If a keystroke behaves oddly, look here first.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">GhosttySurfaceManager.swift</div>
+                <div class="fp-path"><code>macos/Enso/Ghostty/GhosttySurfaceManager.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">65 lines</span><div class="locbar"><i style="width:3%"></i></div></div>
+            </div>
+            <p class="fp-what">Keeps one live surface per tab, so switching tabs re-attaches the same running shell.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Tiny file, load-bearing idea: SwiftUI happily destroys and recreates views, but you can't "recreate" a running shell. So surfaces live <em>outside</em> the view hierarchy in this manager, keyed by session ID, and views merely borrow them. That's why switching tabs doesn't restart your process.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">GhosttyTerminalHostView.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/GhosttyTerminalHostView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">42 lines</span><div class="locbar"><i style="width:2%"></i></div></div>
+            </div>
+            <p class="fp-what">The SwiftUI wrapper (<code>NSViewRepresentable</code>) that places a surface inside SwiftUI layout.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>The adapter between worlds: SwiftUI on the outside, AppKit's <code>GhosttySurfaceView</code> on the inside. Nearly all "why is the terminal not resizing/focusing" bugs trace to this seam or the surface view behind it.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 3. MODELS ===== -->
+      <section class="panel" id="models" data-title="Models">
+        <div class="filetabs">
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TerminalSession.swift <span class="star">START HERE</span></div>
+                <div class="fp-path"><code>macos/Enso/Models/TerminalSession.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">299 lines</span><div class="locbar"><i style="width:13%"></i></div></div>
+            </div>
+            <p class="fp-what">The core nouns: a session (tab), a space (sidebar page), folders, and the pinned zone.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>The data model in one sentence: <strong>a space is one swipeable sidebar page, holding a pinned zone plus ephemeral tabs</strong>. The pinned zone is a single ordered list where loose tabs and folders interleave freely; folders hold tabs and cannot nest. Ephemeral (unpinned) tabs expire after 24 hours.</p>
+              <p>These types are <code>Codable</code> — what you see here is literally the schema of <code>state.json</code> on disk.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TabProcess.swift</div>
+                <div class="fp-path"><code>macos/Enso/Models/TabProcess.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">148 lines</span><div class="locbar"><i style="width:6%"></i></div></div>
+            </div>
+            <p class="fp-what">"What's running in this tab?" — the detection result that decides each tab's icon.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Combines two signals — shell-integration title events and the pty's resolved foreground process — into one verdict. Agents (Claude, Codex, Gemini, Ollama) get brand artwork, known tools (vim, ssh, git, docker) get SF Symbol glyphs, an unrecognized live process gets the running-blue dot, and an idle shell gets the grey one.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">IconCatalog.swift</div>
+                <div class="fp-path"><code>macos/Enso/Models/IconCatalog.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">108 lines</span><div class="locbar"><i style="width:5%"></i></div></div>
+            </div>
+            <p class="fp-what">The custom-icon picker's inventory: curated SF Symbols + the full emoji set.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Loads <code>sf-symbols.json</code> and <code>emoji.json</code> into searchable tiles for the icon picker (symbols carry keywords, emoji are matched on description + aliases + tags). Small subtlety: the "default dot" tile persists as <code>.dot</code>, not as a symbol, so the default stays the default.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 4. THE STORE ===== -->
+      <section class="panel" id="store" data-title="The Store">
+        <div class="filetabs">
+          <div class="filepane active">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TerminalSessionStore.swift <span class="star">START HERE</span></div>
+                <div class="fp-path"><code>macos/Enso/Stores/TerminalSessionStore.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">1,059 lines</span><div class="locbar"><i style="width:45%"></i></div></div>
+            </div>
+            <p class="fp-what">The single source of truth: all spaces, tabs, folders, selection — plus persistence.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>An <code>ObservableObject</code> that owns the array of spaces and everything inside them. Creating a tab, closing one, pinning, moving into folders, switching spaces, renaming — every one of those is a method here, and SwiftUI redraws whatever changed.</p>
+              <p>It also handles <strong>persistence</strong>: state saves to <code>state.json</code> in Application Support (debounced, not on every keystroke), reloads at launch, and prunes ephemeral tabs older than 24 hours. The flow is one-directional and boring in the best way: <em>view → store method → published change → view updates</em>. When a feature misbehaves, set a breakpoint in the relevant store method and you'll usually have your answer.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 5. SERVICES ===== -->
+      <section class="panel" id="services" data-title="Services">
+        <div class="filetabs">
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">CommandCenter.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/CommandCenter.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">1,113 lines</span><div class="locbar"><i style="width:47%"></i></div></div>
+            </div>
+            <p class="fp-what">Navigation · the ⌘T/⌘P palette — one fuzzy search over tabs, spaces, and commands.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>The second-biggest file in the app. Results group into "Recent Tabs", "Spaces", and "Commands"; the empty sheet preselects your most recent tab so Enter bounces you back, typing filters everything at once with per-section score sorting, and the first nine rows stay bound to ⌘1–9. Contains the fuzzy matcher, the recency model, and the whole command list.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TabSwitcher.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/TabSwitcher.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">174 lines</span><div class="locbar"><i style="width:7%"></i></div></div>
+            </div>
+            <p class="fp-what">Navigation · the ⌃Tab most-recently-used switcher with live preview HUD.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>A quick ⌃Tab tap flips to the last tab silently; <em>holding</em> Ctrl surfaces the HUD. Clever bit: cycling drives the <em>real</em> selection, so the live terminal behind the HUD is itself the preview — no snapshotting needed. Release commits, Esc restores where you started.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">ForegroundProcessResolver.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/ForegroundProcessResolver.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">307 lines</span><div class="locbar"><i style="width:13%"></i></div></div>
+            </div>
+            <p class="fp-what">Smart tabs · walks the process table to find what's actually running in a tab's pty.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Uses Darwin syscalls to walk from the shell pid to the pty's foreground process, producing the input for <code>TabProcess.detect</code>. The syscalls hide behind a protocol so the pid-walking logic is unit-testable without spawning live processes — a pattern worth stealing.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TabAutoNamer.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/TabAutoNamer.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">275 lines</span><div class="locbar"><i style="width:12%"></i></div></div>
+            </div>
+            <p class="fp-what">Smart tabs · asks an agent CLI to give each tab a human name, once, politely.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Shortly after a shell shows real activity, it asks an agent CLI (claude by default; configurable) to summarize what the terminal is doing and names the tab once. Its manners are the point: shell-integration titles remain the live baseline, a user rename is never overridden, and every failure is silent — the tab just keeps its shell title.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">AgentSessionStore.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/AgentSessionStore.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">266 lines</span><div class="locbar"><i style="width:11%"></i></div></div>
+            </div>
+            <p class="fp-what">Agent persistence · decides at launch which tabs should resume their Claude/Codex conversation.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>The restore half of the persistence machine (full design doc: <code>docs/agent-session-persistence.md</code>). Wrapper shims and hook relays append JSONL events to <code>agent-sessions/&lt;tab-uuid&gt;.jsonl</code> while you work; at launch this store compacts each file to its latest session and decides — per agent, gated by the quit snapshot and the Settings toggle — whether the tab's new shell should resume the conversation.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">AgentSessionAdapter.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/AgentSessionAdapter.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">264 lines</span><div class="locbar"><i style="width:11%"></i></div></div>
+            </div>
+            <p class="fp-what">Agent persistence · per-agent knowledge — how to record and resume claude vs codex.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Also defines the <strong>quit snapshot</strong>: written on every consented quit, it lets the next launch tell "was running when you quit" (restore it) from "crashed" (fall back to per-agent policies). The snapshot is consumed — deleted — after being read once, so a stale one can't lie twice.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">AgentShimInstaller.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/AgentShimInstaller.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">62 lines</span><div class="locbar"><i style="width:3%"></i></div></div>
+            </div>
+            <p class="fp-what">Agent persistence · installs the wrapper scripts that spy on agent launches.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Rewrites <code>shims/bin/</code> in Application Support from the bundled wrapper scripts at every launch (skipped when the version stamp matches), so installed shims always match the running app. Deliberately <em>not</em> under TMPDIR — macOS purges <code>/var/folders</code> entries that go untouched for a few days.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">AgentLaunchSanitizer.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/AgentLaunchSanitizer.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">196 lines</span><div class="locbar"><i style="width:8%"></i></div></div>
+            </div>
+            <p class="fp-what">Agent persistence · scrubs a recorded launch command before replaying it on restore.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Three tiers per agent: <strong>preserved</strong> options survive the replay (model, permission mode, MCP config); <strong>dropped</strong> ones are re-supplied by the restore itself (<code>--resume</code>, <code>--session-id</code> — dropping them is what makes restoring-a-restore idempotent); <strong>rejected</strong> ones (<code>-p</code>/<code>--print</code>) mean it was never an interactive session, so the whole restore is abandoned. Ported from cmux and trimmed to the agents Enso ships.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">UpdateController.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/UpdateController.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">334 lines</span><div class="locbar"><i style="width:14%"></i></div></div>
+            </div>
+            <p class="fp-what">Updates · drives Sparkle with Enso's own UI instead of Sparkle's dialogs.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Scheduled checks run silently in the background; when an update exists, the sidebar shows <code>UpdateCardView</code> and every step — download, extract, restart — is user-driven from that card. Implements Sparkle's <code>SPUUserDriver</code> protocol on the main actor and exposes a simple <code>phase</code> the views render.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">ReleaseNotesParser.swift</div>
+                <div class="fp-path"><code>macos/Enso/Services/ReleaseNotesParser.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">147 lines</span><div class="locbar"><i style="width:6%"></i></div></div>
+            </div>
+            <p class="fp-what">Updates · turns appcast release-notes HTML into the What's New sheet's sections.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>The happy path is the strict <code>&lt;h2&gt;/&lt;ul&gt;&lt;li&gt;</code> subset our release pipeline emits, but it never assumes it: unknown tags flatten to text, stray prose becomes an untitled section, and unparseable input degrades to tag-stripping — a hand-edited appcast shows as plain text instead of breaking the sheet.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 6. VIEWS ===== -->
+      <section class="panel" id="views" data-title="Views">
+        <div class="filetabs">
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TerminalRootView.swift <span class="star">START HERE</span></div>
+                <div class="fp-path"><code>macos/Enso/Views/TerminalRootView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">869 lines</span><div class="locbar"><i style="width:37%"></i></div></div>
+            </div>
+            <p class="fp-what">The window's floor plan: sidebar on the left, terminal card on the right, overlays on top.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Composes the whole window and owns cross-cutting UI state: sidebar pin/peek behavior (hover the left edge to peek; the peek→pin handoff commits instantly because animating it flashes the platform view), the space-swipe gesture, and which owned overlay (palette, settings, What's New) is presented. Read it second, after the store, to see how everything connects.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">SidebarView.swift</div>
+                <div class="fp-path"><code>macos/Enso/Views/SidebarView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">2,336 lines</span><div class="locbar"><i style="width:100%"></i></div></div>
+            </div>
+            <p class="fp-what">The biggest file in the app. Spaces, folders, tab rows, hover buttons, rename, drag-and-drop.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Don't read it top to bottom — nobody does. It's a bag of row components (tab rows, folder rows, space headers, the ephemeral zone) each with hover/press/drag choreography. Navigate by searching for the component name you're curious about.</p>
+              <p>The gnarliest logic was deliberately pulled <em>out</em>: drop-target math lives in <code>SidebarDrop/</code> where it can be unit-tested. What remains here is presentation.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">SidebarDropModel.swift</div>
+                <div class="fp-path"><code>macos/Enso/Views/SidebarDrop/SidebarDropModel.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">521 lines</span><div class="locbar"><i style="width:22%"></i></div></div>
+            </div>
+            <p class="fp-what">Pure math for drag-and-drop: pointer position in → one drop proposal out. Zero SwiftUI.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>One flatten function (tree → rows), one resolver (pointer location → drop proposal: between rows? into a folder? into the pinned zone?), one payload codec. No SwiftUI imports at all, which is why <code>SidebarDropModelTests</code> can hammer it with plain numbers. The companion <code>SidebarDropSupport.swift</code> wires it into real drag events.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">TerminalHeaderView.swift</div>
+                <div class="fp-path"><code>macos/Enso/Views/TerminalHeaderView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">395 lines</span><div class="locbar"><i style="width:17%"></i></div></div>
+            </div>
+            <p class="fp-what">The slim strip above the terminal that doubles as the window titlebar.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Blends into the terminal background and drags the window like a real titlebar. Double-click the title to rename in place; double-click empty strip to zoom. Also shows a live breadcrumb of the shell's current directory.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">SettingsPanelView.swift</div>
+                <div class="fp-path"><code>macos/Enso/Views/SettingsPanelView.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">572 lines</span><div class="locbar"><i style="width:24%"></i></div></div>
+            </div>
+            <p class="fp-what">The ⌘, settings window — its own <code>Window</code> scene with sidebar navigation.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Settings persist through <code>UserDefaults</code> keys (auto-naming toggle and command, agent restore toggle, …). The nav selection is held in an object that outlives the window, so closing and reopening lands you back on the same section.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">The supporting cast</div>
+                <div class="fp-path"><code>macos/Enso/Views/…</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">656 lines</span><div class="locbar"><i style="width:28%"></i></div></div>
+            </div>
+            <p class="fp-what">WhatsNewSheet, UpdateCardView, RowProcessBadge, TerminalWorkspaceView.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p><strong>WhatsNewSheet.swift</strong> (255) — the release-notes modal; doubles as the on-demand changelog from the palette, where its footer collapses to a lone Done button. <strong>UpdateCardView.swift</strong> (309) — the quiet update card at the bottom of the sidebar that walks available → downloading → restart inline. <strong>RowProcessBadge.swift</strong> (49) — the palette/switcher-scale twin of the sidebar's process badge. <strong>TerminalWorkspaceView.swift</strong> (43) — thin glue between the root view and the terminal host.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 7. SUPPORT & TESTS ===== -->
+      <section class="panel" id="support" data-title="Support &amp; Tests">
+        <div class="filetabs">
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">AppTheme.swift</div>
+                <div class="fp-path"><code>macos/Enso/Support/AppTheme.swift</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">204 lines</span><div class="locbar"><i style="width:9%"></i></div></div>
+            </div>
+            <p class="fp-what">Semantic colors for the app chrome — and the reason the terminal stays dark in light mode.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Appearance-aware tokens for the <em>chrome only</em>: sidebar, window frame, settings, owned modals — these follow the system light/dark setting. The terminal surface is deliberately excluded: its colors come from your Ghostty theme, so the terminal card (and the header strip that blends into it) stays dark in both appearances. Historically the chrome was authored as <code>.white.opacity(x)</code> over near-black; this file is those values given names and a light-mode translation.</p>
+            </div>
+          </div>
+
+          <div class="filepane">
+            <div class="fp-head">
+              <div>
+                <div class="fp-name">EnsoTests/</div>
+                <div class="fp-path"><code>macos/EnsoTests/</code></div>
+              </div>
+              <div class="fp-meta"><span class="loc">8 files</span><div class="locbar"><i style="width:15%"></i></div></div>
+            </div>
+            <p class="fp-what">Eight test files — a map of which logic the project considers worth locking down.</p>
+            <div class="file-deep">
+              <span class="deep-label">The real deal</span>
+              <p>Tests target the pure logic, not the pixels: <code>TerminalSessionStoreTests</code> (store mutations), <code>SidebarDropModelTests</code> (drag-and-drop math), <code>TabProcessTests</code> (process detection), <code>AgentSessionStoreTests</code> (restore decisions), <code>CommandCenterMonitorTests</code>, <code>ReleaseNotesParserTests</code>, <code>IconCatalogTests</code>. Notice the pattern: every "extracted, SwiftUI-free" module from the layers above has a matching test file. There's also <code>script/test_agent_shims.sh</code> exercising the shell shims themselves.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== JOURNEY: NEW TAB ===== -->
+      <section class="panel" id="journey-new-tab" data-title="How a New Tab Flows">
+        <div class="sec-label"><b>Journey</b> — follow a click end to end</div>
+        <h2>⌘N — a new tab is born</h2>
+        <p class="prose">
+          The fastest way to make a codebase feel familiar: trace one real action end to end.
+          Here's everything that happens between pressing ⌘N and a blinking prompt.
+        </p>
+
+        <div class="flow">
+          <ol>
+            <li><b>You press ⌘N.</b> macOS routes it to the menu item declared in <code>App/TerminalCommands.swift</code>.</li>
+            <li><b>The store makes a session.</b> The command calls into <code>Stores/TerminalSessionStore.swift</code>, which appends a new <code>TerminalSession</code> to the current space's ephemeral zone and selects it.</li>
+            <li><b>SwiftUI notices.</b> The store is an <code>ObservableObject</code>; <code>Views/SidebarView.swift</code> re-renders and a new tab row appears.</li>
+            <li><b>A surface is summoned.</b> The terminal area asks <code>Ghostty/GhosttySurfaceManager.swift</code> for this session's surface. There isn't one yet, so it creates a <code>GhosttySurfaceView</code>.</li>
+            <li><b>libghostty takes over.</b> The new surface (via <code>Ghostty/GhosttyRuntime.swift</code>) opens a PTY, spawns your shell, and starts painting with Metal. From here, keystrokes flow down and screen updates flow up — Swift never sees the bytes.</li>
+            <li><b>Later, it's saved.</b> The store debounce-writes <code>state.json</code>, so the tab survives a relaunch (for 24h, unless you pin it).</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ===== JOURNEY: DETECTION ===== -->
+      <section class="panel" id="journey-detection" data-title="Tab Process Detection">
+        <div class="sec-label"><b>Journey</b> — follow a click end to end</div>
+        <h2>🕵️ A tab realizes it's running claude</h2>
+        <p class="prose">
+          The signature feature: tabs that show what's actually running in them.
+          Two independent detectors, one verdict.
+        </p>
+
+        <div class="flow">
+          <ol>
+            <li><b>You run <code>claude</code> in a tab.</b> Two independent detectors wake up.</li>
+            <li><b>Signal one: the title.</b> The shell's integration emits a title event; libghostty passes it up through <code>Ghostty/GhosttySurfaceView.swift</code>'s callbacks.</li>
+            <li><b>Signal two: the process table.</b> <code>Services/ForegroundProcessResolver.swift</code> walks from the shell's pid to the pty's foreground process and finds a process literally named <code>claude</code>.</li>
+            <li><b>The verdict.</b> <code>Models/TabProcess.swift</code> combines both signals: this is a known agent → use the Claude brand mark.</li>
+            <li><b>The sidebar updates.</b> The tab row's badge swaps to the Claude logo; the palette and ⌃Tab switcher show the same thing via <code>Views/RowProcessBadge.swift</code>.</li>
+            <li><b>Bonus: the name.</b> Once the shell shows real activity, <code>Services/TabAutoNamer.swift</code> asks the claude CLI for a two-or-three-word summary and renames the tab — once, and never over a name you typed yourself.</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ===== JOURNEY: RESTORE ===== -->
+      <section class="panel" id="journey-restore" data-title="Quit &amp; Resurrection">
+        <div class="sec-label"><b>Journey</b> — follow a click end to end</div>
+        <h2>🔁 Quit &amp; resurrection</h2>
+        <p class="prose">
+          How a Claude conversation survives quitting the app. Four files conspire across
+          two launches. Full design doc: <a href="../agent-session-persistence.md">docs/agent-session-persistence.md</a>.
+        </p>
+
+        <div class="flow">
+          <ol>
+            <li><b>While you work,</b> the <code>claude</code> you're running is actually a wrapper shim (installed by <code>Services/AgentShimInstaller.swift</code>) that appends launch/session events to <code>agent-sessions/&lt;tab-uuid&gt;.jsonl</code>.</li>
+            <li><b>You press ⌘Q.</b> <code>App/QuitGuard.swift</code> counts live sessions and shows the confirmation alert. You say quit.</li>
+            <li><b>A snapshot drops.</b> A quit snapshot (defined in <code>Services/AgentSessionAdapter.swift</code>) records which tabs had agents running — this is how the next launch distinguishes a clean quit from a crash.</li>
+            <li><b>Next launch.</b> <code>Services/AgentSessionStore.swift</code> compacts each JSONL file to its latest session and — checking the snapshot and your Settings toggle — decides which tabs should resume.</li>
+            <li><b>The command is scrubbed.</b> <code>Services/AgentLaunchSanitizer.swift</code> filters the recorded argv: keep <code>--model</code>, drop the old <code>--resume</code>, abandon entirely if it was a one-shot <code>-p</code> run.</li>
+            <li><b>Resurrection.</b> The tab's new shell launches <code>claude --resume &lt;session&gt;</code> and your conversation continues where it left off.</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ===== REPO MAP ===== -->
+      <section class="panel" id="repo-map" data-title="The Repo Map">
+        <div class="sec-label"><b>Zooming out</b></div>
+        <h2>The rest of the repo</h2>
+        <p class="prose">
+          Everything in the file breakdown lives in <code>macos/</code>. The other top-level folders:
+        </p>
+
+        <div class="repo">
+<span class="d">cmux-alternative/</span><br>
+├─ <span class="d hot">macos/</span>              <span class="c">← the app. Enso.xcodeproj + everything this guide covers</span><br>
+│&nbsp;&nbsp; └─ GhosttyKit.xcframework  <span class="c">← symlink to the engine, built from references/ghostty</span><br>
+├─ <span class="d">script/</span>             <span class="c">← build_and_run.sh (dev loop), release.sh (ship it), shim tests</span><br>
+├─ <span class="d">docs/</span>               <span class="c">← you are here · + agent-session-persistence.md deep dive</span><br>
+├─ <span class="d">references/</span>         <span class="c">← full source of ghostty &amp; cmux, checked out for reading/building —</span><br>
+│&nbsp;&nbsp;                        <span class="c">&nbsp;&nbsp;not part of the app target. Great for "how does Ghostty do X?"</span><br>
+├─ <span class="d">RELEASE_NOTES/</span>      <span class="c">← one markdown file per version; feeds the What's New sheet</span><br>
+├─ <span class="d">website/</span>            <span class="c">← the marketing site</span><br>
+├─ <span class="d">lab/</span>                <span class="c">← experiments &amp; one-off tools (icon generator, etc.)</span><br>
+└─ <span class="d">internal-docs/</span>      <span class="c">← private notes, not shipped</span>
+        </div>
+
+        <p class="prose" style="margin-top:22px">
+          One gotcha for building from source: <code>GhosttyKit.xcframework</code> isn't vendored.
+          You build it once from <code>references/ghostty</code> with Zig and symlink it in —
+          the exact commands are in the <a href="../../README.md">README</a>.
+        </p>
+      </section>
+
+      <!-- ===== READING ORDER ===== -->
+      <section class="panel" id="reading-order" data-title="Reading Order">
+        <div class="sec-label"><b>Zooming out</b> — your first hour</div>
+        <h2>A reading order that won't hurt</h2>
+        <p class="prose">
+          If you open <code>SidebarView.swift</code> first you will have a bad time. Do this instead:
+        </p>
+
+        <div class="tour">
+          <div class="tour-item">
+            <span class="n">01</span>
+            <div>
+              <h4>Models/TerminalSession.swift <span>(10 min)</span></h4>
+              <p>Learn the nouns: session, space, folder, pinned zone. Everything else is verbs acting on these.</p>
+            </div>
+          </div>
+          <div class="tour-item">
+            <span class="n">02</span>
+            <div>
+              <h4>EnsoApp.swift <span>(5 min)</span></h4>
+              <p>See who creates whom. It's the app's object graph in 177 lines.</p>
+            </div>
+          </div>
+          <div class="tour-item">
+            <span class="n">03</span>
+            <div>
+              <h4>Stores/TerminalSessionStore.swift <span>(20 min, skim)</span></h4>
+              <p>Read the method names first — they're the app's feature list. Dive into <code>createSession</code> and the persistence block.</p>
+            </div>
+          </div>
+          <div class="tour-item">
+            <span class="n">04</span>
+            <div>
+              <h4>Views/TerminalRootView.swift <span>(15 min)</span></h4>
+              <p>The floor plan. After this you can find any view by walking down from here.</p>
+            </div>
+          </div>
+          <div class="tour-item">
+            <span class="n">05</span>
+            <div>
+              <h4>Ghostty/GhosttySurfaceManager.swift <span>(5 min)</span></h4>
+              <p>65 lines that explain why switching tabs doesn't kill your shell. Save the 608-line surface view for the day you need it.</p>
+            </div>
+          </div>
+          <div class="tour-item">
+            <span class="n">06</span>
+            <div>
+              <h4>Then: whichever Service matches your curiosity</h4>
+              <p>Each feature is one self-contained file with a doc comment on top that tells you its whole deal. The codebase's comments are genuinely good — trust them.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
