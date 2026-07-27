@@ -654,22 +654,26 @@ final class CommandCenter: ObservableObject {
                 }
             })
 
-            // ⌘W's two-step exit, mirrored: for a pinned awake tab the
-            // close slot IS the sleep command (searching "close" still
-            // finds it via the alias); sleeping and unpinned tabs keep the
-            // real Close.
+            // The two-step exit, mirrored: for a pinned awake tab this
+            // slot IS the sleep command (searching "close" still finds it
+            // via the alias); sleeping and unpinned tabs keep the real
+            // Close. The ⌘W caption rides with the Close title ONLY —
+            // ⌘W closes outright, so printing it beside a sleep-titled
+            // row would teach the destructive key as the safe one.
             let sleepsOnClose = store.selectedTabSleepsInsteadOfClosing
             commands.append(PaletteItem(
                 id: "cmd-close-tab",
                 icon: .symbol(sleepsOnClose ? "moon.zzz" : "xmark"),
                 title: sleepsOnClose ? "Put Tab to Sleep" : "Close Tab",
-                context: "⌘W",
+                context: sleepsOnClose ? nil : "⌘W",
                 verb: "Run",
                 searchAliases: sleepsOnClose ? ["Close Tab", "Sleep Tab"] : []
             ) { [weak store] in
                 guard let store, let selection = store.selection else { return }
                 if store.selectedTabSleepsInsteadOfClosing {
                     guard SleepConfirmation.consentsToSleep(store, sessionIDs: [selection]) else { return }
+                } else {
+                    guard CloseConfirmation.consentsToClose(store, sessionIDs: [selection]) else { return }
                 }
                 store.closeSelectedSession()
             })
@@ -700,6 +704,7 @@ final class CommandCenter: ObservableObject {
                 guard let store, let selection = store.selection else { return }
                 let others = store.activeSpace.sessions.map(\.id).filter { $0 != selection }
                 guard !others.isEmpty else { return }
+                guard CloseConfirmation.consentsToClose(store, sessionIDs: Set(others)) else { return }
                 store.close(sessionIDs: Set(others))
             })
 

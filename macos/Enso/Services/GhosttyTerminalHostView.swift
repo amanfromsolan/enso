@@ -207,7 +207,7 @@ final class SplitLayoutHostView: NSView {
                 // observer wakes just this pane.
                 let sessionID = id
                 let rootView = PaneSleepingView { [weak self] in
-                    self?.store?.selection = sessionID
+                    self?.store?.pickPane(sessionID)
                 }
                 if let overlay = sleepOverlays[id] {
                     overlay.rootView = rootView
@@ -1500,6 +1500,7 @@ private struct PaneHeaderControls: View {
                 tip: PaneControlTip(title: "Close Pane", keys: ["⌘", "W"]),
                 ink: ink
             ) {
+                guard CloseConfirmation.consentsToClose(store, sessionIDs: [session.id]) else { return }
                 store.close(sessionID: session.id)
             }
         }
@@ -1767,6 +1768,15 @@ private final class PaneControlTooltip {
     /// Long enough that sweeping the cluster doesn't strobe tips, short
     /// enough to feel like an answer rather than a wait.
     private static let appearDelay: TimeInterval = 0.4
+    /// How long a dismissed tip stays up waiting for a neighbour to claim
+    /// it. AppKit delivers the old control's hover-EXIT before the new
+    /// one's hover-enter, so without this window the neighbour-swap fast
+    /// path below is unreachable by construction — `isVisible` is always
+    /// already false by the time the next control asks — and sweeping the
+    /// cluster makes the tip blink out and re-serve the 400ms wait at
+    /// every stop. Short enough that leaving the cluster still reads as an
+    /// immediate dismissal.
+    private static let dismissGrace: TimeInterval = 0.1
     /// The gap between the mark's lower edge and the tip.
     private static let anchorGap: CGFloat = 7
 
@@ -1774,15 +1784,22 @@ private final class PaneControlTooltip {
     private var owner: PaneControlAnchorBox?
     private var isVisible = false
     private var token = 0
+    /// The pending grace-window dismissal, held so an arriving neighbour
+    /// can cancel it and adopt the tip that is still on screen.
+    private var pendingDismiss: DispatchWorkItem?
 
     private init() {}
 
     func show(_ tip: PaneControlTip, ink: Color, from box: PaneControlAnchorBox) {
+        // Whatever was on its way out is now this control's to keep.
+        pendingDismiss?.cancel()
+        pendingDismiss = nil
         owner = box
         token &+= 1
         let pending = token
-        // Once a tip is already up, sweeping to a neighbour swaps at once —
-        // the delay is the cost of the first one only.
+        // Once a tip is already up — including one inside its dismissal
+        // grace — sweeping to a neighbour swaps at once; the delay is the
+        // cost of the first one only.
         guard !isVisible else {
             present(tip, ink: ink, from: box)
             return
@@ -1795,11 +1812,22 @@ private final class PaneControlTooltip {
 
     /// Only the control that asked for the current tip may dismiss it, so a
     /// sweep's trailing exit can't cancel the tip its neighbour just raised.
+    /// The tip stays visible through a short grace window rather than going
+    /// dark immediately — see `dismissGrace`.
     func hide(from box: PaneControlAnchorBox) {
         guard owner === box else { return }
         owner = nil
         token &+= 1
-        dismiss()
+        pendingDismiss?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            // A neighbour that claimed the tip during the grace set owner
+            // again; only an untouched exit actually dismisses.
+            guard let self, self.owner == nil else { return }
+            self.pendingDismiss = nil
+            self.dismiss()
+        }
+        pendingDismiss = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.dismissGrace, execute: work)
     }
 
     private func present(_ tip: PaneControlTip, ink: Color, from box: PaneControlAnchorBox) {

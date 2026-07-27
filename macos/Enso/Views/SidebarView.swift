@@ -303,6 +303,11 @@ private struct SpacePage: View {
     let onEditSpace: (SidebarSpace) -> Void
 
     @State private var hoveredSessionID: TerminalSession.ID?
+    /// The row whose hover button (× or −) claimed the click currently
+    /// being dispatched. Transient by construction: `handleTap` clears it
+    /// as it consumes it, and leaving the row clears it too, so a click the
+    /// tap gesture never followed up on can't swallow a later one.
+    @State private var consumedClickSessionID: TerminalSession.ID?
     @State private var renamingSessionID: TerminalSession.ID?
     @State private var draftTitle = ""
     @FocusState private var renameFieldFocused: Bool
@@ -518,7 +523,7 @@ private struct SpacePage: View {
                     }
                     Divider()
                     Button("Delete Space", systemImage: "trash") {
-                        store.deleteSpace(space.id)
+                        CloseConfirmation.deleteSpace(store, space.id)
                     }
                     .disabled(store.spaces.count == 1)
                 } label: {
@@ -1032,7 +1037,8 @@ private struct SpacePage: View {
                         .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
                 } else if let process = session.runningProcess {
                     ProcessBadgeView(process: process, isSelected: isSelected)
-                } else if agentSessions.dormantAgent(forTab: session.id) != nil {
+                } else if agentSessions.dormantAgent(forTab: session.id) != nil,
+                          GhosttySurfaceManager.shared.existingView(for: session.id) == nil {
                     // An agent session lives here but isn't running yet
                     // (eager sweep hasn't reached it, or it's past the warm
                     // cap). After a relaunch such a tab is effectively
@@ -1043,6 +1049,9 @@ private struct SpacePage: View {
                     // toggle flips (the store publishes both); the flip to
                     // the full-color badge rides on process detection
                     // updating the session once the resume command runs.
+                    // A tab that already has a surface is live, whatever
+                    // the restore bookkeeping still says — a moon over a
+                    // running shell would be a plain lie.
                     Image(systemName: "moon.zzz.fill")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
@@ -1113,10 +1122,18 @@ private struct SpacePage: View {
                     idleTint: 0.5,
                     washOpacity: 0.09,
                     action: {
+                        // The row's tap gesture fires from this same click,
+                        // right after this action returns; claim the click
+                        // so it can't also select the row. Set BEFORE the
+                        // confirmation, because the alert runs a nested
+                        // modal loop and the tap lands on the way out of
+                        // it either way — declining a close must not leave
+                        // the user on the tab they declined to close.
+                        consumedClickSessionID = session.id
                         if sleeps {
                             requestSleep(session)
                         } else {
-                            store.close(sessionID: session.id)
+                            requestClose([session.id])
                         }
                     }
                 ) {
@@ -1154,6 +1171,12 @@ private struct SpacePage: View {
                 hoveredSessionID = session.id
             } else if hoveredSessionID == session.id {
                 hoveredSessionID = nil
+                // Leaving the row ends any click it was still holding —
+                // the hover button is gone with the hover, so nothing is
+                // coming to consume it.
+                if consumedClickSessionID == session.id {
+                    consumedClickSessionID = nil
+                }
             }
         }
         // A single immediate gesture (no TapGesture(count: 2) sibling):
@@ -1318,7 +1341,7 @@ private struct SpacePage: View {
         Divider()
 
         Button("Close\(plural)", systemImage: "xmark") {
-            store.close(sessionIDs: targets)
+            requestClose(targets)
         }
     }
 
@@ -1334,9 +1357,25 @@ private struct SpacePage: View {
         requestSleep([session.id])
     }
 
+    /// The × affordance and the context menu's Close (single or bulk):
+    /// same shape as requestSleep, but the confirmation is opt-in and
+    /// warns about what the close destroys.
+    private func requestClose(_ sessionIDs: Set<TerminalSession.ID>) {
+        guard CloseConfirmation.consentsToClose(store, sessionIDs: sessionIDs) else { return }
+        store.close(sessionIDs: sessionIDs)
+    }
+
     private func handleTap(_ session: TerminalSession) {
-        // The row tap fires alongside the close button's action; never
-        // select a session the button just closed.
+        // The row tap fires alongside the hover button's action, from the
+        // same click. Whether the button's gesture ACTUALLY happened is the
+        // only honest test — the old guard inferred it from the session
+        // having been destroyed, which silently stopped being true the day
+        // the close grew a cancellable confirmation.
+        if consumedClickSessionID == session.id {
+            consumedClickSessionID = nil
+            return
+        }
+        // A row whose session vanished under it has nothing to select.
         guard store.sessions.contains(where: { $0.id == session.id }) else { return }
         cancelRenames()
         let flags = NSEvent.modifierFlags
@@ -1356,8 +1395,7 @@ private struct SpacePage: View {
                 store.multiSelection.formUnion(order[min(from, to)...max(from, to)])
             }
         } else {
-            store.selection = session.id
-            store.multiSelection = [session.id]
+            store.pickPane(session.id)
         }
     }
 
@@ -1848,7 +1886,7 @@ private struct SpaceIndicatorBar: View {
                         onEdit(space)
                     }
                     Button("Delete Space", systemImage: "trash") {
-                        store.deleteSpace(space.id)
+                        CloseConfirmation.deleteSpace(store, space.id)
                     }
                     .disabled(store.spaces.count == 1)
                 }

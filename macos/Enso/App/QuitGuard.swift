@@ -74,6 +74,13 @@ final class QuitGuard {
     /// next launch "clean quit" apart from "crash" (an empty tab map is
     /// itself meaningful: nothing agent-related was running).
     func writeQuitSnapshot() {
+        // A read-only launch (state.json came from a newer build) knows
+        // only a slice of the real tabs, so its snapshot would read as
+        // "these were the only agents running" — and the omitted tabs lose
+        // their clean-quit restore on the newer build's next launch. Say
+        // nothing instead: absence means "crash", and every adapter's
+        // fallback is conservative in the safe direction.
+        guard store?.isStateReadOnly != true else { return }
         let agentsByTab = (store?.sessions ?? []).reduce(into: [UUID: String]()) { result, session in
             guard let process = session.runningProcess,
                   AgentSessionAdapterRegistry.all.contains(where: { $0.agentID == process.rawValue })
@@ -85,6 +92,32 @@ final class QuitGuard {
 }
 
 extension NSAlert {
+    /// Runs the alert modally with Escape (and ⌘.) restored to the given
+    /// button. AppKit gives a "Cancel" button those chords for free — but
+    /// only while it has no key equivalent of its own, and the close and
+    /// sleep confirmations deliberately hand Cancel the Return key so no
+    /// destructive action is the default. A button holds exactly one key
+    /// equivalent, so without this the dialog answers Esc with a beep and
+    /// reads as stuck. Same shape as the quit guard's ⌘Q monitor: scoped
+    /// to the modal session, clicking the button itself, which ends
+    /// runModal with that button's code.
+    @MainActor
+    func runModalCancellingOnEscape(with cancel: NSButton) -> NSApplication.ModalResponse {
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            let isEscape = event.keyCode == 53
+            let isCancelChord = event.modifierFlags.contains(.command)
+                && event.charactersIgnoringModifiers == "."
+            guard isEscape || isCancelChord else { return event }
+            cancel.performClick(nil)
+            return nil
+        }
+        let response = runModal()
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        return response
+    }
+
     /// Centers the alert over the app window, not the screen — shared by
     /// the quit and put-to-sleep confirmations. The modal session
     /// re-centers the panel when it orders it front, so an origin set here

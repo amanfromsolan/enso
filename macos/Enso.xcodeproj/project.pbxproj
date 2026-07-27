@@ -41,6 +41,7 @@
 		A1PICKEM012FD810C30001BF12 /* emoji.json in Resources */ = {isa = PBXBuildFile; fileRef = A1PICKEM022FD810C30001BF12 /* emoji.json */; };
 		A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1QUITG022FD810C30001BF12 /* QuitGuard.swift */; };
 		A1SLEEPC012FD810C30001BF12 /* SleepConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SLEEPC022FD810C30001BF12 /* SleepConfirmation.swift */; };
+		A1CLOSEC012FD810C30001BF12 /* CloseConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CLOSEC022FD810C30001BF12 /* CloseConfirmation.swift */; };
 		A1RELNTP012FD810C30001BF12 /* ReleaseNotesParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */; };
 		A1SETPNL012FD810C30001BF12 /* SettingsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */; };
 		A1SPKLBLD12FD810C30001BF12 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1SPKLPRD12FD810C30001BF12 /* Sparkle */; };
@@ -110,6 +111,7 @@
 		A1PICKEM022FD810C30001BF12 /* emoji.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "emoji.json"; path = "Resources/emoji.json"; sourceTree = "<group>"; };
 		A1QUITG022FD810C30001BF12 /* QuitGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuitGuard.swift; sourceTree = "<group>"; };
 		A1SLEEPC022FD810C30001BF12 /* SleepConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepConfirmation.swift; sourceTree = "<group>"; };
+		A1CLOSEC022FD810C30001BF12 /* CloseConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloseConfirmation.swift; sourceTree = "<group>"; };
 		A1RELNTP022FD810C30001BF12 /* ReleaseNotesParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotesParser.swift; sourceTree = "<group>"; };
 		A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanelView.swift; sourceTree = "<group>"; };
 		A1TABPRC022FD810C30001BF12 /* TabProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabProcess.swift; sourceTree = "<group>"; };
@@ -210,6 +212,7 @@
 				A10000012FD810C30001BF12 /* TerminalCommands.swift */,
 				A1QUITG022FD810C30001BF12 /* QuitGuard.swift */,
 				A1SLEEPC022FD810C30001BF12 /* SleepConfirmation.swift */,
+				A1CLOSEC022FD810C30001BF12 /* CloseConfirmation.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -453,6 +456,7 @@
 				A10000102FD810C30001BF12 /* TerminalCommands.swift in Sources */,
 				A1QUITG012FD810C30001BF12 /* QuitGuard.swift in Sources */,
 				A1SLEEPC012FD810C30001BF12 /* SleepConfirmation.swift in Sources */,
+				A1CLOSEC012FD810C30001BF12 /* CloseConfirmation.swift in Sources */,
 				A10000112FD810C30001BF12 /* TerminalSession.swift in Sources */,
 				A1SPLTRE012FD810C30001BF12 /* SplitTree.swift in Sources */,
 				A1TABPRC012FD810C30001BF12 /* TabProcess.swift in Sources */,

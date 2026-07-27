@@ -546,6 +546,45 @@ struct AgentSessionStoreTests {
         #expect(store.records[orphanTab] == nil)
     }
 
+    /// The downgrade case. When the tab store loaded a state.json written
+    /// by a newer build, `knownTabIDs` is a fraction of the real tabs — and
+    /// in the worst case (a body this build can't decode at all) it is one
+    /// fresh default tab. Collecting orphans against that view deletes the
+    /// newer build's conversations for good, on a launch whose whole
+    /// premise is that it touches nothing.
+    @Test func readOnlyLaunchCollectsNothing() throws {
+        let root = try makeRoot()
+        defer { try? fm.removeItem(at: root) }
+        let dir = root.appendingPathComponent("agent-sessions", isDirectory: true)
+        let knownTab = UUID()
+        let unknownTab = UUID()
+        let sleepingTab = UUID()
+        try writeMapFile(root: root, tabID: knownTab, lines: [launchLine(agent: "claude", sessionID: "x", ts: 100)])
+        try writeMapFile(root: root, tabID: unknownTab, lines: [launchLine(agent: "claude", sessionID: "y", ts: 100)])
+        try writeQuitSnapshotFile(root: root, tabs: [unknownTab.uuidString.lowercased(): "claude"])
+        // A sleep marker for a tab this build can't see either.
+        try JSONEncoder().encode([sleepingTab.uuidString.lowercased(): "claude"])
+            .write(to: dir.appendingPathComponent(".sleeping-tabs.json"))
+
+        let store = makeStore(root: root)
+        store.bootstrap(knownTabIDs: [knownTab], collectingOrphans: false)
+
+        let unknownFile = dir.appendingPathComponent("\(unknownTab.uuidString.lowercased()).jsonl")
+        #expect(fm.fileExists(atPath: unknownFile.path))
+        #expect(store.sleepingAgent(forTab: sleepingTab) == .claude)
+        // The quit snapshot survives too: deleting it would cost the newer
+        // build every "was running at a clean quit" restore.
+        #expect(fm.fileExists(atPath: dir.appendingPathComponent(".quit-snapshot.json").path))
+        // Still readable, so this launch's own restores behave normally.
+        #expect(store.quitSnapshot?.lists(unknownTab, agent: "claude") == true)
+
+        // A trustworthy launch collects all of it.
+        store.bootstrap(knownTabIDs: [knownTab])
+        #expect(!fm.fileExists(atPath: unknownFile.path))
+        #expect(store.sleepingAgent(forTab: sleepingTab) == nil)
+        #expect(!fm.fileExists(atPath: dir.appendingPathComponent(".quit-snapshot.json").path))
+    }
+
     @Test func bootstrapConsumesQuitSnapshot() throws {
         let root = try makeRoot()
         defer { try? fm.removeItem(at: root) }

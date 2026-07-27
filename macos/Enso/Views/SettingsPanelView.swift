@@ -223,8 +223,22 @@ private struct SettingsNavRow: View {
 private struct GeneralSettings: View {
     @AppStorage("restorePreviousSession") private var restoreSession = true
     @AppStorage("newTabWorkingDirectory") private var newTabDirectory = "home"
-    @AppStorage("confirmCloseTabs") private var confirmClose = true
+    @AppStorage(CloseConfirmation.enabledDefaultsKey) private var confirmClose = true
+    @AppStorage(SleepConfirmation.suppressionDefaultsKey) private var sleepConfirmSuppressed = false
+    @AppStorage(AgentNotificationCenter.enabledDefaultsKey) private var agentNotifications = true
+    @AppStorage(AgentNotificationCenter.onlyWhenUnfocusedDefaultsKey)
+    private var notifyOnlyWhenUnfocused = true
     @AppStorage("SUEnableAutomaticChecks") private var autoUpdateCheck = true
+
+    /// The sleep alert stores the opt-OUT, so the toggle reads inverted
+    /// rather than carrying a second key that could drift from the
+    /// alert's own "Don't ask me again".
+    private var confirmSleep: Binding<Bool> {
+        Binding(
+            get: { !sleepConfirmSuppressed },
+            set: { sleepConfirmSuppressed = !$0 }
+        )
+    }
 
     var body: some View {
         Section("Startup") {
@@ -244,15 +258,29 @@ private struct GeneralSettings: View {
             }
         }
 
-        Section {
+        Section("Confirmations") {
             Toggle(isOn: $confirmClose) {
                 Text("Confirm before closing tabs")
-                Text("Ask when a tab still has a process running.")
+                Text("Ask when something's still running in the tab.")
             }
-        } header: {
-            Text("Closing")
-        } footer: {
-            PreviewFootnote()
+
+            Toggle(isOn: confirmSleep) {
+                Text("Confirm before putting tabs to sleep")
+                Text("Ask when the tab's agent looks busy.")
+            }
+        }
+
+        Section("Notifications") {
+            Toggle(isOn: $agentNotifications) {
+                Text("Notify me when an agent needs me")
+                Text("Sends a notification when an agent asks for input or finishes.")
+            }
+
+            Toggle(isOn: $notifyOnlyWhenUnfocused) {
+                Text("Only when Enso isn't focused")
+                Text("Stays quiet while you're already in the app.")
+            }
+            .disabled(!agentNotifications)
         }
 
         Section {
@@ -685,15 +713,6 @@ private struct ShortcutRow: View {
             Text(keys.joined())
                 .foregroundStyle(.secondary)
         }
-    }
-}
-
-/// Marks sections whose switches persist but aren't enforced yet.
-private struct PreviewFootnote: View {
-    var body: some View {
-        Text("Preview — these preferences are saved but not wired up yet.")
-            .font(.system(size: 11.5))
-            .foregroundStyle(Theme.text(0.35))
     }
 }
 

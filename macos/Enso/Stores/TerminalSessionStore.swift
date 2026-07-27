@@ -89,6 +89,22 @@ final class TerminalSessionStore: ObservableObject {
     private var expiryTimer: Timer?
     private let persistToDisk: Bool
 
+    /// Set when the state file on disk was written by a build with a newer
+    /// schema than this one understands. Gates `save()` AND every
+    /// destructive piece of housekeeping that keys off "the tabs I know
+    /// about" — because when the file didn't decode, the tabs we know
+    /// about are one fresh default tab and everything else looks like an
+    /// orphan. See the load path and `isStateReadOnly`.
+    private var stateFileIsReadOnly = false
+
+    /// Whether this launch is running off a state file it must not write —
+    /// and, just as importantly, must not garbage-collect against. Our view
+    /// of which tabs exist is untrustworthy here, so the agent-session
+    /// layer's orphan GC, the close-time record drop, and the ephemeral
+    /// expiry sweep all stand down: a downgrade must cost the user a
+    /// session's worth of persistence, never their conversations.
+    var isStateReadOnly: Bool { stateFileIsReadOnly }
+
     /// Wake-setting changes take effect live: a raised count or a switch to
     /// "wake everything" starts a fresh sweep instead of waiting for the
     /// next space switch. UserDefaults.didChangeNotification fires on every
@@ -105,8 +121,17 @@ final class TerminalSessionStore: ObservableObject {
         )
     }
 
-    init(spaces: [SidebarSpace]? = nil, persistToDisk: Bool = true) {
+    /// `stateIsReadOnly` is only ever passed alongside explicit `spaces`:
+    /// the real launch decides it from the file it loaded (below), and a
+    /// store handed its spaces directly has no file to judge — so tests
+    /// covering the stand-down behavior say so up front.
+    init(
+        spaces: [SidebarSpace]? = nil,
+        persistToDisk: Bool = true,
+        stateIsReadOnly: Bool = false
+    ) {
         self.persistToDisk = persistToDisk
+        self.stateFileIsReadOnly = stateIsReadOnly
 
         var loaded: [SidebarSpace]
         var loadedContainers: [SplitContainer] = []
@@ -115,6 +140,19 @@ final class TerminalSessionStore: ObservableObject {
         } else if persistToDisk, let state = Self.loadState() {
             loaded = state.spaces
             loadedContainers = state.splitContainers ?? []
+            // A file from a newer build carries fields this one would drop
+            // on re-encode, so the safe move is to read what we understand
+            // and never write back: the user keeps their spaces for the
+            // session, and running an older Enso can't truncate — or, if
+            // the body didn't decode at all, erase — what the newer one
+            // saved. The next launch of the newer build finds it intact.
+            if state.isFutureSchema {
+                stateFileIsReadOnly = true
+                NSLog(
+                    "Enso: state.json is schema v%d, this build understands v%d — loading read-only.",
+                    state.schemaVersion, Self.stateSchemaVersion
+                )
+            }
         } else {
             loaded = []
         }
@@ -130,15 +168,17 @@ final class TerminalSessionStore: ObservableObject {
         // membership must only ever cover live sessions.
         pruneSplitContainerMembership()
 
+        // Selection lands BEFORE the expiry sweep, not after: the sweep
+        // exempts the selected tab, and an exemption evaluated while
+        // selection is still nil protects nothing — a restored ephemeral
+        // tab older than the TTL would be reaped out from under the very
+        // launch about to open it.
+        landOnPopulatedSpace()
         pruneExpiredEphemeralSessions()
-
-        if activeSpace.sessions.isEmpty, let first = self.spaces.first(where: { !$0.sessions.isEmpty }) {
-            self.activeSpaceID = first.id
+        // The sweep can empty the space the launch just landed in.
+        if activeSpace.sessions.isEmpty {
+            landOnPopulatedSpace()
         }
-        // Non-waking on purpose: launch restores the exact shape the app
-        // quit in, and a selection that was asleep then comes back asleep,
-        // showing its sleeping card.
-        setSelection(activeSpace.lastSelection ?? activeSpace.sessions.first?.id, waking: false)
 
         if persistToDisk {
             let timer = Timer(timeInterval: 30 * 60, repeats: true) { [weak self] _ in
@@ -162,6 +202,17 @@ final class TerminalSessionStore: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Lands the launch on a space that actually has tabs and restores its
+    /// remembered selection. Non-waking on purpose: launch restores the
+    /// exact shape the app quit in, and a selection that was asleep then
+    /// comes back asleep, showing its sleeping card.
+    private func landOnPopulatedSpace() {
+        if activeSpace.sessions.isEmpty, let first = spaces.first(where: { !$0.sessions.isEmpty }) {
+            activeSpaceID = first.id
+        }
+        setSelection(activeSpace.lastSelection ?? activeSpace.sessions.first?.id, waking: false)
     }
 
     // MARK: - Spaces
@@ -256,12 +307,22 @@ final class TerminalSessionStore: ObservableObject {
         save()
     }
 
+    /// Deletes a space and everything in it. The tabs go through the
+    /// ordinary `close` path rather than a bare surface teardown, so they
+    /// inherit its cleanup in full — agent records dropped, delivered
+    /// attention banners pulled — instead of stranding both behind a space
+    /// that no longer exists. The close CONFIRMATION belongs to the caller
+    /// (the menu items ask once for the whole space); by the time this
+    /// runs the user has already said yes.
     func deleteSpace(_ spaceID: SidebarSpace.ID) {
         guard spaces.count > 1, let index = spaces.firstIndex(where: { $0.id == spaceID }) else { return }
-        let removed = spaces[index]
-        for session in removed.sessions {
-            GhosttySurfaceManager.shared.closeSurface(for: session.id)
+        let doomed = Set(spaces[index].sessions.map(\.id))
+        if !doomed.isEmpty {
+            close(sessionIDs: doomed)
         }
+        // The close emptied the space but left it in place; re-find it,
+        // since nothing guarantees the index survived the mutation.
+        guard let index = spaces.firstIndex(where: { $0.id == spaceID }) else { return }
         spaces.remove(at: index)
         // Containers whose members lived in the deleted space are gone too.
         pruneSplitContainerMembership()
@@ -798,24 +859,24 @@ final class TerminalSessionStore: ObservableObject {
 
     // MARK: - Closing
 
-    /// Whether ⌘W (and the palette's close command) would put the selected
-    /// tab to sleep instead of closing it: pinned awake tabs get the
-    /// two-step exit — sleep first (which hands the workspace back to the
-    /// previous tab), close the sleeping tab second, from its row's × or
-    /// context menu, or with another ⌘W when a sleeping tab holds the
-    /// selection (the relaunch shape) — so one keystroke can never
-    /// silently destroy a pinned tab or the saved conversation a sleep
-    /// promised to keep. The menu and palette read this to title the
-    /// command and run the busy confirmation to match.
+    /// Whether the palette's close slot puts the selected tab to sleep
+    /// instead of closing it: pinned awake tabs get the two-step exit —
+    /// sleep first (which hands the workspace back to the previous tab),
+    /// close the sleeping tab second — so the palette's one visible verb
+    /// can never silently destroy a pinned tab or the saved conversation a
+    /// sleep promised to keep. NOT a ⌘W predicate: ⌘W closes outright (it
+    /// runs the close confirmation instead), so the palette drops the ⌘W
+    /// caption whenever this is true. The palette reads this to title the
+    /// command and pick the matching confirmation.
     var selectedTabSleepsInsteadOfClosing: Bool {
         guard let selection,
               let session = sessions.first(where: { $0.id == selection }) else { return false }
         return isPinned(selection) && !session.isSleeping
     }
 
-    /// ⌘W. The caller runs the busy confirmation first when
-    /// selectedTabSleepsInsteadOfClosing says the close is really a sleep;
-    /// this just performs.
+    /// The palette's close slot. The caller runs the matching confirmation
+    /// first — sleep's when selectedTabSleepsInsteadOfClosing says the
+    /// close is really a sleep, close's otherwise; this just performs.
     func closeSelectedSession() {
         guard let selection else { return }
         if selectedTabSleepsInsteadOfClosing {
@@ -856,8 +917,12 @@ final class TerminalSessionStore: ObservableObject {
         for id in sessionIDs {
             GhosttySurfaceManager.shared.closeSurface(for: id)
         }
-        if persistToDisk {
-            // A closed tab can never resume its agent conversation.
+        if persistToDisk, !stateFileIsReadOnly {
+            // A closed tab can never resume its agent conversation — but
+            // only when we trust our own view of the state file. On a
+            // read-only launch the tabs on screen may be a fraction of the
+            // real set, and dropping records per close would leak the
+            // newer build's conversations one tab at a time.
             AgentSessionStore.shared.removeRecords(forTabs: sessionIDs)
         }
         // Nor can its attention notification lead anywhere; drop any
@@ -1229,7 +1294,18 @@ final class TerminalSessionStore: ObservableObject {
         guard let selection,
               splitContainer(containing: selection)?.tree.contains(sessionID) == true
         else { return }
-        self.selection = sessionID
+        pickPane(sessionID)
+    }
+
+    /// THE pane pick — clicking a live pane's surface, clicking a sleeping
+    /// pane's moon, or a sidebar row's plain click. Selection and
+    /// multiSelection land TOGETHER: a pick replaces whatever set was
+    /// highlighted, and a caller that assigned only `selection` would leave
+    /// bulk context-menu actions aimed at rows the user has visibly moved
+    /// on from. Waking on purpose — a pick is a genuine user visit, which
+    /// is what the moon's click depends on.
+    func pickPane(_ sessionID: TerminalSession.ID) {
+        selection = sessionID
         multiSelection = [sessionID]
     }
 
@@ -1315,18 +1391,27 @@ final class TerminalSessionStore: ObservableObject {
     /// wouldn't actually resume.
     func eagerRestoreCandidates(
         mayRestore: ((TerminalSession.ID) -> Bool)? = nil,
+        hasSurface: ((TerminalSession.ID) -> Bool)? = nil,
         budget: Int? = nil
     ) -> [TerminalSession] {
         // Resolved here, not as default arguments: the fallbacks read the
         // main-actor AgentSessionStore and this store's launch budget, and
         // only the method body carries that isolation.
         let mayRestore = mayRestore ?? { AgentSessionStore.shared.mayRestore(forTab: $0) }
+        let hasSurface = hasSurface ?? {
+            GhosttySurfaceManager.shared.existingView(for: $0) != nil
+        }
         let budget = budget ?? remainingAgentWakeBudget
         return Array(
             activeSpace.sessions
                 // Sleeping tabs wait for their click — a background warm-up
-                // spawning their agent would defeat the sleep.
-                .filter { $0.id != selection && !$0.isSleeping && mayRestore($0.id) }
+                // spawning their agent would defeat the sleep. A tab whose
+                // surface already exists has nothing left to warm: its
+                // shell is up, so picking it would spend a capped slot on
+                // an idempotent no-op and starve a genuinely dormant tab.
+                .filter {
+                    $0.id != selection && !$0.isSleeping && !hasSurface($0.id) && mayRestore($0.id)
+                }
                 .sorted {
                     // Swift's sort is unstable, so equal lastActivity (bulk
                     // state imports, freshly seeded spaces) needs a stable
@@ -1362,11 +1447,14 @@ final class TerminalSessionStore: ObservableObject {
                 // the stagger (its surface must not come back), gone to
                 // sleep (waking it is the user's call), its restore may
                 // have evaporated (toggled off or consumed — the tab must
-                // stay lazy), and its cwd may have changed. view(for:) is
-                // idempotent, so a tab the user already switched to is a
-                // no-op.
+                // stay lazy), and its cwd may have changed. A tab whose
+                // surface already exists is skipped rather than "warmed":
+                // view(for:) would hand back the live view unchanged, and
+                // counting that no-op against the budget spends the whole
+                // "recent 5" on tabs that were never asleep.
                 guard let live = self.sessions.first(where: { $0.id == sessionID }),
                       !live.isSleeping,
+                      GhosttySurfaceManager.shared.existingView(for: sessionID) == nil,
                       AgentSessionStore.shared.hasPendingRestore(forTab: sessionID)
                 else { return }
                 self.wireSurfaceCallbacks(GhosttySurfaceManager.shared.view(for: live), for: sessionID)
@@ -1596,6 +1684,12 @@ final class TerminalSessionStore: ObservableObject {
         tabID: TerminalSession.ID, kind: AgentAttentionKind, isAppActive: Bool
     ) -> String? {
         guard let session = sessions.first(where: { $0.id == tabID }) else { return nil }
+        // A sleeping tab has no agent left to need anything. The watcher
+        // polls at 1Hz, so a hook line appended in the instant before the
+        // sleep lands arrives just after it — and re-lighting the row (plus
+        // a "finished responding" banner whose click would wake the tab)
+        // takes back the thing the user just did.
+        guard !session.isSleeping else { return nil }
         if tabID == selection, isAppActive { return nil }
         let alreadyMarked = session.status == .attention
         update(tabID) { item in
@@ -1620,8 +1714,12 @@ final class TerminalSessionStore: ObservableObject {
     /// so only the committed pick (via recordSelectionRecency) clears.
     private func clearAttention(_ sessionID: TerminalSession.ID?) {
         guard let sessionID, !isCyclingSelection else { return }
-        guard sessions.first(where: { $0.id == sessionID })?.status == .attention else { return }
-        update(sessionID) { $0.status = .running }
+        guard let session = sessions.first(where: { $0.id == sessionID }),
+              session.status == .attention else { return }
+        // A sleeping tab has no shell to be running: it goes back to the
+        // idle state the sleep set, not to .running. Reachable whenever a
+        // non-waking selection lands on a sleeping row whose dot is lit.
+        update(sessionID) { $0.status = session.isSleeping ? .idle : .running }
         onAttentionCleared?(sessionID)
     }
 
@@ -1660,17 +1758,36 @@ final class TerminalSessionStore: ObservableObject {
     static let ephemeralTTLDefaultsKey = "ephemeralTTLHours"
 
     func pruneExpiredEphemeralSessions() {
+        let expired = expiredEphemeralSessions()
+        guard !expired.isEmpty else { return }
+        close(sessionIDs: Set(expired.map(\.id)))
+    }
+
+    /// The unpinned tabs a sweep would close, and every exemption that
+    /// keeps one alive. Split out of the sweep so those exemptions can be
+    /// tested without waiting out a real day-long TTL — `now` is the only
+    /// reason this takes a parameter.
+    func expiredEphemeralSessions(now: Date = .now) -> [TerminalSession] {
+        // A launch that can't trust its view of state.json can't tell an
+        // expired tab from one it simply failed to read; reaping on that
+        // view would close tabs the newer build still owns.
+        guard !stateFileIsReadOnly else { return [] }
         let hours = UserDefaults.standard.object(forKey: Self.ephemeralTTLDefaultsKey) as? Int ?? 24
-        guard hours > 0 else { return }
-        let cutoff = Date.now.addingTimeInterval(-TimeInterval(hours) * 3600)
-        let expired = spaces.flatMap(\.ephemeralSessions).filter {
+        guard hours > 0 else { return [] }
+        let cutoff = now.addingTimeInterval(-TimeInterval(hours) * 3600)
+        return spaces.flatMap(\.ephemeralSessions).filter {
             // Sleeping tabs are deliberately parked, never expired: an
             // unpinned sleeper quietly closing would delete the very
             // conversation the sleep promised to keep.
-            !$0.isSleeping && $0.lastActivity < cutoff && $0.id != selection
+            guard !$0.isSleeping, $0.lastActivity < cutoff, $0.id != selection else { return false }
+            // Nor may the sweep dissolve a split the user is looking at.
+            // lastActivity only moves on selection and explicit activity,
+            // and an on-screen but unfocused pane never gets either — so
+            // by the clock alone a perfectly live dev server reads as
+            // abandoned. Membership of a split container is the honest
+            // signal that the tab is still on screen.
+            return splitContainer(containing: $0.id) == nil
         }
-        guard !expired.isEmpty else { return }
-        close(sessionIDs: Set(expired.map(\.id)))
     }
 
     // MARK: - Selection recency
@@ -1800,10 +1917,30 @@ final class TerminalSessionStore: ObservableObject {
 
     // MARK: - Persistence
 
-    private struct PersistedState: Codable {
+    /// Schema version this build writes and understands. Version 1 is the
+    /// shape below — `spaces`, each carrying its own folders, tabs, pin
+    /// state and lastSelection, plus a flat `splitContainers` list — and
+    /// covers every file written before versioning shipped, since those
+    /// carry no `version` key at all. Bump this only for a change the
+    /// decoder above cannot absorb with an optional property; that is
+    /// what the migration hook is for.
+    static let stateSchemaVersion = 1
+
+    /// Internal rather than private so the schema handling can be tested
+    /// without a real state file on disk.
+    struct PersistedState: Codable {
+        /// Absent in every file written before versioning shipped; see
+        /// `stateSchemaVersion`.
+        var version: Int?
         var spaces: [SidebarSpace]
         /// Absent in state files written before splits shipped.
         var splitContainers: [SplitContainer]?
+
+        /// An unversioned file is version 1 by definition.
+        var schemaVersion: Int { version ?? 1 }
+
+        /// Written by a build that knows something this one doesn't.
+        var isFutureSchema: Bool { schemaVersion > TerminalSessionStore.stateSchemaVersion }
     }
 
     /// Pre-spaces state file layout, migrated on first load.
@@ -1842,6 +1979,17 @@ final class TerminalSessionStore: ObservableObject {
 
     private static func loadState() -> PersistedState? {
         guard let data = try? Data(contentsOf: stateURL) else { return nil }
+        return decodeState(from: data)
+    }
+
+    /// Just the version, for a file whose body this build can't decode.
+    private struct StateVersionProbe: Codable {
+        var version: Int?
+    }
+
+    /// Split out of `loadState()` so both the legacy migration and the
+    /// version handling are testable without touching the real file.
+    static func decodeState(from data: Data) -> PersistedState? {
         if let state = try? JSONDecoder().decode(PersistedState.self, from: data) {
             return state
         }
@@ -1855,14 +2003,25 @@ final class TerminalSessionStore: ObservableObject {
                 )
             ])
         }
+        // Last resort: a newer build's file whose body this decoder can't
+        // read at all. Recovering the version alone is still worth it —
+        // the caller reads that as "hands off" and runs the launch
+        // read-only, so a downgrade leaves the file intact instead of
+        // replacing a user's spaces with a fresh default one.
+        if let probe = try? JSONDecoder().decode(StateVersionProbe.self, from: data),
+           let version = probe.version, version > stateSchemaVersion {
+            return PersistedState(version: version, spaces: [])
+        }
         return nil
     }
 
     private func save() {
-        guard persistToDisk else { return }
+        guard persistToDisk, !stateFileIsReadOnly else { return }
         withSpace(activeSpaceID) { $0.lastSelection = selection }
         guard let data = try? JSONEncoder().encode(
-            PersistedState(spaces: spaces, splitContainers: splitContainers)
+            PersistedState(
+                version: Self.stateSchemaVersion, spaces: spaces, splitContainers: splitContainers
+            )
         ) else { return }
         try? data.write(to: Self.stateURL, options: .atomic)
     }

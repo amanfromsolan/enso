@@ -94,6 +94,7 @@ struct TerminalCommands: Commands {
             // row affordance, context menu, and palette.
             Button("Close Tab") {
                 guard let selection = store.selection else { return }
+                guard CloseConfirmation.consentsToClose(store, sessionIDs: [selection]) else { return }
                 store.close(sessionID: selection)
             }
             .keyboardShortcut("w", modifiers: .command)

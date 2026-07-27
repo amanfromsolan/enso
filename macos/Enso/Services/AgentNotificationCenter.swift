@@ -15,6 +15,19 @@ final class AgentNotificationCenter: NSObject, UNUserNotificationCenterDelegate 
     /// round-trip.
     nonisolated private static let tabIDKey = "ensoTabID"
 
+    /// Settings' master switch. Read at post time, not cached, so a flip
+    /// takes effect on the very next event instead of at relaunch. Unset
+    /// means on — the feature ships enabled.
+    nonisolated static let enabledDefaultsKey = "agentNotificationsEnabled"
+    /// Settings' "Only when Enso isn't focused". Unset means on: a banner
+    /// over the app the user is already looking at is noise, since the
+    /// sidebar's attention dot has already said the same thing.
+    nonisolated static let onlyWhenUnfocusedDefaultsKey = "agentNotificationsOnlyWhenUnfocused"
+
+    nonisolated private static func flag(_ key: String) -> Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+
     /// Takes over as the center's delegate. Called at app startup so a click
     /// arriving early (or one that launched the app) still routes to a tab.
     func activate() {
@@ -27,6 +40,10 @@ final class AgentNotificationCenter: NSObject, UNUserNotificationCenterDelegate 
     /// remembers a denial and the settings check keeps us silent afterwards,
     /// so there is no denial state to store on our side.
     func post(tabID: UUID, title: String, body: String) {
+        // Before the authorization request, not after: a user who turned
+        // notifications off in Settings must never be shown the system's
+        // permission prompt on their behalf.
+        guard Self.flag(Self.enabledDefaultsKey) else { return }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
@@ -87,15 +104,19 @@ final class AgentNotificationCenter: NSObject, UNUserNotificationCenterDelegate 
         completionHandler()
     }
 
-    /// While Enso is frontmost a banner would be noise — the sidebar's
-    /// attention dot already covers non-selected tabs in-app — so suppress
-    /// presentation entirely; the notification still lands if the app is in
-    /// the background.
+    /// This fires only for notifications arriving while Enso is frontmost,
+    /// so it is exactly where "Only when Enso isn't focused" lives: with it
+    /// on (the default) a banner here would be noise — the sidebar's
+    /// attention dot already covers non-selected tabs in-app — and the
+    /// notification still lands when the app is in the background. With it
+    /// off the banner shows regardless.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([])
+        let show = Self.flag(Self.enabledDefaultsKey)
+            && !Self.flag(Self.onlyWhenUnfocusedDefaultsKey)
+        completionHandler(show ? [.banner, .sound] : [])
     }
 }

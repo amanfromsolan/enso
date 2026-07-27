@@ -26,20 +26,20 @@ enum SleepConfirmation {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = plural ? "Put these tabs to sleep?" : "Put this tab to sleep?"
-        // Soft on purpose: "looks like" — the busy signal can't tell a
-        // working agent from one idling at its prompt, so the copy must
-        // not overclaim.
+        // Soft on purpose: "looks" — the busy signal can't tell a working
+        // agent from one idling at its prompt, so the copy must not
+        // overclaim.
         alert.informativeText = plural
-            ? "\(displayName(agent)) looks like it's in the middle of something. "
-                + "Putting the tabs to sleep stops it. Your conversations are saved "
-                + "and pick back up when you wake them."
-            : "\(displayName(agent)) looks like it's in the middle of something. "
-                + "Putting the tab to sleep stops it. Your conversation is saved "
-                + "and picks back up when you wake the tab."
+            ? "\(displayName(agent)) looks busy. Your conversations are saved "
+                + "and resume when you wake them."
+            : "\(displayName(agent)) looks busy. Your conversation is saved "
+                + "and resumes when you wake the tab."
 
         // Put to Sleep keeps the primary position but not the Return key:
         // a stray-click guard must not have a destructive default, so
-        // Return cancels and the sleep takes a deliberate click.
+        // Return cancels and the sleep takes a deliberate click — and Esc,
+        // which Cancel's key equivalent displaced, comes back through the
+        // modal-scoped monitor.
         let sleep = alert.addButton(withTitle: "Put to Sleep")
         sleep.keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "Cancel")
@@ -48,7 +48,7 @@ enum SleepConfirmation {
         alert.suppressionButton?.title = "Don't ask me again"
         alert.centerOverAppWindow()
 
-        guard alert.runModal() == .alertFirstButtonReturn else {
+        guard alert.runModalCancellingOnEscape(with: cancel) == .alertFirstButtonReturn else {
             // Cancelled: hand focus back to the terminal the alert covered.
             GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
             return false

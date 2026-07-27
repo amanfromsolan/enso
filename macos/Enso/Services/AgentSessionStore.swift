@@ -138,15 +138,30 @@ final class AgentSessionStore: ObservableObject {
     /// Called once at startup, after the tab store loaded state.json:
     /// consumes the quit snapshot, garbage-collects map files whose tab no
     /// longer exists, and compacts the survivors into in-memory records.
-    func bootstrap(knownTabIDs: Set<UUID>) {
+    ///
+    /// `collectingOrphans: false` is the downgrade case — the tab store
+    /// read a state file written by a newer build, so `knownTabIDs` is at
+    /// best a subset of the real tabs and at worst a single fresh default
+    /// one. Deleting every map file and sleep marker outside that view
+    /// would erase conversations the newer build still owns, permanently,
+    /// on a launch the user thinks is read-only. Orphans cost a few
+    /// kilobytes until a trustworthy launch collects them; this is not a
+    /// trade.
+    func bootstrap(knownTabIDs: Set<UUID>, collectingOrphans: Bool = true) {
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        quitSnapshot = consumeQuitSnapshot()
+        // Read either way; only a trustworthy launch consumes it. Deleting
+        // the newer build's snapshot would cost it every restore that
+        // depends on "was running at a clean quit" — the same class of
+        // loss as deleting the map files, one indirection out.
+        quitSnapshot = readQuitSnapshot(consuming: collectingOrphans)
         records = [:]
         consumedTabIDs = []
         // Sleep markers whose tab no longer exists are as dead as their map
         // files; a stale one would silently gate that tab id's restores.
-        let staleSleepers = sleepingAgentsByTab.keys.filter { !knownTabIDs.contains($0) }
+        let staleSleepers = collectingOrphans
+            ? sleepingAgentsByTab.keys.filter { !knownTabIDs.contains($0) }
+            : []
         if !staleSleepers.isEmpty {
             staleSleepers.forEach { sleepingAgentsByTab[$0] = nil }
             saveSleepingTabs()
@@ -155,7 +170,9 @@ final class AgentSessionStore: ObservableObject {
         for file in files where file.pathExtension == "jsonl" {
             guard let tabID = UUID(uuidString: file.deletingPathExtension().lastPathComponent) else { continue }
             guard knownTabIDs.contains(tabID) else {
-                try? fm.removeItem(at: file)
+                if collectingOrphans {
+                    try? fm.removeItem(at: file)
+                }
                 continue
             }
             if let record = Self.compactRecord(tabID: tabID, mapFileAt: file) {
@@ -198,8 +215,12 @@ final class AgentSessionStore: ObservableObject {
         }
     }
 
-    private func consumeQuitSnapshot() -> QuitSnapshot? {
-        defer { try? FileManager.default.removeItem(at: quitSnapshotURL) }
+    private func readQuitSnapshot(consuming: Bool) -> QuitSnapshot? {
+        defer {
+            if consuming {
+                try? FileManager.default.removeItem(at: quitSnapshotURL)
+            }
+        }
         guard let data = try? Data(contentsOf: quitSnapshotURL),
               let snapshot = try? JSONDecoder().decode(QuitSnapshot.self, from: data) else { return nil }
         // A future or ancient timestamp means a corrupt or stale file; treat

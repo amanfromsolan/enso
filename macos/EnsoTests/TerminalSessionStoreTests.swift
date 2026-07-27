@@ -868,9 +868,11 @@ struct TerminalSessionStoreTests {
             select: pinned.id
         )
 
-        // ⌘W on a pinned awake tab sleeps it — and the sleep hands the
-        // workspace back to the previous tab, so a second ⌘W acts on THAT
-        // tab, never blindly destroying the one just slept.
+        // The palette's close slot on a pinned awake tab sleeps it — and
+        // the sleep hands the workspace back to the previous tab, so a
+        // second run acts on THAT tab, never blindly destroying the one
+        // just slept. (⌘W itself closes outright, behind the close
+        // confirmation; this is the palette's two-step exit.)
         #expect(store.selectedTabSleepsInsteadOfClosing)
         store.closeSelectedSession()
         #expect(store.sessions.first { $0.id == pinned.id }?.isSleeping == true)
@@ -928,6 +930,193 @@ struct TerminalSessionStoreTests {
         #expect(store.eagerRestoreCandidates(mayRestore: { _ in true }, budget: .max).map(\.id) == [dormant.id])
     }
 
+    /// The TTL setting, restored after the test. Every expiry test needs
+    /// it pinned — the default is only a fallback.
+    private func withEphemeralTTL(_ hours: Int, _ body: () throws -> Void) rethrows {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+        defaults.set(hours, forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+            } else {
+                defaults.removeObject(forKey: TerminalSessionStore.ephemeralTTLDefaultsKey)
+            }
+        }
+        try body()
+    }
+
+    /// A pane that is on screen but unfocused never updates lastActivity —
+    /// output doesn't tick it and only selection touches it — so by the
+    /// clock alone a split's other half looks abandoned. Reaping it would
+    /// SIGHUP a live dev server and dissolve the split with no prompt.
+    @Test func visibleSplitPanesSurviveEphemeralExpiry() throws {
+        let dir = try makeTempDirectory("split-expiry")
+        let current = TerminalSession(title: "current", workingDirectory: dir)
+        let loose = TerminalSession(title: "loose", workingDirectory: dir)
+        let paneSource = TerminalSession(title: "pane", workingDirectory: dir)
+        let store = TerminalSessionStore(
+            spaces: [SidebarSpace(
+                name: "Main",
+                ephemeralSessions: [current, loose, paneSource],
+                lastSelection: current.id
+            )],
+            persistToDisk: false
+        )
+
+        store.setSelection(paneSource.id, waking: false)
+        store.splitSelection(direction: .horizontal)
+        let members = try #require(store.splitContainer(containing: paneSource.id)?.memberIDs)
+        #expect(members.count == 2)
+        store.setSelection(current.id, waking: false)
+
+        try withEphemeralTTL(24) {
+            // Two days on, with nothing touched: only the loose tab goes.
+            let expired = store.expiredEphemeralSessions(now: .now.addingTimeInterval(48 * 3600))
+            #expect(expired.map(\.id) == [loose.id])
+        }
+    }
+
+    /// The selection exemption is only real if selection has been restored
+    /// by the time the sweep runs. It used to run first, so a restored
+    /// ephemeral tab older than the TTL was reaped out from under the very
+    /// launch about to open it.
+    @Test func launchRestoresSelectionBeforeExpiringAnything() throws {
+        let dir = try makeTempDirectory("launch-expiry")
+        let stale = TerminalSession(
+            title: "stale",
+            workingDirectory: dir,
+            lastActivity: .now.addingTimeInterval(-72 * 3600)
+        )
+        try withEphemeralTTL(24) {
+            let store = TerminalSessionStore(
+                spaces: [SidebarSpace(
+                    name: "Main", ephemeralSessions: [stale], lastSelection: stale.id
+                )],
+                persistToDisk: false
+            )
+            #expect(store.sessions.map(\.id) == [stale.id])
+            #expect(store.selection == stale.id)
+        }
+    }
+
+    /// A launch that can't trust its view of state.json must not reap on
+    /// that view: the tabs it can see may be a fraction of the real set.
+    @Test func readOnlyLaunchNeverExpiresAnything() throws {
+        let dir = try makeTempDirectory("read-only-expiry")
+        let current = TerminalSession(title: "current", workingDirectory: dir)
+        let stale = TerminalSession(
+            title: "stale",
+            workingDirectory: dir,
+            lastActivity: .now.addingTimeInterval(-72 * 3600)
+        )
+        try withEphemeralTTL(24) {
+            let store = TerminalSessionStore(
+                spaces: [SidebarSpace(
+                    name: "Main", ephemeralSessions: [current, stale], lastSelection: current.id
+                )],
+                persistToDisk: false,
+                stateIsReadOnly: true
+            )
+            #expect(store.isStateReadOnly)
+            #expect(store.expiredEphemeralSessions(now: .now.addingTimeInterval(48 * 3600)).isEmpty)
+            store.pruneExpiredEphemeralSessions()
+            #expect(store.sessions.count == 2)
+        }
+    }
+
+    /// Delete Space used to kill surfaces directly, skipping every piece of
+    /// close's cleanup — records stranded, banners left pointing at tabs
+    /// that no longer exist.
+    @Test func deleteSpaceTearsDownItsTabsThroughClose() throws {
+        let dir = try makeTempDirectory("delete-space")
+        let kept = TerminalSession(title: "kept", workingDirectory: dir)
+        let doomed = TerminalSession(title: "doomed", workingDirectory: dir)
+        let alsoDoomed = TerminalSession(title: "also", workingDirectory: dir)
+        let other = SidebarSpace(name: "Other", ephemeralSessions: [doomed, alsoDoomed])
+        let store = TerminalSessionStore(
+            spaces: [SidebarSpace(name: "Main", ephemeralSessions: [kept]), other],
+            persistToDisk: false
+        )
+        var cleared: Set<TerminalSession.ID> = []
+        store.onAttentionCleared = { cleared.insert($0) }
+
+        store.deleteSpace(other.id)
+        #expect(store.spaces.map(\.id) == [store.activeSpaceID])
+        #expect(store.sessions.map(\.id) == [kept.id])
+        #expect(cleared == [doomed.id, alsoDoomed.id])
+    }
+
+    /// The attention watcher polls at 1Hz, so a Stop-hook line written in
+    /// the instant before a sleep is delivered just after it. Re-lighting
+    /// the row — and posting a banner whose click wakes the tab — undoes
+    /// what the user just did.
+    @Test func sleepingTabIgnoresLateAttention() throws {
+        let dir = try makeTempDirectory("late-attention")
+        let sleeper = TerminalSession(title: "sleeper", workingDirectory: dir)
+        let other = TerminalSession(title: "other", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [sleeper, other]),
+            select: other.id
+        )
+        store.putToSleep(sessionID: sleeper.id)
+
+        #expect(store.handleAgentAttention(
+            tabID: sleeper.id, kind: .finishedResponding, isAppActive: false
+        ) == nil)
+        #expect(store.handleAgentAttention(
+            tabID: sleeper.id, kind: .needsInput, isAppActive: false
+        ) == nil)
+        // Not merely silent: the row keeps the idle state the sleep set,
+        // so no dot appears either.
+        #expect(store.sessions.first { $0.id == sleeper.id }?.status == .idle)
+
+        // An awake tab still escalates normally.
+        #expect(store.handleAgentAttention(
+            tabID: other.id, kind: .needsInput, isAppActive: false
+        ) != nil)
+    }
+
+    /// Every pane pick lands selection and multiSelection together; one
+    /// that assigned only selection left bulk actions aimed at a stale set.
+    @Test func pickPaneReplacesMultiSelection() throws {
+        let dir = try makeTempDirectory("pick-pane")
+        let first = TerminalSession(title: "a", workingDirectory: dir)
+        let second = TerminalSession(title: "b", workingDirectory: dir)
+        let third = TerminalSession(title: "c", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [first, second, third]),
+            select: first.id
+        )
+        store.multiSelection = [first.id, second.id]
+
+        store.pickPane(third.id)
+        #expect(store.selection == third.id)
+        #expect(store.multiSelection == [third.id])
+    }
+
+    /// A tab whose surface already exists has nothing to warm — view(for:)
+    /// hands back the live view unchanged. Counting that no-op against the
+    /// per-launch budget spends the whole "recent 5" on tabs that were
+    /// never asleep, and genuinely dormant ones never get warmed.
+    @Test func eagerRestoreCandidatesSkipTabsWithLiveSurfaces() throws {
+        let dir = try makeTempDirectory("live-surface-candidates")
+        let selected = TerminalSession(title: "selected", workingDirectory: dir)
+        let live = TerminalSession(title: "live", workingDirectory: dir)
+        let dormant = TerminalSession(title: "dormant", workingDirectory: dir)
+        let store = makeStore(
+            folder: TerminalFolder(title: "enso", sessions: [selected, live, dormant]),
+            select: selected.id
+        )
+
+        let candidates = store.eagerRestoreCandidates(
+            mayRestore: { _ in true },
+            hasSurface: { $0 == live.id },
+            budget: .max
+        )
+        #expect(candidates.map(\.id) == [dormant.id])
+    }
+
     // MARK: - Persistence compatibility
 
     /// State files written before the field existed must keep decoding.
@@ -978,5 +1167,146 @@ struct TerminalSessionStoreTests {
         let session = try JSONDecoder().decode(TerminalSession.self, from: Data(json.utf8))
         #expect(session.isSleeping)
         #expect(session.sleepingProcess == nil)
+    }
+}
+
+/// What the close confirmation decides to stop the user for. The tabs with
+/// the most to lose have no live process at all — after a relaunch every
+/// agent tab is dormant with `runningProcess` reset to nil, and a sleeping
+/// tab has no shell — so a gate built only on "something is running" waved
+/// through exactly the closes that destroy a saved conversation.
+@MainActor
+struct CloseConfirmationStakeTests {
+    private func store(_ sessions: [TerminalSession]) -> TerminalSessionStore {
+        TerminalSessionStore(
+            spaces: [SidebarSpace(
+                name: "Main", pinnedFolders: [TerminalFolder(title: "enso", sessions: sessions)]
+            )],
+            persistToDisk: false
+        )
+    }
+
+    @Test func sleepingTabWithASavedConversationPrompts() throws {
+        let sleeper = TerminalSession(title: "sleeper", workingDirectory: "/tmp")
+        let store = store([sleeper, TerminalSession(title: "other", workingDirectory: "/tmp")])
+        store.putToSleep(sessionID: sleeper.id)
+
+        let stake = CloseConfirmation.stake(
+            store,
+            sessionIDs: [sleeper.id],
+            savedConversation: { $0 == sleeper.id ? .claude : nil }
+        )
+        #expect(stake == .savedConversation(.claude))
+    }
+
+    @Test func dormantTabWithASavedConversationPrompts() throws {
+        let dormant = TerminalSession(title: "dormant", workingDirectory: "/tmp")
+        let store = store([dormant])
+
+        // Awake, idle, no process — the shape of every agent tab on the
+        // first launch after a relaunch.
+        #expect(store.sessions.first { $0.id == dormant.id }?.runningProcess == nil)
+        let stake = CloseConfirmation.stake(
+            store, sessionIDs: [dormant.id], savedConversation: { _ in .codex }
+        )
+        #expect(stake == .savedConversation(.codex))
+    }
+
+    @Test func plainIdleTabIsClosedWithoutAsking() throws {
+        let plain = TerminalSession(title: "plain", workingDirectory: "/tmp")
+        let store = store([plain])
+        #expect(CloseConfirmation.stake(
+            store, sessionIDs: [plain.id], savedConversation: { _ in nil }
+        ) == nil)
+    }
+}
+
+/// The state file's schema version (#5). Every file written before
+/// versioning shipped carries no `version` key, so the load path has to
+/// keep treating those as version 1 forever — and a file from a *newer*
+/// build has to be recognized without being clobbered.
+@MainActor
+struct PersistedStateSchemaTests {
+    private func space(_ name: String) -> SidebarSpace {
+        SidebarSpace(
+            name: name,
+            ephemeralSessions: [TerminalSession(title: "main", workingDirectory: "/tmp")]
+        )
+    }
+
+    /// The shape on every existing user's disk: no `version` key at all.
+    @Test func unversionedFileLoadsAsVersionOne() throws {
+        let data = try JSONEncoder().encode(
+            TerminalSessionStore.PersistedState(spaces: [space("Main")])
+        )
+        #expect(!String(decoding: data, as: UTF8.self).contains("version"))
+
+        let state = try #require(TerminalSessionStore.decodeState(from: data))
+        #expect(state.schemaVersion == 1)
+        #expect(!state.isFutureSchema)
+        #expect(state.spaces.map(\.name) == ["Main"])
+    }
+
+    @Test func currentSchemaRoundTrips() throws {
+        let data = try JSONEncoder().encode(
+            TerminalSessionStore.PersistedState(
+                version: TerminalSessionStore.stateSchemaVersion, spaces: [space("Work")]
+            )
+        )
+        let state = try #require(TerminalSessionStore.decodeState(from: data))
+        #expect(state.schemaVersion == TerminalSessionStore.stateSchemaVersion)
+        #expect(!state.isFutureSchema)
+        #expect(state.spaces.first?.sessions.count == 1)
+    }
+
+    /// The pre-spaces file still migrates into one "Main" space; adding a
+    /// version field must not disturb that path.
+    @Test func legacyFileStillMigrates() throws {
+        let sessions = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode([TerminalSession(title: "old", workingDirectory: "/tmp")])
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "pinnedFolders": [],
+            "pinnedSessions": [],
+            "ephemeralSessions": sessions,
+        ])
+
+        let state = try #require(TerminalSessionStore.decodeState(from: data))
+        #expect(state.schemaVersion == 1)
+        #expect(state.spaces.count == 1)
+        #expect(state.spaces.first?.name == "Main")
+        #expect(state.spaces.first?.sessions.first?.title == "old")
+    }
+
+    /// A newer build's file that still decodes: the spaces come through so
+    /// the launch is usable, and the flag tells the store to go read-only
+    /// rather than re-encode without whatever fields it dropped.
+    @Test func futureSchemaFileIsFlaggedButStillReadable() throws {
+        let data = try JSONEncoder().encode(
+            TerminalSessionStore.PersistedState(
+                version: TerminalSessionStore.stateSchemaVersion + 1, spaces: [space("Main")]
+            )
+        )
+        let state = try #require(TerminalSessionStore.decodeState(from: data))
+        #expect(state.isFutureSchema)
+        #expect(state.spaces.map(\.name) == ["Main"])
+    }
+
+    /// A newer build's file this decoder can't read at all must still be
+    /// recognized as newer — returning nil would start the app on a fresh
+    /// default space and overwrite the user's real one.
+    @Test func undecodableFutureSchemaFileKeepsItsVersion() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "version": TerminalSessionStore.stateSchemaVersion + 7,
+            "spaces": "a shape this build has never seen",
+        ])
+        let state = try #require(TerminalSessionStore.decodeState(from: data))
+        #expect(state.isFutureSchema)
+        #expect(state.spaces.isEmpty)
+    }
+
+    /// Unreadable bytes with no version to go on stay a clean-slate launch.
+    @Test func unreadableFileDecodesToNothing() {
+        #expect(TerminalSessionStore.decodeState(from: Data("{".utf8)) == nil)
     }
 }

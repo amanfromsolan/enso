@@ -158,7 +158,14 @@ struct EnsoApp: App {
         AgentSessionStore.shared.onRestorabilityResolved = { [weak store] in
             store?.eagerlyRestoreAgentSessions()
         }
-        AgentSessionStore.shared.bootstrap(knownTabIDs: Set(store.sessions.map(\.id)))
+        // Orphan GC is keyed off the tabs state.json listed, so it is only
+        // safe when that file was ours to read: a downgrade launch loads
+        // read-only and must not collect anything against a view it knows
+        // is partial.
+        AgentSessionStore.shared.bootstrap(
+            knownTabIDs: Set(store.sessions.map(\.id)),
+            collectingOrphans: !store.isStateReadOnly
+        )
 
         // Agent attention (#30): tail the map files for the Notification and
         // Stop hooks the wrappers register, mark the tab's sidebar row, and
