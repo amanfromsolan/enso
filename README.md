@@ -59,7 +59,7 @@ Enso embeds [Ghostty](https://github.com/ghostty-org/ghostty)'s `GhosttyKit.xcfr
 
 ```sh
 git clone https://github.com/ghostty-org/ghostty references/ghostty
-cd references/ghostty && zig build -Doptimize=ReleaseFast -Demit-macos-app=false
+cd references/ghostty && zig build -Doptimize=ReleaseFast -Demit-macos-app=false   # needs zig 0.16+
 cd ../.. && ln -s ../references/ghostty/macos/GhosttyKit.xcframework macos/GhosttyKit.xcframework
 xcodebuild -project macos/Enso.xcodeproj -scheme Enso build
 ```
