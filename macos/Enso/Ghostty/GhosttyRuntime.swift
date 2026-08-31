@@ -73,29 +73,68 @@ final class GhosttyRuntime {
         }
 
         // Clipboard callbacks receive the *surface* userdata (the view).
-        runtimeConfig.read_clipboard_cb = { userdata, location, state in
-            guard let userdata, location == GHOSTTY_CLIPBOARD_STANDARD else { return false }
+        runtimeConfig.read_clipboard_cb = { userdata, location, state, mimes, mimesLen, list in
+            guard let userdata, location == GHOSTTY_CLIPBOARD_STANDARD else {
+                return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED
+            }
             let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-            Task { @MainActor in
-                guard let surface = view.surface else { return }
-                let text = NSPasteboard.general.string(forType: .string) ?? ""
-                text.withCString { ptr in
-                    ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+            // The MIME list is borrowed; copy it before leaving the callback.
+            var wantsText = false
+            if let mimes {
+                for index in 0..<mimesLen where mimes[index].map({ String(cString: $0).hasPrefix("text/") }) == true {
+                    wantsText = true
+                    break
                 }
             }
-            return true
+            let wantsList = list
+            Task { @MainActor in
+                guard let surface = view.surface else { return }
+                var contents: [(mime: String, text: String)] = []
+                if wantsText {
+                    contents.append(("text/plain", NSPasteboard.general.string(forType: .string) ?? ""))
+                }
+                GhosttyRuntime.completeClipboardRequest(
+                    surface,
+                    contents: contents,
+                    available: wantsList ? ["text/plain"] : [],
+                    state: state,
+                    confirmed: false)
+            }
+            return GHOSTTY_CLIPBOARD_READ_STARTED
         }
 
         // Unsafe-paste style confirmations: auto-confirm for now.
-        runtimeConfig.confirm_read_clipboard_cb = { userdata, text, state, _ in
+        runtimeConfig.confirm_read_clipboard_cb = { userdata, confirm, state, _ in
             guard let userdata else { return }
             let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-            let confirmed = text.map { String(cString: $0) } ?? ""
+            // The payload is borrowed C memory; copy it before leaving the callback.
+            var contents: [(mime: String, text: String)] = []
+            var available: [String] = []
+            if let confirm {
+                let payload = confirm.pointee
+                if let items = payload.contents {
+                    for index in 0..<payload.contents_len {
+                        let item = items[index]
+                        guard let mime = item.mime, let data = item.data else { continue }
+                        let bytes = Data(bytes: data, count: item.len)
+                        contents.append((String(cString: mime), String(data: bytes, encoding: .utf8) ?? ""))
+                    }
+                }
+                if let names = payload.available {
+                    for index in 0..<payload.available_len {
+                        guard let ptr = names[index] else { continue }
+                        available.append(String(cString: ptr))
+                    }
+                }
+            }
             Task { @MainActor in
                 guard let surface = view.surface else { return }
-                confirmed.withCString { ptr in
-                    ghostty_surface_complete_clipboard_request(surface, ptr, state, true)
-                }
+                GhosttyRuntime.completeClipboardRequest(
+                    surface,
+                    contents: contents,
+                    available: available,
+                    state: state,
+                    confirmed: true)
             }
         }
 
@@ -148,6 +187,50 @@ final class GhosttyRuntime {
         ghostty_app_set_focus(app, NSApp?.isActive ?? true)
         installObservers()
         NSLog("GhosttyRuntime: started")
+    }
+
+    /// Completes a clipboard read with the struct-based payload libghostty
+    /// expects, copying the Swift strings into C memory for the call.
+    @MainActor
+    private static func completeClipboardRequest(
+        _ surface: ghostty_surface_t,
+        contents: [(mime: String, text: String)],
+        available: [String],
+        state: UnsafeMutableRawPointer?,
+        confirmed: Bool
+    ) {
+        var cStrings: [UnsafeMutablePointer<CChar>] = []
+        defer { cStrings.forEach { free($0) } }
+
+        var cContents: [ghostty_clipboard_content_s] = []
+        for entry in contents {
+            guard let mime = strdup(entry.mime), let data = strdup(entry.text) else { continue }
+            cStrings.append(mime)
+            cStrings.append(data)
+            cContents.append(ghostty_clipboard_content_s(
+                mime: mime,
+                data: data,
+                len: entry.text.utf8.count))
+        }
+        var cAvailable: [UnsafePointer<CChar>?] = []
+        for mime in available {
+            guard let copy = strdup(mime) else { continue }
+            cStrings.append(copy)
+            cAvailable.append(UnsafePointer(copy))
+        }
+
+        cContents.withUnsafeBufferPointer { contentsBuf in
+            cAvailable.withUnsafeBufferPointer { availableBuf in
+                var payload = ghostty_clipboard_complete_s(
+                    contents: contentsBuf.baseAddress,
+                    contents_len: contentsBuf.count,
+                    available: availableBuf.baseAddress,
+                    available_len: availableBuf.count,
+                    confirmed: confirmed,
+                    remember: false)
+                ghostty_surface_complete_clipboard_request(surface, &payload, state)
+            }
+        }
     }
 
     private func loadConfig() -> ghostty_config_t? {
