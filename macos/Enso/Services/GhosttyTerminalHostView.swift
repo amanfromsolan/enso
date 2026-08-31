@@ -640,6 +640,11 @@ final class SplitDividerView: NSView {
         // even when the pointer leaves the strip.
         isDragging = true
         fadeAffordance(to: 1)
+        // Double-click snaps the split back to even halves; the ratio goes
+        // through the normal drag path so mouseUp's onDragEnded commits it.
+        if event.clickCount == 2 {
+            onDrag?(path, 0.5)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {

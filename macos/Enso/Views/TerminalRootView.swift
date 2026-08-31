@@ -847,6 +847,13 @@ private struct SidebarResizeHandle: View {
                 .contentShape(Rectangle())
                 .overlay(ResizeCursor())
                 .onHover { isHovering = $0 }
+                // Child gesture, so it wins the double-click while the
+                // ZStack's zero-distance drag still owns single presses.
+                .onTapGesture(count: 2) {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        store.setSidebarWidth(TerminalSessionStore.defaultSidebarWidth)
+                    }
+                }
                 .padding(.top, 40)
         }
         .frame(maxHeight: .infinity)
