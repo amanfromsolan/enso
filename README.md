@@ -68,7 +68,7 @@ xcodebuild -project macos/Enso.xcodeproj -scheme Enso build
 
 ## Credits
 
-Terminal emulation, PTY, and Metal rendering by [Ghostty](https://ghostty.org) — Enso is UI and workflow on top of `libghostty`. Agent logos via [Simple Icons](https://simpleicons.org) and [LobeHub](https://icons.lobehub.com).
+Terminal emulation, PTY, and Metal rendering by [Ghostty](https://ghostty.org) — Enso is UI and workflow on top of `libghostty`. Enso's icon was made by [Shubhang Rajput](https://www.shubhangrajput.com). Agent logos via [Simple Icons](https://simpleicons.org) and [LobeHub](https://icons.lobehub.com).
 
 ## License
 
