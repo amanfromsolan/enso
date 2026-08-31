@@ -180,6 +180,22 @@ final class CommandCenter: ObservableObject {
         query = ""
     }
 
+    /// Esc from either path: the key monitor, or AppKit's cancelOperation
+    /// when the event reaches the responder chain anyway. In full screen
+    /// an unconsumed Esc falls through to NSWindow, whose default
+    /// cancelOperation exits full screen (issue #61) — so the palette
+    /// must answer it at both layers.
+    func escapePressed() {
+        if isRenaming {
+            cancelRename()
+        } else if submenuItems != nil {
+            submenuItems = nil
+            query = ""
+        } else {
+            close()
+        }
+    }
+
     // MARK: - Keyboard
 
     func handleKey(_ event: NSEvent) -> NSEvent? {
@@ -215,7 +231,7 @@ final class CommandCenter: ObservableObject {
         if isRenaming {
             switch event.keyCode {
             case 53: // esc backs out to the search sheet
-                cancelRename()
+                escapePressed()
                 return nil
             case 36, 76: // return / keypad enter
                 commitRename()
@@ -227,12 +243,7 @@ final class CommandCenter: ObservableObject {
 
         switch event.keyCode {
         case 53: // esc backs out of a submenu first, then closes
-            if submenuItems != nil {
-                submenuItems = nil
-                query = ""
-            } else {
-                close()
-            }
+            escapePressed()
             return nil
         case 125: // down
             moveHighlight(1)
@@ -876,6 +887,11 @@ struct CommandCenterView: View {
                     .font(compactDisplay(18))
                     .foregroundStyle(Theme.text(0.92))
                     .focused($searchFocused)
+                    // Backstop for Esc events the key monitor doesn't
+                    // consume: catches cancelOperation here so it never
+                    // reaches NSWindow, which in full screen would exit
+                    // full screen instead of just closing the palette.
+                    .onExitCommand { center.escapePressed() }
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 20)
