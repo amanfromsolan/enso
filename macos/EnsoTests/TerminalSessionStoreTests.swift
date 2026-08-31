@@ -326,6 +326,50 @@ struct TerminalSessionStoreTests {
             == [workSelected.id, workDormant.id])
     }
 
+    // MARK: - Space reordering (#59)
+
+    private func makeThreeSpaceStore() -> TerminalSessionStore {
+        let spaces = ["A", "B", "C"].map { name in
+            SidebarSpace(
+                name: name,
+                ephemeralSessions: [TerminalSession(title: name, workingDirectory: "/tmp")]
+            )
+        }
+        return TerminalSessionStore(spaces: spaces, persistToDisk: false)
+    }
+
+    @Test func moveSpaceReordersByInsertionIndexAndKeepsTheActiveSpace() {
+        let store = makeThreeSpaceStore()
+        let ids = store.spaces.map(\.id)
+        store.activateSpace(ids[2])
+
+        // Forward: the insertion index counts slots in the pre-move array.
+        store.moveSpace(ids[0], toIndex: 2)
+        #expect(store.spaces.map(\.id) == [ids[1], ids[0], ids[2]])
+        // Backward.
+        store.moveSpace(ids[2], toIndex: 0)
+        #expect(store.spaces.map(\.id) == [ids[2], ids[1], ids[0]])
+        // The active space follows by identity, never by index.
+        #expect(store.activeSpaceID == ids[2])
+    }
+
+    @Test func moveSpaceClampsAndIgnoresNoOps() {
+        let store = makeThreeSpaceStore()
+        let ids = store.spaces.map(\.id)
+
+        // Both slots around the space's own position rebuild the same order.
+        store.moveSpace(ids[1], toIndex: 1)
+        store.moveSpace(ids[1], toIndex: 2)
+        #expect(store.spaces.map(\.id) == ids)
+
+        store.moveSpace(ids[0], toIndex: 99)
+        #expect(store.spaces.map(\.id) == [ids[1], ids[2], ids[0]])
+        store.moveSpace(ids[0], toIndex: -5)
+        #expect(store.spaces.map(\.id) == ids)
+        store.moveSpace(UUID(), toIndex: 1)
+        #expect(store.spaces.map(\.id) == ids)
+    }
+
     // MARK: - Sleep / wake
 
     @Test func putToSleepCapturesWhatWasRunningAndHandsSelectionBack() throws {

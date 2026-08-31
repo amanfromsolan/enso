@@ -140,12 +140,18 @@ struct SidebarDropModelTests {
         #expect(folder.stringValue == "folder:\(folderID.uuidString)")
         #expect(SidebarDragPayload(string: folder.stringValue) == folder)
 
+        let spaceID = UUID()
+        let space = SidebarDragPayload.space(spaceID)
+        #expect(space.stringValue == "space:\(spaceID.uuidString)")
+        #expect(SidebarDragPayload(string: space.stringValue) == space)
+
         #expect(SidebarDragPayload(string: "garbage") == nil)
         #expect(SidebarDragPayload(string: "folder:nope") == nil)
+        #expect(SidebarDragPayload(string: "space:nope") == nil)
     }
 
     @Test func payloadDecodeMergesItemsAndPrefersFolders() {
-        let a = UUID(), b = UUID(), folderID = UUID()
+        let a = UUID(), b = UUID(), folderID = UUID(), spaceID = UUID()
         #expect(
             SidebarDragPayload.decode(items: [a.uuidString, b.uuidString])
                 == .tabs([a, b])
@@ -154,7 +160,18 @@ struct SidebarDropModelTests {
             SidebarDragPayload.decode(items: [a.uuidString, "folder:\(folderID.uuidString)"])
                 == .folder(folderID)
         )
+        #expect(
+            SidebarDragPayload.decode(items: ["space:\(spaceID.uuidString)"])
+                == .space(spaceID)
+        )
         #expect(SidebarDragPayload.decode(items: ["junk"]) == nil)
+    }
+
+    @Test func spacePayloadNeverResolvesInTabLists() {
+        let fx = makeFixture()
+        let resolver = makeResolver(fx, collapsed: [fx.folderG])
+        #expect(resolution(resolver, y: 48, dragging: .space(UUID())) == .invalid)
+        #expect(resolution(resolver, y: 250, dragging: .space(UUID())) == .invalid)
     }
 
     // MARK: Tab projection — loose pinned rows

@@ -1852,6 +1852,15 @@ private struct SpaceIndicatorBar: View {
 
     @State private var hoveredSpaceID: SidebarSpace.ID?
     @State private var plusHovered = false
+    /// The insertion index a hovered space drag would commit to, or nil
+    /// when nothing droppable is hovered (including the dragged indicator's
+    /// own slot, which shows no line).
+    @State private var dropIndex: Int?
+    /// Indicator frames in the bar's coordinate space, collected via the
+    /// same preference the sidebar rows use.
+    @State private var indicatorFrames: [UUID: CGRect] = [:]
+
+    private static let dropSpaceName = "spaceIndicatorDropSpace"
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1890,6 +1899,22 @@ private struct SpaceIndicatorBar: View {
                     }
                     .disabled(store.spaces.count == 1)
                 }
+                .onDrag {
+                    let payload = SidebarDragPayload.space(space.id)
+                    store.activeSidebarDrag = payload
+                    return NSItemProvider(object: payload.stringValue as NSString)
+                } preview: {
+                    SpaceIndicatorIcon(icon: space.icon, isActive: true, size: 18)
+                        .frame(width: 24, height: 24)
+                }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: SidebarRowFrameKey.self,
+                            value: [space.id: geo.frame(in: .named(Self.dropSpaceName))]
+                        )
+                    }
+                )
             }
 
             Button(action: onCreate) {
@@ -1908,8 +1933,94 @@ private struct SpaceIndicatorBar: View {
 
             Spacer(minLength: 0)
         }
+        .coordinateSpace(name: Self.dropSpaceName)
+        .onPreferenceChange(SidebarRowFrameKey.self) { indicatorFrames = $0 }
+        // Keyed to the order, not wrapped around the store mutation: the
+        // reorder must stay un-animated store-wide (see performDrop), so
+        // only the bar slides its dots.
+        .animation(.spring(duration: 0.32, bounce: 0.12), value: store.spaces.map(\.id))
+        .overlay(alignment: .topLeading) { dropIndicator }
+        .onDrop(of: [.text], delegate: SidebarSpaceDropDelegate(
+            onUpdate: { handleDragUpdate(at: $0) },
+            onExited: { dropIndex = nil },
+            onPerform: { performDrop($0) }
+        ))
         .frame(height: 30)
         .padding(.bottom, 6)
+    }
+
+    /// The insertion indicator: a short vertical line in the gap between
+    /// indicators, the bar's rotation of the sidebar's drop line.
+    @ViewBuilder
+    private var dropIndicator: some View {
+        if let index = dropIndex, let x = gapX(at: index) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.accentColor)
+                .frame(width: 2, height: 16)
+                .offset(x: x - 1, y: 7)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// Center of the 6pt gap the given insertion index lands in.
+    private func gapX(at index: Int) -> CGFloat? {
+        let frames = store.spaces.compactMap { indicatorFrames[$0.id] }
+        guard frames.count == store.spaces.count, !frames.isEmpty else { return nil }
+        return index == 0 ? frames[0].minX - 3 : frames[min(index, frames.count) - 1].maxX + 3
+    }
+
+    /// The insertion index for a pointer X: how many indicators sit with
+    /// their midpoint left of it.
+    private func insertionIndex(at x: CGFloat) -> Int {
+        store.spaces.filter { space in
+            guard let frame = indicatorFrames[space.id] else { return false }
+            return frame.midX < x
+        }.count
+    }
+
+    private func handleDragUpdate(at location: CGPoint) -> Bool {
+        guard case .space(let draggedID) = store.activeSidebarDrag else {
+            dropIndex = nil
+            return false
+        }
+        let index = insertionIndex(at: location.x)
+        // The dragged indicator's own slot: a drop would change nothing, so
+        // show nothing — but it isn't a forbidden position either.
+        if let from = store.spaces.firstIndex(where: { $0.id == draggedID }),
+           index == from || index == from + 1 {
+            dropIndex = nil
+        } else {
+            dropIndex = index
+        }
+        return true
+    }
+
+    private func performDrop(_ info: DropInfo) -> Bool {
+        let index = dropIndex
+        dropIndex = nil
+        store.activeSidebarDrag = nil
+        // Only space drags get past dropUpdated, so even the no-op own-slot
+        // release reports handled: returning false would fly the drag image
+        // back to its origin dot.
+        guard let index else { return true }
+        let providers = info.itemProviders(for: [.text])
+        guard !providers.isEmpty else { return true }
+        Task { @MainActor in
+            var items: [String] = []
+            for provider in providers {
+                if let item = await provider.sidebarDragString() {
+                    items.append(item)
+                }
+            }
+            guard case .space(let spaceID) = SidebarDragPayload.decode(items: items) else { return }
+            // No withAnimation: the pager derives its offset from the active
+            // space's index, so an animated reorder sweeps neighboring space
+            // pages through the tab list above the bar. Un-animated, the
+            // offset jumps while the same page stays on screen — invisible —
+            // and the bar's keyed animation slides the dots on its own.
+            store.moveSpace(spaceID, toIndex: index)
+        }
+        return true
     }
 }
 

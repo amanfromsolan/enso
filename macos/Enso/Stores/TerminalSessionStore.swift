@@ -307,6 +307,18 @@ final class TerminalSessionStore: ObservableObject {
         save()
     }
 
+    /// Reorders a space to the given insertion index in the current array
+    /// (clamped). The active space follows by identity, so reordering never
+    /// switches spaces.
+    func moveSpace(_ spaceID: SidebarSpace.ID, toIndex index: Int) {
+        guard let from = spaces.firstIndex(where: { $0.id == spaceID }) else { return }
+        let clamped = min(max(index, 0), spaces.count)
+        let to = clamped > from ? clamped - 1 : clamped
+        guard to != from else { return }
+        spaces.insert(spaces.remove(at: from), at: to)
+        save()
+    }
+
     /// Deletes a space and everything in it. The tabs go through the
     /// ordinary `close` path rather than a bare surface teardown, so they
     /// inherit its cleanup in full — agent records dropped, delivered

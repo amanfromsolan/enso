@@ -8,13 +8,15 @@ import Foundation
 // MARK: - Payload
 
 /// What a sidebar drag carries. The wire format (an NSItemProvider string)
-/// stays the legacy one — comma-joined session UUIDs, or "folder:" + UUID —
-/// so in-flight drags across app versions keep decoding.
+/// stays the legacy one — comma-joined session UUIDs, "folder:" + UUID, or
+/// "space:" + UUID — so in-flight drags across app versions keep decoding.
 enum SidebarDragPayload: Equatable {
     case tabs([TerminalSession.ID])
     case folder(TerminalFolder.ID)
+    case space(SidebarSpace.ID)
 
     private static let folderPrefix = "folder:"
+    private static let spacePrefix = "space:"
 
     var stringValue: String {
         switch self {
@@ -22,6 +24,8 @@ enum SidebarDragPayload: Equatable {
             return ids.map(\.uuidString).joined(separator: ",")
         case .folder(let id):
             return Self.folderPrefix + id.uuidString
+        case .space(let id):
+            return Self.spacePrefix + id.uuidString
         }
     }
 
@@ -31,6 +35,11 @@ enum SidebarDragPayload: Equatable {
                 return nil
             }
             self = .folder(id)
+        } else if string.hasPrefix(Self.spacePrefix) {
+            guard let id = UUID(uuidString: String(string.dropFirst(Self.spacePrefix.count))) else {
+                return nil
+            }
+            self = .space(id)
         } else {
             let ids = string.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
             guard !ids.isEmpty else { return nil }
@@ -38,11 +47,12 @@ enum SidebarDragPayload: Equatable {
         }
     }
 
-    /// Merges a multi-item drop into one payload; a folder item wins.
+    /// Merges a multi-item drop into one payload; a folder or space item wins.
     static func decode(items: [String]) -> SidebarDragPayload? {
         let payloads = items.compactMap(SidebarDragPayload.init(string:))
         for payload in payloads {
             if case .folder = payload { return payload }
+            if case .space = payload { return payload }
         }
         let tabs: [TerminalSession.ID] = payloads.flatMap { payload -> [TerminalSession.ID] in
             if case .tabs(let ids) = payload { return ids }
@@ -287,6 +297,9 @@ struct SidebarDropResolver {
         horizontalDelta: CGFloat
     ) -> SidebarDropResolution {
         switch payload {
+        case .space:
+            // Spaces reorder in the indicator bar, never into a tab list.
+            return .invalid
         case .folder(let id):
             return folderResolution(
                 at: location, draggedFolder: id, horizontalDelta: horizontalDelta
