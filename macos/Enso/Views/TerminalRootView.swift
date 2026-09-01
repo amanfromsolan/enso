@@ -412,7 +412,13 @@ private struct ModalPopEffect: ViewModifier {
 /// it. SwiftUI hover is unreliable over the terminal's NSView (it owns its
 /// own tracking areas), so a local monitor watches every move.
 private struct PeekMouseMonitor: NSViewRepresentable {
-    static let revealEdge: CGFloat = 84
+    /// A narrow edge strip: the terminal card starts at x = 10, so anything
+    /// wider turns the card's left margin into a live trigger and the
+    /// sidebar pops for a pointer merely visiting the terminal's left side.
+    static let revealEdge: CGFloat = 12
+    /// The pointer must linger in the strip this long before the peek
+    /// fires, so a fast sweep through the edge doesn't open the sidebar.
+    static let revealDwell: TimeInterval = 0.15
     /// The peek dismisses once the pointer clears the panel's right edge by
     /// this much; added to the live sidebar width rather than baked into a
     /// constant, so a resized sidebar peeks and retracts at the right place.
@@ -468,18 +474,59 @@ private struct PeekMouseMonitor: NSViewRepresentable {
         }
 
         private func handle(_ event: NSEvent) {
-            guard let window = view?.window, event.window === window else { return }
+            guard let window = view?.window, event.window === window else {
+                cancelPendingReveal()
+                return
+            }
             let x = event.locationInWindow.x
             if isPeeking {
+                cancelPendingReveal()
                 if x > dismissEdge {
                     setPeeking(false)
                 }
             } else if x >= 0, x < PeekMouseMonitor.revealEdge {
+                scheduleReveal()
+            } else {
+                cancelPendingReveal()
+            }
+        }
+
+        /// One pending reveal at a time; entering the strip arms it, any
+        /// movement out of the strip disarms it.
+        private var revealWork: DispatchWorkItem?
+
+        private func scheduleReveal() {
+            guard revealWork == nil else { return }
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.fireRevealIfStillAtEdge()
+                }
+            }
+            revealWork = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + PeekMouseMonitor.revealDwell, execute: work
+            )
+        }
+
+        /// The dwell can outlive the pointer's interest (it left for another
+        /// window, or the strip, without a final event landing here), so the
+        /// live position gets the last word.
+        private func fireRevealIfStillAtEdge() {
+            revealWork = nil
+            guard !isPeeking, let window = view?.window else { return }
+            let x = window.mouseLocationOutsideOfEventStream.x
+            if x >= 0, x < PeekMouseMonitor.revealEdge {
                 setPeeking(true)
             }
         }
 
+        private func cancelPendingReveal() {
+            revealWork?.cancel()
+            revealWork = nil
+        }
+
         func stop() {
+            cancelPendingReveal()
             if let monitor {
                 NSEvent.removeMonitor(monitor)
             }
