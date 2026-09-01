@@ -25,6 +25,12 @@ struct TerminalRootView: View {
     // terminal card keeps its colors, as terminals conventionally do.
     private var isWindowInactive: Bool { controlActiveState == .inactive }
 
+    /// Sidebar-adjacent chrome (traffic lights, the sidebar toggle) shows
+    /// while the sidebar is docked or peeked; one predicate shared by the
+    /// windowed titlebar copy and the fullscreen overlay copy so the two
+    /// can never drift.
+    private var isChromeRevealed: Bool { store.isSidebarVisible || isPeeking }
+
     /// Whether the selected tab is a pane of a split container — the
     /// workspace then renders per-pane cards instead of the single card.
     /// True even when the selected pane sleeps: the split still renders,
@@ -136,7 +142,7 @@ struct TerminalRootView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TrafficLightInset(
-            buttonsHidden: !(store.isSidebarVisible || isPeeking),
+            buttonsHidden: !isChromeRevealed,
             isSidebarVisible: store.isSidebarVisible,
             isWindowInactive: isWindowInactive,
             onToggleSidebar: { store.isSidebarVisible.toggle() },
@@ -177,13 +183,19 @@ struct TerminalRootView: View {
             }
         }
         // Above the peek overlay so it stays clickable on a hovered-in
-        // sidebar; in full screen this is the only toggle affordance.
+        // sidebar; in full screen this is the only toggle affordance. Same
+        // concealment as the windowed titlebar copy — sidebar closed and
+        // not peeking means no icon — and the same fading wrapper, so it
+        // never pops structurally.
         .overlay(alignment: .topLeading) {
             if isFullScreen {
-                SidebarToggleButton(isSidebarVisible: store.isSidebarVisible) {
+                TitlebarSidebarToggle(
+                    isSidebarVisible: store.isSidebarVisible,
+                    isConcealed: !isChromeRevealed,
+                    isWindowInactive: isWindowInactive
+                ) {
                     store.isSidebarVisible.toggle()
                 }
-                .opacity(isWindowInactive ? 0.5 : 1)
                 .padding(.leading, 16)
                 .padding(.top, 8)
             }
@@ -731,6 +743,7 @@ private struct TrafficLightInset: NSViewRepresentable {
                 }
             }
             pushToggleState()
+            applyVisibility(animated: false)
             onFullScreenChange(fullScreen)
         }
 
@@ -778,20 +791,26 @@ private struct TrafficLightInset: NSViewRepresentable {
 
         private func applyVisibility(animated: Bool) {
             guard let window else { return }
+            // Full screen keeps the lights alive no matter the sidebar:
+            // the system already tucks them into the auto-hiding reveal
+            // strip, and hiding/disabling them there leaves the strip with
+            // invisible, unclickable buttons — no green button to leave
+            // full screen with.
+            let hidden = buttonsHidden && !isFullScreen
             let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
                 .compactMap { window.standardWindowButton($0) }
 
-            let target: CGFloat = buttonsHidden ? 0 : 1
+            let target: CGFloat = hidden ? 0 : 1
             if animated {
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = self.buttonsHidden ? 0.15 : 0.2
+                    context.duration = hidden ? 0.15 : 0.2
                     buttons.forEach { $0.animator().alphaValue = target }
                 }
             } else {
                 buttons.forEach { $0.alphaValue = target }
             }
             // Invisible buttons must not swallow clicks over the terminal.
-            buttons.forEach { $0.isEnabled = !buttonsHidden }
+            buttons.forEach { $0.isEnabled = !hidden }
         }
     }
 }
