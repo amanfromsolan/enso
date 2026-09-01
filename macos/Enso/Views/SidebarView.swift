@@ -1008,9 +1008,8 @@ private struct SpacePage: View {
     /// A dropped folder reopens if it was expanded before its drag
     /// collapsed it.
     private func restoreDraggedFolderExpansion(_ folderID: TerminalFolder.ID) {
-        guard store.sidebarDragFolderWasExpanded else { return }
         withAnimation(.easeOut(duration: 0.15)) {
-            _ = store.collapsedFolderIDs.remove(folderID)
+            store.restoreFolderExpansionAfterDrag(folderID)
         }
     }
 
@@ -1244,11 +1243,7 @@ private struct SpacePage: View {
     }
 
     private func toggleExpansion(_ folder: TerminalFolder) {
-        if store.collapsedFolderIDs.contains(folder.id) {
-            store.collapsedFolderIDs.remove(folder.id)
-        } else {
-            store.collapsedFolderIDs.insert(folder.id)
-        }
+        store.toggleFolderExpansion(folder.id)
     }
 
     private func beginFolderRename(_ folder: TerminalFolder) {
@@ -1598,7 +1593,7 @@ private struct SpacePage: View {
                let landedPath = store.spaces
                    .compactMap({ $0.pinnedItems.folderPath(containingSession: first) })
                    .first {
-                store.collapsedFolderIDs.subtract(landedPath)
+                store.expandFolders(landedPath)
             }
         }
         return true

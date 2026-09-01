@@ -1353,4 +1353,26 @@ struct PersistedStateSchemaTests {
     @Test func unreadableFileDecodesToNothing() {
         #expect(TerminalSessionStore.decodeState(from: Data("{".utf8)) == nil)
     }
+
+    /// Folder collapse state rides the same file as an optional field, so
+    /// it round-trips without a schema bump and a file from before it
+    /// shipped decodes with none.
+    @Test func collapsedFolderIDsRoundTripAndDefaultToAbsent() throws {
+        let ids = [UUID(), UUID()]
+        let data = try JSONEncoder().encode(
+            TerminalSessionStore.PersistedState(
+                version: TerminalSessionStore.stateSchemaVersion,
+                spaces: [space("Main")],
+                collapsedFolderIDs: ids
+            )
+        )
+        let state = try #require(TerminalSessionStore.decodeState(from: data))
+        #expect(state.collapsedFolderIDs == ids)
+
+        let preCollapse = try JSONEncoder().encode(
+            TerminalSessionStore.PersistedState(spaces: [space("Main")])
+        )
+        let oldState = try #require(TerminalSessionStore.decodeState(from: preCollapse))
+        #expect(oldState.collapsedFolderIDs == nil)
+    }
 }

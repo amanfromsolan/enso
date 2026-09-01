@@ -53,8 +53,9 @@ final class TerminalSessionStore: ObservableObject {
     /// reshuffle recency; the switcher records its final pick on commit.
     var isCyclingSelection = false
 
-    /// Folders the user collapsed; session-only, shared by the docked
-    /// sidebar and the edge-peek panel so state survives sidebar hiding.
+    /// Folders the user collapsed; shared by the docked sidebar and the
+    /// edge-peek panel so state survives sidebar hiding, and persisted in
+    /// state.json so a relaunch reopens the tree the way it was left.
     /// Inverted (collapsed, not expanded) so new folders start open.
     @Published var collapsedFolderIDs: Set<TerminalFolder.ID> = []
 
@@ -135,11 +136,13 @@ final class TerminalSessionStore: ObservableObject {
 
         var loaded: [SidebarSpace]
         var loadedContainers: [SplitContainer] = []
+        var loadedCollapsed: Set<TerminalFolder.ID> = []
         if let spaces {
             loaded = spaces
         } else if persistToDisk, let state = Self.loadState() {
             loaded = state.spaces
             loadedContainers = state.splitContainers ?? []
+            loadedCollapsed = Set(state.collapsedFolderIDs ?? [])
             // A file from a newer build carries fields this one would drop
             // on re-encode, so the safe move is to read what we understand
             // and never write back: the user keeps their spaces for the
@@ -164,6 +167,9 @@ final class TerminalSessionStore: ObservableObject {
         self.spaces = loaded
         self.activeSpaceID = loaded[0].id
         self.splitContainers = loadedContainers
+        // Deleted folders would otherwise haunt the set as dead UUIDs.
+        self.collapsedFolderIDs = loadedCollapsed
+            .intersection(loaded.flatMap { $0.allFolders.map(\.id) })
         // A stale state file may reference tabs that no longer exist;
         // membership must only ever cover live sessions.
         pruneSplitContainerMembership()
@@ -500,16 +506,43 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     /// Bulk collapse/expand of a space's folders from the space header menu.
-    /// Session-only like every folder toggle (collapsedFolderIDs isn't
-    /// persisted), so there's nothing to save.
     func collapseAllFolders(inSpace spaceID: SidebarSpace.ID) {
         guard let space = spaces.first(where: { $0.id == spaceID }) else { return }
         collapsedFolderIDs.formUnion(space.allFolders.map(\.id))
+        save()
     }
 
     func expandAllFolders(inSpace spaceID: SidebarSpace.ID) {
         guard let space = spaces.first(where: { $0.id == spaceID }) else { return }
         collapsedFolderIDs.subtract(space.allFolders.map(\.id))
+        save()
+    }
+
+    /// The sidebar row's disclosure toggle.
+    func toggleFolderExpansion(_ folderID: TerminalFolder.ID) {
+        if collapsedFolderIDs.contains(folderID) {
+            collapsedFolderIDs.remove(folderID)
+        } else {
+            collapsedFolderIDs.insert(folderID)
+        }
+        save()
+    }
+
+    /// Reopens a dropped folder if it was expanded before its drag
+    /// collapsed it, then commits the post-drag truth: the drop's own save
+    /// ran while the transient drag collapse was still in place.
+    func restoreFolderExpansionAfterDrag(_ folderID: TerminalFolder.ID) {
+        if sidebarDragFolderWasExpanded {
+            collapsedFolderIDs.remove(folderID)
+        }
+        save()
+    }
+
+    /// Expands every folder in the given set — a dropped tab must stay
+    /// visible, so its landing folder and all collapsed ancestors open.
+    func expandFolders(_ folderIDs: some Sequence<TerminalFolder.ID>) {
+        collapsedFolderIDs.subtract(folderIDs)
+        save()
     }
 
     /// Expands the folder and every ancestor above it, so a row revealed
@@ -519,6 +552,7 @@ final class TerminalSessionStore: ObservableObject {
         for space in spaces {
             guard let path = space.pinnedItems.folderPath(to: folderID) else { continue }
             collapsedFolderIDs.subtract(path)
+            save()
             return
         }
     }
@@ -1218,6 +1252,7 @@ final class TerminalSessionStore: ObservableObject {
         for spaceIndex in spaces.indices {
             if spaces[spaceIndex].pinnedItems.dissolveFolder(folderID) { break }
         }
+        collapsedFolderIDs.remove(folderID)
         save()
     }
 
@@ -1947,6 +1982,8 @@ final class TerminalSessionStore: ObservableObject {
         var spaces: [SidebarSpace]
         /// Absent in state files written before splits shipped.
         var splitContainers: [SplitContainer]?
+        /// Absent in state files written before folder collapse persisted.
+        var collapsedFolderIDs: [TerminalFolder.ID]?
 
         /// An unversioned file is version 1 by definition.
         var schemaVersion: Int { version ?? 1 }
@@ -2032,7 +2069,9 @@ final class TerminalSessionStore: ObservableObject {
         withSpace(activeSpaceID) { $0.lastSelection = selection }
         guard let data = try? JSONEncoder().encode(
             PersistedState(
-                version: Self.stateSchemaVersion, spaces: spaces, splitContainers: splitContainers
+                version: Self.stateSchemaVersion, spaces: spaces, splitContainers: splitContainers,
+                // Sorted so re-saves don't shuffle the file.
+                collapsedFolderIDs: collapsedFolderIDs.sorted { $0.uuidString < $1.uuidString }
             )
         ) else { return }
         try? data.write(to: Self.stateURL, options: .atomic)
