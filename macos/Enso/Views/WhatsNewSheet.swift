@@ -197,7 +197,7 @@ struct WhatsNewSheet: View {
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(Theme.text(0.35))
 
-                        Text(item)
+                        Text(Self.attributedItem(item))
                             .font(.system(size: 15))
                             .foregroundStyle(Theme.text(0.78))
                             .lineSpacing(3.5)
@@ -206,6 +206,39 @@ struct WhatsNewSheet: View {
                     }
                 }
             }
+        }
+
+        /// Items carry links as markdown-style "[label](url)" (rebuilt by
+        /// ReleaseNotesParser from the appcast's <a> tags). Only that one
+        /// pattern is interpreted — full markdown parsing would mangle
+        /// prose from hand-edited appcasts.
+        private static func attributedItem(_ item: String) -> AttributedString {
+            var result = AttributedString()
+            var rest = item[...]
+            while let open = rest.firstIndex(of: "["),
+                  let separator = rest.range(of: "](", range: open..<rest.endIndex),
+                  let close = rest[separator.upperBound...].firstIndex(of: ")") {
+                let label = String(rest[rest.index(after: open)..<separator.lowerBound])
+                guard
+                    !label.isEmpty,
+                    let url = URL(string: String(rest[separator.upperBound..<close])),
+                    url.scheme != nil
+                else {
+                    // Not a link after all; emit through the bracket and
+                    // keep scanning what follows it.
+                    result += AttributedString(String(rest[...open]))
+                    rest = rest[rest.index(after: open)...]
+                    continue
+                }
+                result += AttributedString(String(rest[..<open]))
+                var linked = AttributedString(label)
+                linked.link = url
+                linked.underlineStyle = .single
+                result += linked
+                rest = rest[rest.index(after: close)...]
+            }
+            result += AttributedString(String(rest))
+            return result
         }
     }
 }

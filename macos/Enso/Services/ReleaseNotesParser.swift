@@ -45,10 +45,15 @@ enum ReleaseNotesParser {
 
     /// Collects h2/h3 headings as section boundaries and li/p contents as
     /// items; text inside any other tag flows through untouched, so
-    /// inline markup like <b> or <a> flattens to its words.
+    /// inline markup like <b> flattens to its words. The exception is <a>,
+    /// which is rebuilt as a markdown-style "[label](url)" so the sheet
+    /// can render it tappable (see WhatsNewSheet's item rendering).
     private final class Collector: NSObject, XMLParserDelegate {
         var sections: [RawSection] = []
         private var buffer = ""
+        /// In-flight <a>: its href and where in the buffer its label began.
+        private var anchorHref: String?
+        private var anchorStartOffset: Int?
 
         func parser(
             _ parser: XMLParser, didStartElement name: String,
@@ -60,6 +65,12 @@ enum ReleaseNotesParser {
                 flushStrayText()
             case "br":
                 buffer += " "
+            case "a":
+                // Nested anchors collapse into the outer one.
+                if anchorHref == nil {
+                    anchorHref = attributes["href"]
+                    anchorStartOffset = buffer.count
+                }
             default:
                 break
             }
@@ -79,6 +90,19 @@ enum ReleaseNotesParser {
             case "li", "p":
                 appendItem(collapsed(buffer))
                 buffer = ""
+            case "a":
+                // The offset guard drops a stale anchor whose buffer was
+                // flushed mid-tag (malformed input) instead of mislinking.
+                if let href = anchorHref, let start = anchorStartOffset,
+                   !href.isEmpty, start <= buffer.count {
+                    let labelStart = buffer.index(buffer.startIndex, offsetBy: start)
+                    let label = String(buffer[labelStart...])
+                    if !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        buffer.replaceSubrange(labelStart..., with: "[\(label)](\(href))")
+                    }
+                }
+                anchorHref = nil
+                anchorStartOffset = nil
             default:
                 break
             }

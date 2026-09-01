@@ -3,20 +3,53 @@
 embeds in the appcast (and Enso's What's New sheet parses back).
 
 The markdown is a deliberately strict subset — the gate that guarantees
-the in-app parser only ever sees well-formed <h2>/<ul><li> XHTML:
+the in-app parser only ever sees well-formed XHTML:
 
     ## Section          e.g. New / Improved / Fixed
     - one change, written as a user-facing sentence
+    a free-standing line becomes a paragraph (intro or footer prose)
 
-Anything else (stray prose, nested lists, inline markdown like **bold**
-or [links](...)) is an error: release.sh runs this before building, so a
+Inline [label](https://...) links are allowed anywhere and become
+<a href> — the GitHub release body renders them, and the What's New
+sheet shows them tappable. Anything fancier (**bold**, `code`, nested
+lists) is an error: release.sh runs this before building, so a
 malformed notes file stops the release instead of shipping.
 
 Usage: release_notes.py <notes.md>   (fragment on stdout, errors on stderr)
 """
 import html
 import pathlib
+import re
 import sys
+
+LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
+
+def render_inline(text: str, n: int, errors: list[str]) -> str | None:
+    """Escaped plain text plus [label](url) links; anything fancier errors."""
+    if "**" in text or "`" in text:
+        errors.append(
+            f"line {n}: inline markdown is not rendered — write plain text: {text[:60]}"
+        )
+        return None
+
+    out: list[str] = []
+    pos = 0
+    for m in LINK.finditer(text):
+        url = m.group(2)
+        if not url.startswith(("https://", "http://", "mailto:")):
+            errors.append(f"line {n}: link needs an absolute http(s)/mailto url: {url[:60]}")
+            return None
+        out.append(html.escape(text[pos : m.start()]))
+        out.append(f'<a href="{html.escape(url, quote=True)}">{html.escape(m.group(1))}</a>')
+        pos = m.end()
+
+    rest = text[pos:]
+    if "](" in rest:
+        errors.append(f"line {n}: malformed link: {rest[:60]}")
+        return None
+    out.append(html.escape(rest))
+    return "".join(out)
 
 
 def main() -> int:
@@ -31,7 +64,8 @@ def main() -> int:
 
     out: list[str] = []
     errors: list[str] = []
-    section_open = False
+    section_seen = False
+    list_open = False
     item_count = 0
 
     for n, raw in enumerate(src.read_text(encoding="utf-8").splitlines(), 1):
@@ -44,32 +78,41 @@ def main() -> int:
             if not title:
                 errors.append(f"line {n}: empty section title")
                 continue
-            if section_open:
+            if list_open:
                 out.append("</ul>")
+                list_open = False
             out.append(f"<h2>{html.escape(title)}</h2>")
-            out.append("<ul>")
-            section_open = True
+            section_seen = True
         elif line.startswith("- "):
             item = line[2:].strip()
-            if not section_open:
+            if not section_seen:
                 errors.append(f"line {n}: bullet before any '## Section' heading")
                 continue
             if not item:
                 errors.append(f"line {n}: empty bullet")
                 continue
-            if "**" in item or "](" in item or item.startswith("`"):
-                errors.append(
-                    f"line {n}: inline markdown is not rendered — write plain text: {item[:60]}"
-                )
+            rendered = render_inline(item, n, errors)
+            if rendered is None:
                 continue
-            out.append(f"<li>{html.escape(item)}</li>")
+            if not list_open:
+                out.append("<ul>")
+                list_open = True
+            out.append(f"<li>{rendered}</li>")
             item_count += 1
         else:
-            errors.append(
-                f"line {n}: unrecognized line (only '## Section' and '- item' allowed): {line[:60]}"
-            )
+            # Free-standing prose: an intro or footer paragraph. It closes
+            # any open list; a later bullet under the same section simply
+            # opens a fresh one.
+            rendered = render_inline(line, n, errors)
+            if rendered is None:
+                continue
+            if list_open:
+                out.append("</ul>")
+                list_open = False
+            out.append(f"<p>{rendered}</p>")
+            item_count += 1
 
-    if section_open:
+    if list_open:
         out.append("</ul>")
     if item_count == 0:
         errors.append("no items: notes need at least one '## Section' with one '- item'")
