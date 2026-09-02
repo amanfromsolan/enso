@@ -69,6 +69,48 @@ struct TerminalCommands: Commands {
             .keyboardShortcut("n", modifiers: [.command, .shift])
         }
 
+        // Edit ▸ Find, in place of SwiftUI's stock Find submenu — whose ⌘F
+        // targets NSTextFinder and would swallow the key before the
+        // terminal saw it. Each item round-trips through libghostty, so the
+        // menu, ghostty's own ⌘F/⌘G/Esc keybinds, and the bar all land in
+        // the same surface callbacks. Aimed at the focused pane: with
+        // splits, the sidebar selection follows pane focus.
+        CommandGroup(replacing: .textEditing) {
+            Menu("Find") {
+                Button("Find…") {
+                    focusedSurface?.startSearch()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(store.selection == nil)
+
+                Button("Find Next") {
+                    focusedSurface?.navigateSearch(.next)
+                }
+                .keyboardShortcut("g", modifiers: .command)
+                .disabled(store.selection == nil)
+
+                Button("Find Previous") {
+                    focusedSurface?.navigateSearch(.previous)
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(store.selection == nil)
+
+                Button("Use Selection for Find") {
+                    focusedSurface?.searchSelection()
+                }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(store.selection == nil)
+
+                Divider()
+
+                Button("Hide Find Bar") {
+                    focusedSurface?.endSearch()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(store.selection == nil)
+            }
+        }
+
         // View menu.
         CommandGroup(after: .toolbar) {
             Button(store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
@@ -151,6 +193,13 @@ struct TerminalCommands: Commands {
                 .disabled(store.sessions.count < index)
             }
         }
+    }
+
+    /// The live surface of the focused pane, if it has one (a sleeping tab
+    /// has nothing to search).
+    private var focusedSurface: GhosttySurfaceView? {
+        guard let selection = store.selection else { return nil }
+        return GhosttySurfaceManager.shared.existingView(for: selection)
     }
 
     private var pinTitle: String {

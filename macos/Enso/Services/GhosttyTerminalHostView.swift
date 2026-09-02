@@ -121,6 +121,9 @@ final class SplitLayoutHostView: NSView {
     /// The moon view a sleeping pane wears where its terminal would be;
     /// one per sleeping pane, removed the moment the pane wakes.
     private var sleepOverlays: [TerminalSession.ID: NSHostingView<PaneSleepingView>] = [:]
+    /// The find bar floating over a pane whose surface has a search up;
+    /// mounted and dropped as the surface's search state comes and goes.
+    private var searchBars: [TerminalSession.ID: NSHostingView<PaneSearchBar>] = [:]
     private var focusedID: TerminalSession.ID?
     /// The pane last handed first responder by this host. Focus is granted
     /// only when the focused pane changes (or its surface is newly
@@ -160,12 +163,17 @@ final class SplitLayoutHostView: NSView {
             cards.removeValue(forKey: id)
             headers.removeValue(forKey: id)
             sleepOverlays.removeValue(forKey: id)
+            searchBars.removeValue(forKey: id)
             compactHeaders.removeValue(forKey: id)
         }
         // A pane that fell asleep in place keeps its card but its dead
-        // surface view must not linger under the moon.
+        // surface view must not linger under the moon — nor its find bar.
         for (id, surface) in self.surfaces where surfaces[id] == nil {
             surface.removeFromSuperview()
+            surface.onSearchStateChange = nil
+            if let bar = searchBars.removeValue(forKey: id) {
+                bar.removeFromSuperview()
+            }
         }
         self.surfaces = surfaces
 
@@ -200,6 +208,14 @@ final class SplitLayoutHostView: NSView {
                 if let overlay = sleepOverlays.removeValue(forKey: id) {
                     overlay.removeFromSuperview()
                 }
+                // The find bar follows the surface's search state; sync now
+                // (a tab switched away and back remounts a live search's
+                // bar) and on every change from here on.
+                let sessionID = id
+                surface.onSearchStateChange = { [weak self] state in
+                    self?.updateSearchBar(for: sessionID, state: state)
+                }
+                updateSearchBar(for: id, state: surface.searchState)
             } else {
                 // Sleeping pane: the moon view sits where the terminal
                 // would. Clicking it is a pick, like clicking a live
@@ -254,6 +270,46 @@ final class SplitLayoutHostView: NSView {
         if focusedID == nil {
             lastFocusGrant = nil
         }
+    }
+
+    /// Mounts, refreshes, or removes a pane's find bar to match its
+    /// surface's search state. The bar is pane chrome like the header: a
+    /// hosted SwiftUI view inside the card, above the surface, framed by
+    /// the layout pass at the top-trailing corner of the terminal body.
+    private func updateSearchBar(for id: TerminalSession.ID, state: TerminalSearchState?) {
+        guard let state, let card = cards[id], let surface = surfaces[id] else {
+            if let bar = searchBars.removeValue(forKey: id) {
+                // A turn later: the close usually arrives from the ✕ or Esc
+                // inside this very view, mid-action. The closure keeps the
+                // hosting view alive until it is safely off screen.
+                DispatchQueue.main.async { bar.removeFromSuperview() }
+            }
+            return
+        }
+        let rootView = PaneSearchBar(
+            state: state,
+            onNext: { [weak surface] in surface?.navigateSearch(.next) },
+            onPrevious: { [weak surface] in surface?.navigateSearch(.previous) },
+            onClose: { [weak surface] in
+                surface?.endSearch()
+                // Deferred a turn like every other field-to-terminal
+                // hand-off: SwiftUI is still tearing the field down.
+                GhosttySurfaceManager.shared.restoreFocus(to: id)
+            }
+        )
+        if let bar = searchBars[id] {
+            bar.rootView = rootView
+            if bar.superview !== card.content {
+                card.content.addSubview(bar, positioned: .above, relativeTo: surface)
+            }
+        } else {
+            let bar = NSHostingView(rootView: rootView)
+            bar.sizingOptions = []
+            bar.safeAreaRegions = []
+            searchBars[id] = bar
+            card.content.addSubview(bar, positioned: .above, relativeTo: surface)
+        }
+        needsLayout = true
     }
 
     /// A pane header was clicked: hand the keyboard to that pane's
@@ -329,6 +385,18 @@ final class SplitLayoutHostView: NSView {
     /// the least that still reads as a terminal with a title — a pane must
     /// never render as a title with no terminal under it.
     static let headerCollapseHeight: CGFloat = paneHeaderHeight + 40
+    static let searchBarHeight: CGFloat = 36
+
+    /// The find bar floats inset from the terminal body's top-trailing
+    /// corner, shrinking to fit a narrow pane.
+    private static func searchBarFrame(in bodyRect: CGRect) -> CGRect {
+        let inset: CGFloat = 8
+        let width = min(360, max(bodyRect.width - inset * 2, 0))
+        return CGRect(
+            x: bodyRect.maxX - inset - width, y: bodyRect.minY + inset,
+            width: width, height: searchBarHeight
+        ).integral
+    }
 
     /// The responsive compact gate: a pane whose laid-out width drops
     /// below this goes compact. 500pt lands a 50/50 horizontal split
@@ -414,6 +482,7 @@ final class SplitLayoutHostView: NSView {
             )
             surfaces[id]?.frame = bodyRect
             sleepOverlays[id]?.frame = bodyRect
+            searchBars[id]?.frame = Self.searchBarFrame(in: bodyRect)
         case .split(let branch):
             let thickness = Self.dividerThickness
             let firstRect: CGRect
@@ -2135,6 +2204,125 @@ struct PaneSleepingView: View {
         // Ink keyed to the terminal background's luminance, like the pane
         // headers — the view sits on the Ghostty theme, not app chrome.
         .colorScheme(GhosttyRuntime.shared.terminalColorScheme)
+    }
+}
+
+/// The per-pane find bar: a field with libghostty's match count, step
+/// buttons, and a close button, floating over the terminal's top-trailing
+/// corner. libghostty owns the search and the highlights; this only edits
+/// the needle. Enter steps forward, ⇧Enter back, Esc closes and hands the
+/// keyboard back to the terminal.
+struct PaneSearchBar: View {
+    @ObservedObject var state: TerminalSearchState
+    let onNext: () -> Void
+    let onPrevious: () -> Void
+    let onClose: () -> Void
+
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            TextField("Find", text: $state.needle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($fieldFocused)
+                .onSubmit(onNext)
+                .onKeyPress(.return, phases: .down) { press in
+                    guard press.modifiers.contains(.shift) else { return .ignored }
+                    onPrevious()
+                    return .handled
+                }
+                .onExitCommand(perform: onClose)
+
+            if !countLabel.isEmpty {
+                Text(countLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+
+            Button(action: onPrevious) {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(PaneSearchButtonStyle())
+            .disabled(!hasMatches)
+            .help("Previous match (⇧↩)")
+
+            Button(action: onNext) {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(PaneSearchButtonStyle())
+            .disabled(!hasMatches)
+            .help("Next match (↩)")
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(PaneSearchButtonStyle())
+            .help("Close (esc)")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.22), radius: 8, y: 2)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.primary.opacity(0.12), lineWidth: 1)
+        }
+        // The bar sits on the Ghostty theme, not app chrome: key its
+        // material and ink to the terminal background like the headers.
+        .colorScheme(GhosttyRuntime.shared.terminalColorScheme)
+        .onAppear {
+            // A turn later: the hosting view may not be in a window yet.
+            DispatchQueue.main.async { fieldFocused = true }
+        }
+        .onChange(of: state.focusRequest) { _, _ in
+            DispatchQueue.main.async { fieldFocused = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Another app's ⌘E while we were in the background.
+            state.readPasteboard()
+        }
+    }
+
+    private var hasMatches: Bool {
+        (state.total ?? 0) > 0
+    }
+
+    private var countLabel: String {
+        guard !state.needle.isEmpty, let total = state.total else { return "" }
+        if total == 0 { return "No matches" }
+        if let selected = state.selected { return "\(selected + 1) of \(total)" }
+        return "\(total)"
+    }
+}
+
+/// Quiet 22pt icon button for the find bar: dim glyph, a faint disc on hover
+/// and press, dimmer still when disabled.
+private struct PaneSearchButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.primary.opacity(isEnabled ? (configuration.isPressed ? 0.9 : 0.65) : 0.25))
+            .frame(width: 22, height: 22)
+            .background(
+                Circle().fill(.primary.opacity(configuration.isPressed ? 0.14 : (hovered && isEnabled ? 0.08 : 0)))
+            )
+            .contentShape(Circle())
+            .onHover { hovered = $0 }
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import GhosttyKit
 
 /// The NSView a libghostty surface renders into. libghostty owns the PTY,
@@ -14,6 +15,27 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
     /// Fired when the surface becomes first responder — clicking a pane in
     /// a split layout syncs the sidebar selection to that pane's tab.
     var onFocusGained: (() -> Void)?
+    /// Fired when this pane's find bar should appear (non-nil) or go away
+    /// (nil). The host that owns the pane's chrome mounts the bar.
+    var onSearchStateChange: ((TerminalSearchState?) -> Void)?
+
+    /// Live scrollback search on this surface; nil while no find bar is up.
+    /// libghostty runs the search and paints the matches — this end only
+    /// owns the needle and the bar. Setting nil tells libghostty to end
+    /// its search; the END_SEARCH it answers with is a no-op here.
+    private(set) var searchState: TerminalSearchState? {
+        didSet {
+            guard searchState !== oldValue else { return }
+            if let searchState {
+                searchState.onNeedleCommit = { [weak self] needle in
+                    self?.performBinding("search:\(needle)")
+                }
+            } else if oldValue != nil {
+                performBinding("end_search")
+            }
+            onSearchStateChange?(searchState)
+        }
+    }
 
     /// Non-nil while interpretKeyEvents is routing a keyDown through
     /// NSTextInputClient; collects the text AppKit translates for us.
@@ -344,11 +366,70 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         performBinding("select_all")
     }
 
-    private func performBinding(_ action: String) {
-        guard let surface else { return }
-        _ = action.withCString { ptr in
+    @discardableResult
+    private func performBinding(_ action: String) -> Bool {
+        guard let surface else { return false }
+        return action.withCString { ptr in
             ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
         }
+    }
+
+    // MARK: - Scrollback search
+
+    /// libghostty asked for the find bar — its ⌘F default keybind, our Find
+    /// menu, or ⌘E "use selection" (which brings the selection along as
+    /// the needle). Shows the bar, or if it is already up, seeds the new
+    /// needle and puts the caret back in the field.
+    func searchDidStart(needle: String?) {
+        if let searchState {
+            if let needle, !needle.isEmpty {
+                searchState.needle = needle
+            }
+            searchState.requestFocus()
+        } else {
+            searchState = TerminalSearchState(initialNeedle: needle)
+        }
+    }
+
+    /// libghostty ended the search: its Esc default keybind while the
+    /// terminal has focus, or the echo of our own end_search.
+    func searchDidEnd() {
+        searchState = nil
+    }
+
+    /// Match counts from libghostty's search thread; -1 means unknown.
+    func searchDidUpdate(total: Int) {
+        searchState?.total = total >= 0 ? total : nil
+    }
+
+    func searchDidUpdate(selected: Int) {
+        searchState?.selected = selected >= 0 ? selected : nil
+    }
+
+    /// User entry points. Each round-trips through libghostty so the menu,
+    /// ghostty's own keybinds, and the bar converge on the same callbacks
+    /// above. start_search only fails on a surface that cannot search at
+    /// all; then the bar opens directly so ⌘F never goes dead.
+    func startSearch() {
+        if !performBinding("start_search") {
+            searchDidStart(needle: nil)
+        }
+    }
+
+    func searchSelection() {
+        performBinding("search_selection")
+    }
+
+    func endSearch() {
+        searchState = nil
+    }
+
+    enum SearchDirection: String {
+        case next, previous
+    }
+
+    func navigateSearch(_ direction: SearchDirection) {
+        performBinding("navigate_search:\(direction.rawValue)")
     }
 
     // MARK: - Mouse
@@ -631,5 +712,91 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         } else {
             ghostty_surface_preedit(surface, nil, 0)
         }
+    }
+}
+
+/// One pane's find-bar model: the needle, libghostty's match counts, and the
+/// system find pasteboard sync (so a ⌘E in another app lands here on ⌘F,
+/// and what you type here follows you to other apps' ⌘G). Needle edits reach
+/// libghostty through onNeedleCommit — at once for an empty (stop) needle
+/// or three or more characters, after a short pause for one or two so a
+/// single keystroke doesn't sweep the whole scrollback.
+@MainActor
+final class TerminalSearchState: ObservableObject {
+    @Published var needle: String = "" {
+        didSet {
+            guard needle != oldValue else { return }
+            scheduleCommit()
+            writePasteboard()
+        }
+    }
+    /// 0-based index of the highlighted match; nil when none is selected.
+    @Published var selected: Int?
+    /// Total matches in the scrollback; nil while unknown.
+    @Published var total: Int?
+    /// Bumped when the bar should (re)take the keyboard — ⌘F pressed while
+    /// the bar is already up. The bar observes it.
+    @Published private(set) var focusRequest = 0
+
+    /// Set by the surface; receives each needle worth searching for. The
+    /// seed needle is committed as soon as the sink is attached so a
+    /// prefilled bar shows its matches without a keystroke.
+    var onNeedleCommit: ((String) -> Void)? {
+        didSet {
+            if !needle.isEmpty {
+                onNeedleCommit?(Self.sanitized(needle))
+            }
+        }
+    }
+
+    private var pendingCommit: DispatchWorkItem?
+    private static let findPasteboard = NSPasteboard(name: .find)
+
+    init(initialNeedle: String?) {
+        if let initialNeedle, !initialNeedle.isEmpty {
+            needle = initialNeedle
+            writePasteboard()
+        } else {
+            readPasteboard()
+        }
+    }
+
+    func requestFocus() {
+        focusRequest += 1
+    }
+
+    /// Adopts the system find pasteboard's text when it differs from the
+    /// needle — on open, and again when the app comes back to the front.
+    func readPasteboard() {
+        guard let text = Self.findPasteboard.string(forType: .string),
+              !text.isEmpty, text != needle
+        else { return }
+        needle = text
+    }
+
+    private func writePasteboard() {
+        guard !needle.isEmpty else { return }
+        Self.findPasteboard.clearContents()
+        Self.findPasteboard.setString(needle, forType: .string)
+    }
+
+    private func scheduleCommit() {
+        pendingCommit?.cancel()
+        let needle = Self.sanitized(needle)
+        if needle.isEmpty || needle.count >= 3 {
+            onNeedleCommit?(needle)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.onNeedleCommit?(needle)
+        }
+        pendingCommit = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300), execute: work)
+    }
+
+    /// The binding string is "search:<needle>" and a newline would end it
+    /// early; the field is single-line, but pasted text may carry one.
+    private static func sanitized(_ needle: String) -> String {
+        needle.replacingOccurrences(of: "\n", with: " ")
     }
 }

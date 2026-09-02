@@ -356,10 +356,57 @@ final class GhosttyRuntime {
             // ⌘-clicking a link asks the app to open it in the default handler.
             return openURL(action.action.open_url)
 
+        // Scrollback search. libghostty runs the search and paints the
+        // matches itself; these tell the pane to show/hide its find bar
+        // and keep the match counter current. START/END fire synchronously
+        // from inside the binding-action or key call, TOTAL/SELECTED from
+        // the surface mailbox during app tick — all hop to main the same
+        // way SET_TITLE does.
+        case GHOSTTY_ACTION_START_SEARCH:
+            guard let view = surfaceView(for: target) else { return false }
+            let needle = action.action.start_search.needle.map { String(cString: $0) }
+            Task { @MainActor in
+                view.searchDidStart(needle: needle)
+            }
+            return true
+
+        case GHOSTTY_ACTION_END_SEARCH:
+            guard let view = surfaceView(for: target) else { return false }
+            Task { @MainActor in
+                view.searchDidEnd()
+            }
+            return true
+
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            guard let view = surfaceView(for: target) else { return false }
+            let total = Int(action.action.search_total.total)
+            Task { @MainActor in
+                view.searchDidUpdate(total: total)
+            }
+            return true
+
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            guard let view = surfaceView(for: target) else { return false }
+            let selected = Int(action.action.search_selected.selected)
+            Task { @MainActor in
+                view.searchDidUpdate(selected: selected)
+            }
+            return true
+
         default:
             NSLog("GhosttyRuntime: unhandled action tag=%d", action.tag.rawValue)
             return false
         }
+    }
+
+    /// The GhosttySurfaceView behind a surface-targeted action, via the
+    /// userdata registered at surface creation.
+    nonisolated private static func surfaceView(for target: ghostty_target_s) -> GhosttySurfaceView? {
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let userdata = ghostty_surface_userdata(surface)
+        else { return nil }
+        return Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     }
 
     /// Opens a URL libghostty surfaced from a ⌘-click on a terminal link.
