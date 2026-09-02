@@ -11,8 +11,10 @@ import SwiftUI
 struct WhatsNewSheet: View {
     /// Mirrors the markdown the release notes are authored in: `##`
     /// headings ("New", "Improved", "Fixed") become sections, list items
-    /// become lines. Keeping the model this shape means the appcast HTML
-    /// (h2 + ul/li) parses straight into it.
+    /// become bulleted lines, and free-standing prose (a credit under a
+    /// list, an intro or footer) becomes a paragraph. Keeping the model
+    /// this shape means the appcast HTML (h2 + ul/li + p) parses straight
+    /// into it.
     struct Content {
         var version: String
         var sections: [Section]
@@ -20,7 +22,18 @@ struct WhatsNewSheet: View {
         struct Section: Identifiable {
             let id = UUID()
             var title: String
-            var items: [String]
+            var items: [Item]
+        }
+
+        struct Item: Hashable {
+            var text: String
+            /// A `<p>` (or untagged prose) rather than an `<li>`: drawn as
+            /// a plain line with no bullet, so a credit line under a list
+            /// doesn't masquerade as another change.
+            var isParagraph = false
+
+            static func bullet(_ text: String) -> Item { Item(text: text) }
+            static func paragraph(_ text: String) -> Item { Item(text: text, isParagraph: true) }
         }
     }
 
@@ -175,7 +188,8 @@ struct WhatsNewSheet: View {
     }
 
     /// One "## heading" worth of notes: a quiet small-caps title, then
-    /// plain text lines with a hanging dim bullet.
+    /// plain text lines with a hanging dim bullet. Paragraph items drop
+    /// the bullet and sit in a quieter color so they read as an aside.
     private struct SectionView: View {
         let section: Content.Section
 
@@ -192,17 +206,27 @@ struct WhatsNewSheet: View {
                 }
 
                 ForEach(section.items, id: \.self) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Text("·")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(Theme.text(0.35))
-
-                        Text(Self.attributedItem(item))
-                            .font(.system(size: 15))
-                            .foregroundStyle(Theme.text(0.78))
-                            .lineSpacing(3.5)
+                    if item.isParagraph {
+                        Text(Self.attributedItem(item.text))
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.text(0.55))
+                            .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 3)
+                    } else {
+                        HStack(alignment: .firstTextBaseline, spacing: 9) {
+                            Text("·")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Theme.text(0.35))
+
+                            Text(Self.attributedItem(item.text))
+                                .font(.system(size: 15))
+                                .foregroundStyle(Theme.text(0.78))
+                                .lineSpacing(3.5)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
             }
@@ -249,16 +273,20 @@ extension WhatsNewSheet.Content {
         version: "0.5.0",
         sections: [
             .init(title: "New", items: [
-                "Release notes now show up right here when an update is ready — no more guessing what changed.",
-                "Right-click a folder in Finder → New Enso Terminal Here."
+                .bullet("Release notes now show up right here when an update is ready — no more guessing what changed."),
+                .bullet("Right-click a folder in Finder → New Enso Terminal Here."),
+                .paragraph("Both suggested by [@someone](https://github.com/someone). Thanks!")
             ]),
             .init(title: "Improved", items: [
-                "The sidebar update card keeps its layout in narrow sidebars instead of wrapping.",
-                "Quit confirmation is bigger and easier to read."
+                .bullet("The sidebar update card keeps its layout in narrow sidebars instead of wrapping."),
+                .bullet("Quit confirmation is bigger and easier to read.")
             ]),
             .init(title: "Fixed", items: [
-                "Command palette no longer spawns a stray terminal when you press Enter.",
-                "Fixed a crash at launch when the updater framework failed to load."
+                .bullet("Command palette no longer spawns a stray terminal when you press Enter."),
+                .bullet("Fixed a crash at launch when the updater framework failed to load.")
+            ]),
+            .init(title: "", items: [
+                .paragraph("Thank you for using Enso as your terminal!")
             ])
         ]
     )
@@ -279,7 +307,7 @@ extension WhatsNewSheet.Content {
 #Preview("One line") {
     WhatsNewSheet(
         content: .init(version: "0.5.1", sections: [
-            .init(title: "Fixed", items: ["Fixed a hang when closing the last tab."])
+            .init(title: "Fixed", items: [.bullet("Fixed a hang when closing the last tab.")])
         ]),
         onUpdate: {}, onSkip: {}, onDismiss: {}
     )

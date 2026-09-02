@@ -3,10 +3,12 @@ import Foundation
 /// Turns the release-notes HTML from a Sparkle appcast item back into
 /// WhatsNewSheet sections.
 ///
-/// The happy path is the strict <h2>/<ul><li> subset our own release
-/// pipeline emits (script/release_notes.py), but this end never assumes
-/// it: unknown tags are flattened to their text, stray prose becomes an
-/// untitled section, HTML entities are tolerated, and input that isn't
+/// The happy path is the strict <h2>/<ul><li>/<p> subset our own release
+/// pipeline emits (script/release_notes.py): <li> is a bulleted item, <p>
+/// a paragraph shown without a bullet. But this end never assumes it:
+/// unknown tags are flattened to their text, stray prose becomes a
+/// paragraph (in an untitled section if it precedes every heading), HTML
+/// entities are tolerated, and input that isn't
 /// parseable XML at all falls back to stripping tags — so a hand-edited
 /// or future-format appcast degrades to plain readable text instead of
 /// breaking the sheet. Returns nil only when nothing displayable is left,
@@ -25,7 +27,8 @@ enum ReleaseNotesParser {
 
     // MARK: - Structured pass (XML walk)
 
-    private typealias RawSection = (title: String, items: [String])
+    private typealias Item = WhatsNewSheet.Content.Item
+    private typealias RawSection = (title: String, items: [Item])
 
     private static func structured(_ html: String) -> [RawSection]? {
         // XMLParser chokes on HTML-only entities; normalize the common
@@ -87,8 +90,11 @@ enum ReleaseNotesParser {
                     sections.append((title: title, items: []))
                 }
                 buffer = ""
-            case "li", "p":
-                appendItem(collapsed(buffer))
+            case "li":
+                appendItem(.bullet(collapsed(buffer)))
+                buffer = ""
+            case "p":
+                appendItem(.paragraph(collapsed(buffer)))
                 buffer = ""
             case "a":
                 // The offset guard drops a stale anchor whose buffer was
@@ -120,19 +126,19 @@ enum ReleaseNotesParser {
             flushStrayText()
         }
 
-        /// Text sitting outside any h2/li (an intro paragraph without
-        /// tags, say) still deserves to show — file it as an item.
+        /// Text sitting outside any h2/li/p (an intro line without tags,
+        /// say) still deserves to show — file it as a paragraph.
         private func flushStrayText() {
-            appendItem(collapsed(buffer))
+            appendItem(.paragraph(collapsed(buffer)))
             buffer = ""
         }
 
-        private func appendItem(_ text: String) {
-            guard !text.isEmpty else { return }
+        private func appendItem(_ item: Item) {
+            guard !item.text.isEmpty else { return }
             if sections.isEmpty {
                 sections.append((title: "", items: []))
             }
-            sections[sections.count - 1].items.append(text)
+            sections[sections.count - 1].items.append(item)
         }
     }
 
@@ -149,6 +155,7 @@ enum ReleaseNotesParser {
             .components(separatedBy: .newlines)
             .map(collapsed)
             .filter { !$0.isEmpty }
+            .map(Item.bullet)
         return [(title: "", items: items)]
     }
 
