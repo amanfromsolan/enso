@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import GhosttyKit
 import SwiftUI
 
@@ -7,7 +8,7 @@ import SwiftUI
 ///
 /// The C callbacks fire on ghostty's internal threads, so everything they
 /// touch is nonisolated and they hop to the main actor for UI work.
-final class GhosttyRuntime {
+final class GhosttyRuntime: ObservableObject {
     static let shared = GhosttyRuntime()
 
     nonisolated(unsafe) private(set) var app: ghostty_app_t?
@@ -15,11 +16,17 @@ final class GhosttyRuntime {
 
     /// Terminal background from the loaded ghostty config, so surrounding
     /// chrome (title strip, empty states) blends with the terminal theme.
-    private(set) var themeBackground: Color = Color(red: 0.018, green: 0.019, blue: 0.023)
+    @Published private(set) var themeBackground: Color = Color(red: 0.018, green: 0.019, blue: 0.023)
 
     nonisolated private let tickLock = NSLock()
     nonisolated(unsafe) private var tickScheduled = false
     private var observers: [NSObjectProtocol] = []
+    private var appearanceObserver: NSKeyValueObservation?
+
+    var colorScheme: ghostty_color_scheme_e {
+        NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+    }
 
     private init() {}
 
@@ -185,6 +192,10 @@ final class GhosttyRuntime {
 
         // NSApp is nil when started from App.init, before NSApplication exists.
         ghostty_app_set_focus(app, NSApp?.isActive ?? true)
+        // Apply even the initial light scheme: libghostty defaults to light,
+        // so set_color_scheme alone may not emit a reload on first launch.
+        ghostty_app_set_color_scheme(app, colorScheme)
+        ghostty_app_update_config(app, self.config)
         installObservers()
         NSLog("GhosttyRuntime: started")
     }
@@ -239,21 +250,20 @@ final class GhosttyRuntime {
         ghostty_config_load_default_files(config)
         ghostty_config_load_recursive_files(config)
         ghostty_config_finalize(config)
-
-        var background = ghostty_config_color_s()
-        let key = "background"
-        if key.withCString({ ghostty_config_get(config, &background, $0, UInt(key.utf8.count)) }) {
-            themeBackground = Color(
-                red: Double(background.r) / 255,
-                green: Double(background.g) / 255,
-                blue: Double(background.b) / 255
-            )
-        }
-
         return config
     }
 
     private func installObservers() {
+        appearanceObserver = NSApplication.shared.observe(
+            \.effectiveAppearance, options: [.new]
+        ) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self, let app = self.app else { return }
+                let scheme = self.colorScheme
+                ghostty_app_set_color_scheme(app, scheme)
+                GhosttySurfaceManager.shared.setColorScheme(scheme)
+            }
+        }
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
@@ -301,6 +311,66 @@ final class GhosttyRuntime {
         action: ghostty_action_s
     ) -> Bool {
         switch action.tag {
+        case GHOSTTY_ACTION_RELOAD_CONFIG:
+            guard let app, let userdata = ghostty_app_userdata(app) else { return false }
+            let runtime = Unmanaged<GhosttyRuntime>.fromOpaque(userdata).takeUnretainedValue()
+            let soft = action.action.reload_config.soft
+            let view: GhosttySurfaceView?
+            if target.tag == GHOSTTY_TARGET_SURFACE {
+                guard let surface = target.target.surface,
+                      let userdata = ghostty_surface_userdata(surface) else { return false }
+                view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+            } else if target.tag == GHOSTTY_TARGET_APP {
+                view = nil
+            } else {
+                return false
+            }
+            Task { @MainActor in
+                guard let app = runtime.app else { return }
+                let config = soft ? runtime.config : runtime.loadConfig()
+                defer { if !soft { ghostty_config_free(config) } }
+                if let view {
+                    guard let surface = view.surface else { return }
+                    ghostty_surface_update_config(surface, config)
+                } else {
+                    ghostty_app_update_config(app, config)
+                    if !soft {
+                        let previous = runtime.config
+                        runtime.config = ghostty_config_clone(config)
+                        ghostty_config_free(previous)
+                    }
+                }
+            }
+            return true
+
+        case GHOSTTY_ACTION_CONFIG_CHANGE:
+            // The config is borrowed for this callback. Copy only the color
+            // before dispatching; surface-specific changes must not repaint
+            // every pane's chrome.
+            guard target.tag == GHOSTTY_TARGET_APP,
+                  let app, let userdata = ghostty_app_userdata(app) else { return true }
+            var background = ghostty_config_color_s()
+            let key = "background"
+            guard key.withCString({ ghostty_config_get(
+                action.action.config_change.config, &background, $0, UInt(key.utf8.count)
+            ) }) else { return false }
+            let color = Color(red: Double(background.r) / 255,
+                              green: Double(background.g) / 255,
+                              blue: Double(background.b) / 255)
+            let runtime = Unmanaged<GhosttyRuntime>.fromOpaque(userdata).takeUnretainedValue()
+            if Thread.isMainThread {
+                // Startup config changes must land before the first view
+                // reads the background. Other callbacks can arrive off-main.
+                MainActor.assumeIsolated {
+                    if runtime.themeBackground != color { runtime.themeBackground = color }
+                }
+            } else {
+                Task { @MainActor in
+                    if runtime.themeBackground != color { runtime.themeBackground = color }
+                }
+            }
+            return true
+
         case GHOSTTY_ACTION_SET_TITLE:
             guard target.tag == GHOSTTY_TARGET_SURFACE,
                   let surface = target.target.surface,

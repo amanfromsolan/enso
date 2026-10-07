@@ -6,6 +6,7 @@ import SwiftUI
 /// the whole split layout (every pane's surface, with draggable dividers)
 /// when the selected tab belongs to a split container.
 struct GhosttyTerminalHostView: NSViewRepresentable {
+    @ObservedObject private var runtime = GhosttyRuntime.shared
     /// Optional so the container outlives any one session: swapping (or
     /// clearing) the surfaces happens inside a stable NSView in the same
     /// commit as SwiftUI's redraw. Destroying the representable instead
@@ -26,6 +27,7 @@ struct GhosttyTerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ host: SplitLayoutHostView, context: Context) {
+        _ = runtime.themeBackground
         guard let session else {
             host.apply(tree: nil, sessions: [:], surfaces: [:], focusedID: nil)
             return
@@ -350,7 +352,8 @@ final class SplitLayoutHostView: NSView {
             session: session,
             store: store,
             compact: compactHeaders[id] ?? false,
-            focused: id == focusedID
+            focused: id == focusedID,
+            terminalColorScheme: GhosttyRuntime.shared.terminalColorScheme
         ) { [weak self] in
             self?.focusPane(id)
         }
@@ -812,6 +815,9 @@ final class PaneCardView: NSView {
     }
 
     func setChrome(enabled: Bool, cornerRadius radius: CGFloat) {
+        let background = NSColor(GhosttyRuntime.shared.themeBackground).cgColor
+        content.layer?.backgroundColor = background
+        scrimLayer.backgroundColor = background
         chromeEnabled = enabled
         cornerRadius = radius
         content.layer?.cornerRadius = enabled ? radius : 0
@@ -978,14 +984,20 @@ struct PaneHeaderView: View {
     let store: TerminalSessionStore
     let compact: Bool
     let focused: Bool
+    // A value on the hosted root makes a theme change visible to SwiftUI's
+    // diff even when the session and header layout are unchanged.
+    let terminalColorScheme: ColorScheme
     let onActivate: () -> Void
 
     var body: some View {
-        if compact {
-            CompactPaneHeader(session: session, store: store, focused: focused, onActivate: onActivate)
-        } else {
-            FullPaneHeader(session: session, store: store, focused: focused)
+        Group {
+            if compact {
+                CompactPaneHeader(session: session, store: store, focused: focused, onActivate: onActivate)
+            } else {
+                FullPaneHeader(session: session, store: store, focused: focused)
+            }
         }
+        .environment(\.colorScheme, terminalColorScheme)
     }
 }
 
@@ -996,6 +1008,7 @@ struct PaneHeaderView: View {
 /// the AppKit drag/zoom handle behind the empty band. Living inside the
 /// pane band, it is pixel-identical to the old strip for an unsplit tab.
 private struct FullPaneHeader: View {
+    @Environment(\.colorScheme) private var terminalColorScheme
     let session: TerminalSession
     let store: TerminalSessionStore
     /// False only for the unfocused members of a split: their badge grays
@@ -1180,14 +1193,7 @@ private struct FullPaneHeader: View {
     /// Ink for the process badge: dark ink on a light terminal theme, light
     /// ink on a dark one.
     private var terminalInk: Color {
-        GhosttyRuntime.shared.terminalColorScheme == .light ? .black : .white
-    }
-
-    /// Appearance for the rename field's editing chrome — selection
-    /// highlight, caret — so it keys off the terminal background rather than
-    /// the app appearance.
-    private var terminalColorScheme: ColorScheme {
-        GhosttyRuntime.shared.terminalColorScheme
+        terminalColorScheme == .light ? .black : .white
     }
 }
 
@@ -1206,7 +1212,7 @@ private struct HeaderProcessBadge: View {
             // The header sits on the Ghostty theme background, not the app
             // chrome, so the artwork's light/dark appearance variant must
             // key off that color's luminance rather than the system
-            // appearance. Overriding the environment colorScheme makes the
+            // appearance. The header's environment colorScheme makes the
             // asset catalog resolve the matching variant.
             // 24 pt draws the 48-grid artwork: 24 pt @2x is 48 physical
             // pixels, so the marks land 1:1 on the Retina grid.
@@ -1215,7 +1221,6 @@ private struct HeaderProcessBadge: View {
                 .renderingMode(.original)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 24, height: 24)
-                .environment(\.colorScheme, GhosttyRuntime.shared.terminalColorScheme)
         case .symbol(let name):
             Image(systemName: name)
                 .font(.system(size: 13, weight: .medium))
@@ -1243,6 +1248,7 @@ private struct HeaderProcessBadge: View {
 /// window top, and losing drag/zoom there made the window feel nailed
 /// down.
 private struct CompactPaneHeader: View {
+    @Environment(\.colorScheme) private var terminalColorScheme
     let session: TerminalSession
     let store: TerminalSessionStore
     /// Same contract as FullPaneHeader: unfocused split members gray
@@ -1381,13 +1387,7 @@ private struct CompactPaneHeader: View {
     /// appearance — the header sits on the Ghostty theme like the old
     /// strip did.
     private var ink: Color {
-        GhosttyRuntime.shared.terminalColorScheme == .light ? .black : .white
-    }
-
-    /// Appearance for the rename field's editing chrome, keyed off the
-    /// terminal background rather than the app appearance.
-    private var terminalColorScheme: ColorScheme {
-        GhosttyRuntime.shared.terminalColorScheme
+        terminalColorScheme == .light ? .black : .white
     }
 }
 
@@ -2157,13 +2157,12 @@ private struct PaneHeaderBadge: View {
             switch process.badge {
             case .agent(let base):
                 // Asset variants key off the terminal background, not the
-                // system appearance; overriding the environment scheme
+                // system appearance; the header's environment scheme
                 // makes the catalog resolve the matching one.
                 Image("\(base)48")
                     .resizable()
                     .renderingMode(.original)
                     .aspectRatio(contentMode: .fit)
-                    .environment(\.colorScheme, GhosttyRuntime.shared.terminalColorScheme)
             case .symbol(let name):
                 Image(systemName: name)
                     .font(.system(size: 13, weight: .medium))

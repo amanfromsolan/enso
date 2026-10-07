@@ -116,6 +116,9 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
             }
         }
 
+        if let surface {
+            ghostty_surface_set_color_scheme(surface, GhosttyRuntime.shared.colorScheme)
+        }
         if surface == nil {
             NSLog("GhosttySurfaceView: ghostty_surface_new failed")
         }

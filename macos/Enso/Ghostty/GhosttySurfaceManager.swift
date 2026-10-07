@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 
 /// Keeps one live GhosttySurfaceView per session so switching sessions in
 /// the sidebar reattaches the same running shell instead of spawning a new one.
@@ -41,6 +42,15 @@ final class GhosttySurfaceManager {
         )
         views[session.id] = view
         return view
+    }
+
+    /// Includes detached tabs so switching back never reveals a stale theme.
+    func setColorScheme(_ scheme: ghostty_color_scheme_e) {
+        for view in views.values {
+            if let surface = view.surface {
+                ghostty_surface_set_color_scheme(surface, scheme)
+            }
+        }
     }
 
     /// The live view for a session, if one was already created.

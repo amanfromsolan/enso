@@ -137,11 +137,11 @@ struct EnsoApp: App {
             UserDefaults.standard.set(2, forKey: "AppleFontSmoothing")
         }
 
+        // Apply appearance before libghostty selects a conditional theme.
+        AppAppearance.applyStored()
+
         // Start libghostty before any view reads the theme background.
         GhosttyRuntime.shared.ensureStarted()
-
-        // Pin the app light/dark if the user chose to; system otherwise.
-        AppAppearance.applyStored()
 
         // Agent-session persistence must be ready before the first surface
         // spawns a shell: shims on disk, and restore decisions made against

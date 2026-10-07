@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct TerminalWorkspaceView: View {
+    @ObservedObject private var runtime = GhosttyRuntime.shared
     @ObservedObject var store: TerminalSessionStore
     /// The single card's live corner radius (concentric with the window);
     /// split panes reuse it so each pane card matches the card exactly.
@@ -47,11 +48,7 @@ struct TerminalWorkspaceView: View {
                     systemImage: "terminal",
                     description: Text("Press ⌘T to open a new tab.")
                 )
-                // Sits on the terminal's theme background, which
-                // stays dark regardless of app appearance — in
-                // light mode the inherited dark-on-dark text would
-                // vanish.
-                .colorScheme(.dark)
+                .colorScheme(runtime.terminalColorScheme)
             } else if let sleeping = sleepingSelection {
                 // The sleeping card: no surface is mounted underneath (the
                 // host skips the unsplit sleeping tab), just the summary on
@@ -113,10 +110,7 @@ private struct SleepingTabCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .onTapGesture(perform: wake)
-        // Sits on the terminal's theme background, which stays dark
-        // regardless of app appearance — same treatment as the No Tabs
-        // state.
-        .colorScheme(.dark)
+        .colorScheme(GhosttyRuntime.shared.terminalColorScheme)
     }
 
     // MARK: Summary copy

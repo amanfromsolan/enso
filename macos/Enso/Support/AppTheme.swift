@@ -6,8 +6,8 @@ import SwiftUI
 /// light/dark setting.
 ///
 /// The terminal surface is deliberately excluded: its colors come from the
-/// Ghostty theme, not from these tokens, so the terminal card (and the header
-/// strip that blends into it) stays dark in both appearances.
+/// Ghostty theme, not from these tokens. A conditional light/dark Ghostty
+/// theme follows the app's effective appearance.
 ///
 /// Almost every chrome color in the app was authored as `.white.opacity(x)`
 /// (foreground text, hairlines, hover washes) over a near-black panel. Those
