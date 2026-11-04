@@ -140,6 +140,10 @@ struct TerminalRootView: View {
             isPeeking ? nil : .spring(duration: 0.28, bounce: 0.12),
             value: store.isSidebarVisible
         )
+        #if ENSO_DEVTOOLS
+        // Dev Performance Bar, docked under the sidebar and terminal alike.
+        .perfDock(store: store)
+        #endif
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TrafficLightInset(
             buttonsHidden: !isChromeRevealed,

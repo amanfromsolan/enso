@@ -299,8 +299,29 @@ private struct GeneralSettings: View {
         } footer: {
             Text("Enso \(UpdateController.shared.currentVersion)")
         }
+
+        #if ENSO_DEVTOOLS
+        DeveloperSettings()
+        #endif
     }
 }
+
+#if ENSO_DEVTOOLS
+/// Dev-only (Debug / Next builds). Backed by PerfBarController rather than
+/// @AppStorage so turning it off also hides the bar and stops its monitor.
+private struct DeveloperSettings: View {
+    @ObservedObject private var perfBar = PerfBarController.shared
+
+    var body: some View {
+        Section("Developer") {
+            Toggle(isOn: $perfBar.isEnabled) {
+                Text("Developer tools")
+                Text("Show the Performance Bar command for checking memory, CPU and hitches.")
+            }
+        }
+    }
+}
+#endif
 
 private struct AppearanceSettings: View {
     @AppStorage("AppleFontSmoothing") private var fontSmoothing = 2

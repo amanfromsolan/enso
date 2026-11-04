@@ -778,6 +778,21 @@ final class CommandCenter: ObservableObject {
             store?.isSidebarVisible.toggle()
         })
 
+        #if ENSO_DEVTOOLS
+        if PerfBarController.shared.isEnabled {
+            commands.append(PaletteItem(
+                id: "cmd-toggle-perf-bar",
+                icon: .symbol("gauge.with.dots.needle.33percent"),
+                title: PerfBarController.shared.toggleTitle,
+                context: "⇧⌥⌘P",
+                verb: "Run",
+                searchAliases: ["Performance", "Perf Bar", "Diagnostics"]
+            ) {
+                PerfBarController.shared.toggleVisibility()
+            })
+        }
+        #endif
+
         commands.append(settingsItem())
 
         return commands

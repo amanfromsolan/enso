@@ -3,6 +3,9 @@ import SwiftUI
 struct TerminalCommands: Commands {
     @ObservedObject var store: TerminalSessionStore
     @Environment(\.openWindow) private var openWindow
+    #if ENSO_DEVTOOLS
+    @ObservedObject private var perfBar = PerfBarController.shared
+    #endif
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -117,6 +120,18 @@ struct TerminalCommands: Commands {
                 store.isSidebarVisible.toggle()
             }
             .keyboardShortcut("b", modifiers: .command)
+
+            #if ENSO_DEVTOOLS
+            // Dev-only (Debug / Next builds), and only with Settings ›
+            // Developer tools on — removed, not disabled, so the shortcut
+            // can't fire. ⌥⌘P is taken by Pin Tab, so the bar toggles on ⇧⌥⌘P.
+            if perfBar.isEnabled {
+                Button(perfBar.toggleTitle) {
+                    perfBar.toggleVisibility()
+                }
+                .keyboardShortcut("p", modifiers: [.command, .option, .shift])
+            }
+            #endif
         }
 
         CommandMenu("Tab") {

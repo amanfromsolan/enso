@@ -37,6 +37,14 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         }
     }
 
+    /// Whether libghostty considers this surface visible (and so keeps its
+    /// renderer drawing). Mirrors what we last told libghostty via
+    /// `ghostty_surface_set_occlusion`; libghostty defaults to visible and
+    /// the app does not call set_occlusion yet, so this stays true. Whoever
+    /// adds that call must update this alongside it — the dev Performance
+    /// Bar reads it to count terminals still drawing off screen.
+    var occlusionVisible: Bool = true
+
     /// Non-nil while interpretKeyEvents is routing a keyDown through
     /// NSTextInputClient; collects the text AppKit translates for us.
     private var keyTextAccumulator: [String]?

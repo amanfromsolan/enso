@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enso Performance Bar</title>
+<style>
+  :root {
+    --desk-a: #2b2f3a; --desk-b: #12141a;
+    --frost: rgba(22, 23, 27, 0.74);
+    --dock: rgba(var(--ink), 0.035);
+    --ink: 255, 255, 255;
+    --term-bg: #101114;
+    --good: #4cc38a; --warn: #f0b33f; --bad: #ef5f5f; --accent: #6aa8ff; --violet: #a68bff;
+    --hair: rgba(var(--ink), 0.08);
+    --wash: rgba(var(--ink), 0.045);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --desk-a: #c9d3e3; --desk-b: #e9edf3; --frost: rgba(246, 246, 248, 0.72);
+      --ink: 20, 20, 22;
+      --good: #1f9d63; --warn: #b7791f; --bad: #d64545; --accent: #2f6fdb; --violet: #6b4fd8;
+    }
+  }
+  :root[data-theme="light"] {
+    --desk-a: #c9d3e3; --desk-b: #e9edf3; --frost: rgba(246, 246, 248, 0.72);
+    --ink: 20, 20, 22;
+    --good: #1f9d63; --warn: #b7791f; --bad: #d64545; --accent: #2f6fdb; --violet: #6b4fd8;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: radial-gradient(1200px 700px at 20% 10%, var(--desk-a), var(--desk-b)) fixed;
+    color: rgba(var(--ink), 0.88);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh; padding: 24px 16px 48px;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  button { font: inherit; color: inherit; }
+  .warn { color: var(--warn); } .bad { color: var(--bad); } .good { color: var(--good); }
+  .dim { color: rgba(var(--ink), 0.45); }
+  .led { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; transition: background .3s; }
+  .spacer { flex: 1; }
+
+  /* ---------- controls ---------- */
+  .top { max-width: 1180px; margin: 0 auto 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .seg { display: inline-flex; background: rgba(var(--ink), 0.07); border: 1px solid var(--hair); border-radius: 9px; padding: 2px; }
+  .seg .lbl { padding: 5px 4px 5px 9px; font-size: 12px; color: rgba(var(--ink), 0.45); }
+  .seg button { border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: rgba(var(--ink), 0.65); }
+  .seg button[aria-pressed="true"] { background: rgba(var(--ink), 0.14); color: rgba(var(--ink), 0.95); font-weight: 600; }
+  .chip { border: 1px solid var(--hair); background: var(--wash); border-radius: 7px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: rgba(var(--ink), 0.13); }
+  kbd { font: 10.5px ui-monospace, Menlo, monospace; padding: 0 4px; border-radius: 4px; border: 1px solid var(--hair); background: var(--wash); }
+  .caption { max-width: 1180px; margin: 0 auto 12px; color: rgba(var(--ink), 0.55); font-size: 12.5px; }
+
+  /* ---------- window ---------- */
+  .window {
+    max-width: 1180px; margin: 0 auto; height: 660px;
+    background: var(--frost); backdrop-filter: blur(30px) saturate(1.4);
+    border: 1px solid var(--hair); border-radius: 14px; box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 240px 1fr; }
+  .sidebar { padding: 12px 10px; overflow: hidden; }
+  .lights { display: flex; gap: 8px; padding: 2px 4px 14px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+  .space { font-size: 11px; font-weight: 600; color: rgba(var(--ink), 0.45); padding: 8px 8px 4px; letter-spacing: 0.02em; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; color: rgba(var(--ink), 0.78); white-space: nowrap; }
+  .row.sel { background: rgba(var(--ink), 0.10); color: rgba(var(--ink), 0.96); }
+  .row .glyph { width: 14px; text-align: center; opacity: 0.7; font-size: 11px; }
+  .row .badge { margin-left: auto; font-size: 10px; padding: 1px 5px; border-radius: 5px; background: rgba(var(--ink), 0.08); color: rgba(var(--ink), 0.6); }
+  .main { padding: 10px 10px 10px 0; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .card { background: var(--term-bg); border-radius: 10px; padding: 12px 14px; color: #b9bdc6; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,0.35); min-width: 0; }
+  .card.focus { box-shadow: 0 0 0 2px rgba(106,168,255,0.55), 0 6px 24px rgba(0,0,0,0.35); }
+  .card .hdr { font-size: 12px; color: rgba(255,255,255,0.55); padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .term { font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+  .term .p { color: #7fd1a8; } .term .d { color: #8b93a3; } .term .y { color: #e6c07b; }
+
+  /* ---------- dock ---------- */
+  .dock { flex: none; overflow: hidden; border-top: 1px solid var(--hair); background: var(--dock);
+    height: var(--h); transition: height .24s cubic-bezier(.2,.8,.2,1), border-color .24s; }
+  .dock[data-s="c"] { --h: 30px; }
+  .dock[data-s="e"] { --h: 200px; }
+  .dock.hidden { height: 0 !important; border-top-color: transparent; }
+  .dock-inner { height: var(--h); display: flex; flex-direction: column; }
+
+  svg.g { display: block; overflow: visible; width: 100%; height: 100%; }
+  .chev { border: 0; background: transparent; color: rgba(var(--ink), 0.55); cursor: pointer; width: 24px; height: 22px; border-radius: 6px; flex: none; display: grid; place-items: center; }
+  .chev:hover { background: rgba(var(--ink), 0.08); color: rgba(var(--ink), 0.95); }
+  .chev svg { width: 12px; height: 12px; transition: transform .2s; }
+  .dock[data-s="e"] .chev svg { transform: rotate(180deg); }
+  .copy-btn { border: 0; background: transparent; color: rgba(var(--ink), 0.5); font-size: 11.5px; cursor: pointer; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+  .copy-btn:hover { background: rgba(var(--ink), 0.08); color: rgba(var(--ink), 0.9); }
+
+  .bar-line { height: 30px; flex: none; display: flex; align-items: center; padding: 0 6px 0 10px; gap: 2px; font-size: 11.5px; overflow: hidden; white-space: nowrap; }
+  .bar-line .it { display: flex; align-items: center; gap: 6px; padding: 0 8px; }
+  .bar-line .k { color: rgba(var(--ink), 0.45); }
+  .bar-line .sep { width: 1px; height: 14px; background: var(--hair); flex: none; }
+  .mini { width: 46px; height: 14px; display: inline-block; }
+  .stack-mini { width: 54px; height: 6px; display: inline-flex; border-radius: 3px; overflow: hidden; background: rgba(var(--ink), 0.08); }
+
+  .cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr 1.35fr; border-bottom: 1px solid var(--hair); }
+  .col { padding: 10px 14px 8px; border-right: 1px solid var(--hair); display: flex; flex-direction: column; min-width: 0; }
+  .col:last-child { border-right: 0; }
+  .col .gwrap { flex: 1; min-height: 0; margin-top: 6px; }
+  .h4 { font-size: 10.5px; color: rgba(var(--ink), 0.5); text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; }
+  .h4 span:last-child { text-transform: none; letter-spacing: 0; }
+  .big { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+  .big small { font-size: 11px; font-weight: 500; color: rgba(var(--ink), 0.5); margin-left: 3px; }
+  .sub { font-size: 11px; color: rgba(var(--ink), 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* terminals breakdown: scales to any count */
+  .stack { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: rgba(var(--ink), 0.06); margin: 8px 0 7px; }
+  .stack i { display: block; height: 100%; transition: flex-grow .4s ease; min-width: 0; }
+  .stack i + i { box-shadow: -1px 0 0 rgba(0,0,0,0.25); }
+  .s-vis { background: var(--good); }
+  .s-ghost { background: var(--warn); }
+  .s-paused { background: rgba(var(--ink), 0.22); }
+  .s-sleep { background: repeating-linear-gradient(135deg, rgba(var(--ink), 0.16) 0 2px, transparent 2px 4px); }
+  .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; font-size: 11.5px; }
+  .legend span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .legend b { font-weight: 600; min-width: 22px; text-align: right; }
+  .sw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .offenders { margin-top: 8px; font-size: 11.5px; color: rgba(var(--ink), 0.7); line-height: 1.45; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .offenders .k { color: var(--warn); }
+  .offenders.ok .k { color: var(--good); }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0; background: rgba(20,20,22,0.92); color: #fff; padding: 8px 14px; border-radius: 9px; font-size: 12px; transition: all .2s; pointer-events: none; z-index: 20; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 820px) {
+    .window { height: 640px; }
+    .body { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .main { padding: 10px; grid-template-columns: 1fr; }
+    .card + .card { display: none; }
+    .dock[data-s="e"] { --h: 330px; }
+    .cols { grid-template-columns: 1fr 1fr; }
+    .col:nth-child(2) { border-right: 0; }
+    .col:nth-child(-n+2) { border-bottom: 1px solid var(--hair); }
+    .hide-sm { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="seg" role="group" aria-label="State">
+    <button data-s="h" aria-pressed="false">Hidden</button>
+    <button data-s="c" aria-pressed="true">Collapsed</button>
+    <button data-s="e" aria-pressed="false">Expanded</button>
+  </div>
+  <div class="seg" role="group" aria-label="Tab count">
+    <span class="lbl">Tabs</span>
+    <button data-n="8" aria-pressed="false">8</button>
+    <button data-n="40" aria-pressed="true">40</button>
+    <button data-n="120" aria-pressed="false">120</button>
+  </div>
+  <span class="spacer"></span>
+  <button class="chip" id="spike">Simulate hitch</button>
+  <button class="chip" id="fixed" aria-pressed="false">After batch 1</button>
+  <button class="chip" id="theme">Theme</button>
+</div>
+<div class="caption">Status line · collapsed 30pt · expanded 200pt · <kbd>⌥⌘P</kbd> hide/show · chevron or double-click the bar to expand. The focused tab is a split, so 2 terminals are on screen.</div>
+
+<div class="window">
+  <div class="body">
+    <aside class="sidebar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div id="sideRows"></div>
+    </aside>
+    <div class="main">
+      <div class="card focus">
+        <div class="hdr">enso: perf pass · ~/dev/enso</div>
+<div class="term mono"><span class="p">❯</span> claude
+<span class="d">╭──────────────────────────────╮
+│ ✻ Welcome back               │
+╰──────────────────────────────╯</span>
+
+<span class="y">●</span> Reading GhosttySurfaceView.swift
+<span class="y">●</span> Hidden surfaces never call
+  ghostty_surface_set_occlusion.
+<span class="d">  ⎿ Updated 2 files</span>
+
+<span class="p">❯</span> <span id="cursor">▍</span></div>
+      </div>
+      <div class="card">
+        <div class="hdr">enso: perf pass · tests</div>
+<div class="term mono"><span class="p">❯</span> xcodebuild test -scheme Enso
+<span class="d">Test Suite 'All tests' started</span>
+<span class="d">Test Suite 'EnsoTests' started</span>
+  ✓ SplitTreeTests (12)
+  ✓ TerminalSessionStoreTests (48)
+  ✓ ReleaseNotesParserTests (9)
+<span class="d">Executed 250 tests, 0 failures</span>
+
+<span class="p">❯</span> </div>
+      </div>
+    </div>
+  </div>
+  <div class="dock" id="dock" data-s="c"><div class="dock-inner" id="dockInner"></div></div>
+</div>
+
+<div class="toast" id="toast">Diagnostics copied</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const N = 60;
+
+  // ---------------- simulated tabs ----------------
+  const NAMES = ["api refactor", "migrations", "scraper", "dev server", "logs", "dotfiles", "blog draft", "auth flow",
+    "billing webhooks", "docs site", "infra", "landing page", "ios build", "design tokens", "bug triage", "release notes",
+    "search index", "perf bench", "e2e tests", "onboarding", "payments", "cli tool", "dashboard", "email worker"];
+  let tabs = [];
+  function makeTabs(n) {
+    tabs = [{ name: "enso: perf pass", visible: true, agent: "Claude" }, { name: "enso: perf pass · tests", visible: true, split: true }];
+    for (let i = 2; i < n; i++) {
+      const base = NAMES[(i - 2) % NAMES.length];
+      const name = i - 2 < NAMES.length ? base : `${base} ${Math.floor((i - 2) / NAMES.length) + 1}`;
+      const r = (i * 7919) % 100; // deterministic mix
+      tabs.push({ name, agent: r % 3 === 0 ? "Claude" : r % 3 === 1 ? "Codex" : null,
+        streaming: r < 22, sleeping: r >= 82 });
+    }
+    // sidebar
+    const rows = tabs.filter(t => !t.split).slice(0, 18).map((t, i) =>
+      `<div class="row${i === 0 ? " sel" : ""}"><span class="glyph">${t.agent === "Claude" ? "✳︎" : t.agent === "Codex" ? "◎" : "›_"}</span>${t.name}${t.sleeping ? `<span class="badge">☾</span>` : t.agent ? `<span class="badge">${t.agent}</span>` : ""}</div>`).join("");
+    const more = tabs.length - 1 - 18;
+    $("sideRows").innerHTML = `<div class="space">WORK</div>${rows}${more > 0 ? `<div class="row dim" style="font-size:11.5px">+ ${more} more tabs…</div>` : ""}`;
+  }
+
+  const series = {
+    mem: Array.from({ length: N }, (_, i) => 395 + i * 0.35 + rnd(0, 3)),
+    cpu: Array.from({ length: N }, () => rnd(2, 6)),
+    ghost: Array.from({ length: N }, () => 6),
+  };
+  const S = { s: "c", fixed: false, hitches: [{ at: Date.now() - 24e3, ms: 290 }], m: {} };
+
+  function step() {
+    const f = S.fixed;
+    const scale = tabs.length / 40;
+    const last = series.mem[N - 1];
+    const baseMem = 260 + tabs.filter(t => !t.sleeping).length * 4.2;
+    const mem = f ? Math.max(baseMem * 0.9, last + rnd(-1.4, 0.6)) : Math.max(baseMem, last + rnd(-1, 1.9));
+    let ghost = 0;
+    const counts = { vis: 0, ghost: 0, paused: 0, sleep: 0 };
+    tabs.forEach(t => {
+      t.state = t.sleeping ? "sleep" : t.visible ? "vis" : (t.streaming && !f && Math.random() < 0.8) ? "ghost" : "paused";
+      counts[t.state]++;
+    });
+    ghost = counts.ghost;
+    const cpu = f ? rnd(0.6, 2.2) : rnd(1.5, 3) + ghost * rnd(0.35, 0.6) + (Math.random() < 0.07 ? rnd(6, 13) : 0);
+    for (const [k, v] of [["mem", mem], ["cpu", cpu], ["ghost", ghost]]) { series[k].push(v); series[k].shift(); }
+    if (!f && Math.random() < 0.02 * Math.max(1, scale)) S.hitches.push({ at: Date.now(), ms: Math.round(rnd(255, 560)) });
+    S.hitches = S.hitches.filter(h => Date.now() - h.at < 60e3);
+    const count = S.hitches.length, worst = count ? Math.max(...S.hitches.map(h => h.ms)) : 0;
+    const growth = mem - series.mem[0];
+    const level = count >= 3 ? "bad" : (ghost || growth > 20 || count) ? "warn" : "good";
+    const reason = count >= 3 ? "Janky" : ghost ? "Hidden tabs drawing" : count ? "Recent hitch" : growth > 20 ? "Memory climbing" : "Healthy";
+    S.m = { mem, cpu, counts, ghost, drawing: counts.vis + ghost, total: tabs.length, worst, count, growth, level, reason,
+      memPeak: Math.max(...series.mem), cpuAvg: series.cpu.reduce((a, b) => a + b) / N, cpuPeak: Math.max(...series.cpu),
+      offenders: tabs.filter(t => t.state === "ghost").map(t => t.name) };
+  }
+
+  // ---------------- drawing helpers ----------------
+  const col = l => css(l === "bad" ? "--bad" : l === "warn" ? "--warn" : "--good");
+  const NS = `vector-effect="non-scaling-stroke"`;
+  function pts(data, w, h, lo, hi, pad = 1) {
+    const r = hi - lo || 1, sx = w / (data.length - 1);
+    return data.map((v, i) => [i * sx, h - pad - ((v - lo) / r) * (h - pad * 2)]);
+  }
+  const line = p => p.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = (p, h) => `M0,${h} L${p.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" L")} L${p[p.length - 1][0].toFixed(1)},${h} Z`;
+  const svg = (w, h, inner) => `<svg class="g" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${inner}</svg>`;
+  const memRange = () => [Math.min(...series.mem) - 4, Math.max(...series.mem) + 4];
+  const G = {
+    mem: (w, h, fill) => { const [lo, hi] = memRange(); const p = pts(series.mem, w, h, lo, hi, 2);
+      return (fill ? `<path d="${area(p, h)}" fill="${css("--violet")}" opacity="0.12"/>` : "") + `<polyline points="${line(p)}" fill="none" stroke="${css("--violet")}" stroke-width="1.5" ${NS}/>`; },
+    cpu: (w, h) => { const hi = Math.max(20, ...series.cpu) * 1.05, p = pts(series.cpu, w, h, 0, hi, 2);
+      return `<path d="${area(p, h)}" fill="${css("--accent")}" opacity="0.15"/><polyline points="${line(p)}" fill="none" stroke="${css("--accent")}" stroke-width="1.5" ${NS}/>`; },
+    hitch: (w, h) => {
+      const now = Date.now();
+      return `<line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" stroke="rgba(${css("--ink")},0.12)" stroke-dasharray="2 4" ${NS}/>` +
+        S.hitches.map(hh => { const x = w - ((now - hh.at) / 60e3) * w, bw = Math.max(w / 220, (hh.ms / 1000) * (w / 60));
+          return `<rect x="${(x - bw).toFixed(1)}" y="0" width="${bw.toFixed(2)}" height="${h}" fill="${hh.ms >= 500 ? css("--bad") : css("--warn")}" rx="0.5"/>`; }).join("");
+    },
+  };
+  const stackSegs = c => [["s-vis", c.vis], ["s-ghost", c.ghost], ["s-paused", c.paused], ["s-sleep", c.sleep]]
+    .filter(([, n]) => n > 0).map(([cls, n]) => `<i class="${cls}" style="flex-grow:${n}"></i>`).join("");
+
+  const chev = `<button class="chev" data-act="toggle" title="Expand / collapse (double-click the bar)"><svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+  const copy = `<button class="copy-btn copy" title="Copy diagnostics">⧉ Copy</button>`;
+  const mini = fn => `<span class="mini">${svg(46, 14, fn(46, 14))}</span>`;
+
+  // ---------------- render ----------------
+  function render() {
+    if (S.s === "h") return;
+    const m = S.m, exp = S.s === "e", c = m.counts;
+    const lineHtml = `<div class="bar-line mono">
+      <span class="it"><span class="led" style="background:${col(m.level)}"></span><span>${m.reason}</span></span><span class="sep"></span>
+      <span class="it"><span class="k">Memory</span>${Math.round(m.mem)} MB ${exp ? "" : mini(w => G.mem(w, 14))}</span><span class="sep"></span>
+      <span class="it"><span class="k">CPU</span>${m.cpu.toFixed(1)}% ${exp ? "" : mini(w => G.cpu(w, 14))}</span><span class="sep"></span>
+      <span class="it"><span class="k">Hitches</span>${m.count ? `<span class="warn">${m.count}/min</span> <span class="dim">· worst ${m.worst}ms</span>` : "0/min"}</span><span class="sep hide-sm"></span>
+      <span class="it hide-sm"><span class="k">Terminals</span><span class="${m.ghost ? "warn" : ""}">${m.drawing} drawing</span><span class="dim">· ${c.vis} on screen · ${m.total} total</span>${exp ? "" : `<span class="stack-mini">${stackSegs(c)}</span>`}</span>
+      <span class="spacer"></span>${copy}${chev}</div>`;
+    if (!exp) { $("dockInner").innerHTML = lineHtml; return; }
+
+    const W = 300, H = 100;
+    const shown = m.offenders.slice(0, 4), extra = m.offenders.length - shown.length;
+    const offenders = m.ghost
+      ? `<div class="offenders"><span class="k">Drawing in the background:</span> ${shown.join(", ")}${extra > 0 ? ` <span class="dim">+${extra} more</span>` : ""}</div>`
+      : `<div class="offenders ok"><span class="k">✓</span> Nothing is drawing in the background.</div>`;
+    $("dockInner").innerHTML = `<div class="cols">
+      <div class="col"><div class="h4"><span>Memory</span></div><div class="big mono">${Math.round(m.mem)}<small>MB</small></div>
+        <div class="sub mono">peak ${Math.round(m.memPeak)} · ${m.growth >= 0 ? "+" : ""}${m.growth.toFixed(0)} MB/min</div><div class="gwrap">${svg(W, H, G.mem(W, H, true))}</div></div>
+      <div class="col"><div class="h4"><span>CPU</span></div><div class="big mono">${m.cpu.toFixed(1)}<small>%</small></div>
+        <div class="sub mono">avg ${m.cpuAvg.toFixed(1)} · peak ${m.cpuPeak.toFixed(1)}</div><div class="gwrap">${svg(W, H, G.cpu(W, H))}</div></div>
+      <div class="col"><div class="h4"><span>Hitches</span></div><div class="big mono ${m.count ? "warn" : ""}">${m.count}<small>/ min</small></div>
+        <div class="sub mono">${m.count ? `worst ${m.worst}ms` : "none in the last minute"}</div><div class="gwrap">${svg(W, H, G.hitch(W, H))}</div></div>
+      <div class="col"><div class="h4"><span>Terminals</span><span class="mono">${m.total} total</span></div>
+        <div class="big mono ${m.ghost ? "warn" : ""}">${m.drawing}<small>drawing · ${c.vis} on screen</small></div>
+        <div class="stack">${stackSegs(c)}</div>
+        <div class="legend mono">
+          <span><i class="sw s-vis"></i><b>${c.vis}</b> on screen</span>
+          <span><i class="sw s-ghost"></i><b class="${c.ghost ? "warn" : ""}">${c.ghost}</b> drawing hidden</span>
+          <span><i class="sw s-paused"></i><b>${c.paused}</b> paused</span>
+          <span><i class="sw s-sleep"></i><b>${c.sleep}</b> asleep</span>
+        </div>
+        ${offenders}</div>
+    </div>` + lineHtml;
+  }
+
+  // ---------------- wiring ----------------
+  let lastShown = "c";
+  function setS(s) {
+    if (s !== "h") { lastShown = s; $("dock").dataset.s = s; }
+    S.s = s;
+    $("dock").classList.toggle("hidden", s === "h");
+    document.querySelectorAll("[data-s]").forEach(b => b.matches("button") && b.setAttribute("aria-pressed", String(b.dataset.s === s)));
+    try { localStorage.setItem("enso-bar-s", s); } catch {}
+    render();
+  }
+  function setN(n) {
+    makeTabs(n);
+    document.querySelectorAll("[data-n]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.n === n)));
+    series.mem = series.mem.map(() => 260 + tabs.filter(t => !t.sleeping).length * 4.2 + rnd(0, 3));
+    step(); render();
+  }
+  document.querySelectorAll("button[data-s]").forEach(el => el.addEventListener("click", () => setS(el.dataset.s)));
+  document.querySelectorAll("[data-n]").forEach(el => el.addEventListener("click", () => setN(+el.dataset.n)));
+  $("dockInner").addEventListener("click", e => { if (e.target.closest("[data-act=toggle]")) setS(S.s === "e" ? "c" : "e"); });
+  $("dockInner").addEventListener("dblclick", e => { if (!e.target.closest("button")) setS(S.s === "e" ? "c" : "e"); });
+  document.addEventListener("keydown", e => {
+    if (e.altKey && e.metaKey && e.code === "KeyP") { e.preventDefault(); setS(S.s === "h" ? lastShown : "h"); }
+  });
+  $("spike").onclick = () => { S.hitches.push({ at: Date.now(), ms: Math.round(rnd(280, 640)) }); step(); render(); };
+  $("fixed").onclick = e => { S.fixed = !S.fixed; e.currentTarget.setAttribute("aria-pressed", String(S.fixed)); step(); render(); };
+  $("theme").onclick = () => {
+    const cur = document.documentElement.dataset.theme;
+    const isDark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = isDark ? "light" : "dark";
+    render();
+  };
+  document.addEventListener("click", async e => {
+    if (!e.target.closest(".copy")) return;
+    const m = S.m;
+    const snap = { app: "Enso Next 0.11.3-next.2", memoryMB: Math.round(m.mem), memoryPeakMB: Math.round(m.memPeak),
+      cpuPercent: +m.cpu.toFixed(1), cpuAvg: +m.cpuAvg.toFixed(1), hitchesLastMinute: m.count, worstHitchMs: m.worst,
+      terminals: { total: m.total, onScreen: m.counts.vis, drawingHidden: m.counts.ghost, paused: m.counts.paused, asleep: m.counts.sleep },
+      drawingInBackground: m.offenders };
+    try { await navigator.clipboard.writeText(JSON.stringify(snap, null, 2)); $("toast").textContent = "Diagnostics copied"; }
+    catch { $("toast").textContent = "Clipboard blocked in this preview"; }
+    $("toast").classList.add("show"); setTimeout(() => $("toast").classList.remove("show"), 1500);
+  });
+  setInterval(() => { const c = $("cursor"); c.style.opacity = c.style.opacity === "0" ? "1" : "0"; }, 530);
+
+  makeTabs(40);
+  step();
+  try { const s = localStorage.getItem("enso-bar-s"); if (s === "c" || s === "e") lastShown = s, S.s = s; } catch {}
+  setS(S.s);
+  let lastDown = 0;
+  $("dockInner").addEventListener("mousedown", () => { lastDown = Date.now(); });
+  setInterval(() => { step(); if (Date.now() - lastDown > 600) render(); }, 1000);
+})();
+</script>
+</body>
+</html>
