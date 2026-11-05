@@ -39,11 +39,10 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
 
     /// Whether libghostty considers this surface visible (and so keeps its
     /// renderer drawing). Mirrors what we last told libghostty via
-    /// `ghostty_surface_set_occlusion`; libghostty defaults to visible and
-    /// the app does not call set_occlusion yet, so this stays true. Whoever
-    /// adds that call must update this alongside it — the dev Performance
-    /// Bar reads it to count terminals still drawing off screen.
-    var occlusionVisible: Bool = true
+    /// `ghostty_surface_set_occlusion`, updated only by `syncOcclusion`. It
+    /// starts true because libghostty assumes a new surface is visible. The
+    /// dev Performance Bar reads it to count terminals drawing off screen.
+    private(set) var occlusionVisible: Bool = true
 
     /// Non-nil while interpretKeyEvents is routing a keyDown through
     /// NSTextInputClient; collects the text AppKit translates for us.
@@ -149,6 +148,11 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         if surface == nil {
             NSLog("GhosttySurfaceView: ghostty_surface_new failed")
         }
+
+        // Not in a window yet, so this reports hidden. It has to happen here:
+        // the eager agent restore creates surfaces that may never get a
+        // window, so viewDidMoveToWindow would not fire for them.
+        syncOcclusion()
     }
 
     /// Frees the surface (terminating the shell). The view must not receive
@@ -201,15 +205,52 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        guard let window else { return }
+        NotificationCenter.default.removeObserver(
+            self, name: NSWindow.didChangeOcclusionStateNotification, object: window
+        )
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
+        guard let window else {
+            // A deselected tab lands here; it keeps running in the manager.
+            syncOcclusion()
+            return
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowOcclusionDidChange),
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
         syncContentScale()
         syncSurfaceSize()
         syncDisplayID()
+        // After the size and display sync, so the catch-up frame libghostty
+        // draws on becoming visible uses the right geometry.
+        syncOcclusion()
         if let surface {
             ghostty_surface_refresh(surface)
         }
+    }
+
+    @objc private func windowOcclusionDidChange() {
+        syncOcclusion()
+    }
+
+    /// Tells libghostty whether this surface can be seen: only if it is in a
+    /// window that is itself visible (not minimized, fully covered, or on
+    /// another desktop). While hidden, libghostty stops drawing and frees its
+    /// GPU buffers, but the PTY keeps running and output keeps being parsed.
+    private func syncOcclusion() {
+        guard let surface else { return }
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        guard visible != occlusionVisible else { return }
+        occlusionVisible = visible
+        ghostty_surface_set_occlusion(surface, visible)
     }
 
     override func layout() {
