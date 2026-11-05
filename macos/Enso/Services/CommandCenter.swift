@@ -790,6 +790,36 @@ final class CommandCenter: ObservableObject {
             ) {
                 PerfBarController.shared.toggleVisibility()
             })
+            commands.append(PaletteItem(
+                id: "cmd-space-switch-test-paced",
+                icon: .symbol("stopwatch"),
+                title: "Run Space Switch Test (Paced)",
+                context: nil,
+                verb: "Run",
+                searchAliases: ["Performance", "Benchmark"]
+            ) {
+                SpaceSwitchTest.shared.startFromPalette(.paced)
+            })
+            commands.append(PaletteItem(
+                id: "cmd-space-switch-test-burst",
+                icon: .symbol("stopwatch"),
+                title: "Run Space Switch Test (Burst)",
+                context: nil,
+                verb: "Run",
+                searchAliases: ["Performance", "Benchmark"]
+            ) {
+                SpaceSwitchTest.shared.startFromPalette(.burst)
+            })
+            commands.append(PaletteItem(
+                id: "cmd-swipe-tuner",
+                icon: .symbol("slider.horizontal.3"),
+                title: "Swipe Tuner",
+                context: nil,
+                verb: "Run",
+                searchAliases: ["Speed", "Fade", "Blur"]
+            ) {
+                SwipeTuner.shared.togglePanel()
+            })
         }
         #endif
 

@@ -8,6 +8,12 @@ final class GhosttySurfaceManager {
 
     private var views: [TerminalSession.ID: GhosttySurfaceView] = [:]
 
+    #if ENSO_DEVTOOLS
+    /// Space switch test: what a session's new surface types at spawn, when it
+    /// has no restore of its own. Empty unless the test's load is running.
+    var devInitialInput: [TerminalSession.ID: String] = [:]
+    #endif
+
     private init() {}
 
     func view(for session: TerminalSession, fontSize: Float? = nil) -> GhosttySurfaceView {
@@ -30,13 +36,19 @@ final class GhosttySurfaceManager {
         // shell among the app's descendants (libghostty never exposes the
         // shell pid).
         var environment = agentStore.spawnEnvironment(forTab: session.id)
+        var initialInput = restore.map {
+            agentStore.resumeInput(for: $0, currentWorkingDirectory: session.workingDirectory)
+        }
+        #if ENSO_DEVTOOLS
+        if initialInput == nil {
+            initialInput = devInitialInput.removeValue(forKey: session.id)
+        }
+        #endif
         environment[ForegroundProcessResolver.sessionMarkerKey] = ForegroundProcessResolver.marker(forTab: session.id)
         let view = GhosttySurfaceView(
             workingDirectory: session.workingDirectory,
             environmentVariables: environment,
-            initialInput: restore.map {
-                agentStore.resumeInput(for: $0, currentWorkingDirectory: session.workingDirectory)
-            },
+            initialInput: initialInput,
             fontSize: fontSize
         )
         views[session.id] = view

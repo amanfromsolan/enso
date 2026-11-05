@@ -44,6 +44,10 @@ struct PerfDock: View {
                 PerfMonitor.shared.attach(to: store)
                 // Restores a bar left visible at quit; hidden stays free.
                 PerfMonitor.shared.setActive(controller.isVisible)
+                // No-op unless launched with -EnsoSwitchTest.
+                SpaceSwitchTest.shared.startFromLaunchArgumentsIfNeeded()
+                // No-op unless launched with -EnsoSwipeTuner YES.
+                SwipeTuner.shared.openFromLaunchArgumentIfNeeded()
             }
     }
 }

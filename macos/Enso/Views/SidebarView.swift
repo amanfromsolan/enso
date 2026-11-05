@@ -1,11 +1,12 @@
+import CoreImage
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @ObservedObject var store: TerminalSessionStore
 
-    @State private var dragOffset: CGFloat = 0
     @State private var trailingOverscroll: CGFloat = 0
+    @State private var spacePager = SpacePager()
     /// Presented by the root view as an in-window modal (owned chrome —
     /// macOS sheet windows force their own border and corner radius).
     @Binding var spaceEditor: SpaceEditorSheet.Mode?
@@ -19,6 +20,7 @@ struct SidebarView: View {
             UpdateCardView(controller: .shared)
             SpaceIndicatorBar(
                 store: store,
+                onSelect: { spacePager.switchSpace(to: $0) },
                 onEdit: { spaceEditor = .edit($0) },
                 onCreate: { spaceEditor = .create }
             )
@@ -29,54 +31,26 @@ struct SidebarView: View {
     /// tracks the live (drag-resizable) sidebar width, not a constant.
     private var pageWidth: CGFloat { store.sidebarWidth }
 
-    private var currentIndex: Int {
-        store.spaces.firstIndex { $0.id == store.activeSpaceID } ?? 0
-    }
-
-    /// Drag offset with rubber-band resistance at both ends, hard-clamped to
-    /// one page so a single gesture can never travel further than a neighbor.
-    private var visualDrag: CGFloat {
-        var offset = dragOffset
-        if offset > 0 && currentIndex == 0 {
-            offset *= 0.5
-        }
-        if offset < 0 && currentIndex == store.spaces.count - 1 {
-            offset *= 0.5
-        }
-        return min(pageWidth, max(-pageWidth, offset))
-    }
-
     private var pager: some View {
-        let width = pageWidth
-        // Fractional page position, shared by the offset and the fade/blur.
-        let position = CGFloat(currentIndex) - visualDrag / width
-
-        return HStack(spacing: 0) {
-            ForEach(Array(store.spaces.enumerated()), id: \.element.id) { index, space in
-                let distance = min(abs(CGFloat(index) - position), 1)
-                SpacePage(
-                    store: store,
-                    space: space,
-                    onEditSpace: { spaceEditor = .edit($0) }
-                )
-                .frame(width: width)
-                // Incoming space fades in and sharpens from a blur as it
-                // slides in; the outgoing one does the reverse.
-                .opacity(1 - 0.65 * distance)
-                .blur(radius: 5 * distance)
-            }
-        }
-        .offset(x: -position * width)
-        .frame(width: width, alignment: .leading)
-        .clipped()
+        SpacePagerRepresentable(
+            pager: spacePager,
+            store: store,
+            spaces: store.spaces,
+            activeSpaceID: store.activeSpaceID,
+            pageWidth: pageWidth,
+            onEditSpace: { spaceEditor = .edit($0) }
+        )
+        .frame(width: pageWidth)
         .background(
             SidebarSwipeCapture(
                 onChanged: { translation in
-                    dragOffset = translation
-                    updateOverscroll()
+                    // No view state here: fingers move one layer, and only
+                    // the overscroll past the last space touches SwiftUI.
+                    spacePager.track(translation: translation)
+                    updateOverscroll(translation: translation)
                 },
-                onEnded: { translation, velocity in
-                    finishSwipe(translation: translation, velocity: velocity)
+                onEnded: { translation, velocity, pointsPerSecond in
+                    finishSwipe(translation: translation, velocity: velocity, pointsPerSecond: pointsPerSecond)
                 }
             )
         )
@@ -88,22 +62,25 @@ struct SidebarView: View {
         }
     }
 
-    private func updateOverscroll() {
-        if currentIndex == store.spaces.count - 1, dragOffset < 0 {
-            trailingOverscroll = -visualDrag
-        } else {
-            trailingOverscroll = 0
+    private func updateOverscroll(translation: CGFloat) {
+        var overscroll: CGFloat = 0
+        if spacePager.targetIndex == store.spaces.count - 1, translation < 0 {
+            overscroll = min(pageWidth, -translation * 0.5)
+        }
+        if overscroll != trailingOverscroll {
+            trailingOverscroll = overscroll
         }
     }
 
-    private func finishSwipe(translation: CGFloat, velocity: CGFloat) {
-        let atLast = currentIndex == store.spaces.count - 1
+    private func finishSwipe(translation: CGFloat, velocity: CGFloat, pointsPerSecond: CGFloat) {
+        let current = spacePager.targetIndex
+        let atLast = current == store.spaces.count - 1
 
         if atLast, translation < 0, -translation * 0.5 > Self.newSpaceThreshold {
             spaceEditor = .create
         }
 
-        var target = currentIndex
+        var target = current
         if translation < 0, -translation > pageWidth * 0.35 || velocity < -6 {
             target += 1
         } else if translation > 0, translation > pageWidth * 0.35 || velocity > 6 {
@@ -111,13 +88,587 @@ struct SidebarView: View {
         }
         target = min(max(target, 0), store.spaces.count - 1)
 
-        withAnimation(.spring(duration: 0.32, bounce: 0.12)) {
-            dragOffset = 0
-            trailingOverscroll = 0
-            if target != currentIndex {
-                store.activateSpace(store.spaces[target].id)
+        if trailingOverscroll != 0 {
+            withAnimation(.spring(duration: 0.32, bounce: 0.12)) {
+                trailingOverscroll = 0
             }
         }
+        spacePager.release(toIndex: target, fingerPointsPerSecond: pointsPerSecond)
+    }
+}
+
+// MARK: - Pager
+
+/// The slide's feel. The swipe tuner overrides these in dev tools builds.
+enum SlideTuning {
+    static let bounce: CGFloat = 0.12
+    static let defaultDuration: TimeInterval = 0.25
+    static let defaultFade: CGFloat = 0.30
+    static let defaultBlur: CGFloat = 0
+
+    #if ENSO_DEVTOOLS
+    static var duration: TimeInterval { SwipeTuner.shared.duration }
+    static var fade: CGFloat { SwipeTuner.shared.fadePercent / 100 }
+    static var blur: CGFloat { SwipeTuner.shared.blur }
+    #else
+    static var duration: TimeInterval { defaultDuration }
+    static var fade: CGFloat { defaultFade }
+    static var blur: CGFloat { defaultBlur }
+    #endif
+}
+
+/// Moves the space pages as one Core Animation layer, so neither a swipe nor
+/// the settle after it runs SwiftUI or AppKit layout per frame. Page content
+/// lives in one hosting view per space, outside the root view's graph.
+///
+/// The strip's frame always holds the page it is heading to, so clicks and
+/// scrolling land correctly the moment the motion ends. The motion itself is a
+/// transform on top: fingers set it directly, and a release hands it to a
+/// spring in the render server, which keeps moving whatever the main thread is
+/// doing. The store only hears about a new space once that spring is committed.
+@MainActor
+final class SpacePager {
+    #if ENSO_DEVTOOLS
+    /// For the space switch test, so it drives the real path.
+    static weak var current: SpacePager?
+    #endif
+
+    /// A flick can be faster than the page can usefully move; past this the
+    /// overshoot would show the next page. At the default spring and 12 pages
+    /// a second, the overshoot is about 1% of a page.
+    private static let maxPagesPerSecond: CGFloat = 12
+    /// A click during a settle finishes the motion this quickly, because
+    /// simply dropping the animation would jump the page up to a full width.
+    private static let landingDuration: TimeInterval = 0.08
+
+    /// How long after the spring starts the store (and so the terminal) changes.
+    /// `-EnsoSlideCommitDelay <ms>` compares moments; 340 means as it lands.
+    private static let commitDelay: TimeInterval = {
+        #if ENSO_DEVTOOLS
+        return UserDefaults.standard.double(forKey: "EnsoSlideCommitDelay") / 1000
+        #else
+        return 0
+        #endif
+    }()
+
+    fileprivate weak var view: SpacePagerView?
+    fileprivate weak var store: TerminalSessionStore?
+
+    private var spaces: [SidebarSpace] = []
+    private var hosts: [SidebarSpace.ID: NSHostingView<SpacePage>] = [:]
+    private var pageWidth: CGFloat = 0
+
+    /// The page at rest or being headed for; ahead of the store while a commit
+    /// is pending.
+    private(set) var targetIndex = 0
+    private(set) var targetSpaceID: SidebarSpace.ID?
+
+    private var isTracking = false
+    private var trackingStart: CGFloat = 0
+    private var trackedPosition: CGFloat = 0
+    /// The running spring, in pages, for carrying its speed into the next one.
+    private var activeSlide: (spring: Spring, start: CFTimeInterval, from: CGFloat, to: CGFloat, velocity: CGFloat)?
+    private var blurClear: DispatchWorkItem?
+    private var hasBlurFilters = false
+
+    private var pendingCommit: DispatchWorkItem?
+    private var pendingSpaceID: SidebarSpace.ID?
+
+    // MARK: Driving it
+
+    /// Fingers down. Takes over from a running spring exactly where it is.
+    func track(translation: CGFloat) {
+        guard pageWidth > 0 else { return }
+        if !isTracking {
+            trackingStart = stopMotion()
+            trackedPosition = trackingStart
+            isTracking = true
+            view?.ignoresClicks = true
+            prepareBlur()
+        }
+        var offset = translation
+        if (offset > 0 && targetIndex == 0) || (offset < 0 && targetIndex == spaces.count - 1) {
+            offset *= 0.5
+        }
+        offset = min(pageWidth, max(-pageWidth, offset))
+        trackedPosition = trackingStart - offset / pageWidth
+        place(at: trackedPosition)
+    }
+
+    /// Fingers up: the spring starts at the finger's speed.
+    func release(toIndex index: Int, fingerPointsPerSecond: CGFloat) {
+        let pages = pageWidth > 0 ? -fingerPointsPerSecond / pageWidth : 0
+        let velocity = min(Self.maxPagesPerSecond, max(-Self.maxPagesPerSecond, pages))
+        slide(toIndex: index, velocity: velocity, flushes: true)
+        if spaces.indices.contains(index) {
+            commit(spaces[index].id)
+        }
+    }
+
+    /// A click on a space's icon. Also what the store-side switch hangs off.
+    func switchSpace(to spaceID: SidebarSpace.ID) {
+        guard let index = spaces.firstIndex(where: { $0.id == spaceID }), view != nil else {
+            store?.activateSpace(spaceID)
+            return
+        }
+        if index != targetIndex {
+            slide(toIndex: index, velocity: nil, flushes: true)
+        }
+        commit(spaceID)
+    }
+
+    /// The spring is already in the render server by now, so the store update
+    /// and terminal swap can't hold up its first frames.
+    private func commit(_ spaceID: SidebarSpace.ID) {
+        pendingCommit?.cancel()
+        pendingCommit = nil
+        pendingSpaceID = nil
+        guard let store, spaceID != store.activeSpaceID else { return }
+        guard Self.commitDelay > 0 else {
+            store.activateSpace(spaceID)
+            return
+        }
+        let work = DispatchWorkItem { [weak self, weak store] in
+            self?.pendingCommit = nil
+            self?.pendingSpaceID = nil
+            store?.activateSpace(spaceID)
+        }
+        pendingCommit = work
+        pendingSpaceID = spaceID
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.commitDelay, execute: work)
+    }
+
+    private func commitNow(_ spaceID: SidebarSpace.ID) {
+        pendingCommit?.cancel()
+        pendingCommit = nil
+        pendingSpaceID = nil
+        store?.activateSpace(spaceID)
+    }
+
+    // MARK: Motion
+
+    private func slide(toIndex index: Int, velocity: CGFloat?, flushes: Bool) {
+        guard let view, let stripLayer = view.strip.layer, spaces.indices.contains(index) else { return }
+        let startVelocity = velocity ?? currentVelocity()
+        let from = isTracking ? trackedPosition : stopMotion()
+        isTracking = false
+        targetIndex = index
+        targetSpaceID = spaces[index].id
+        let target = CGFloat(index)
+        let distance = target - from
+        let moves = abs(distance) > 0.0005
+        let duration = SlideTuning.duration
+        prepareBlur()
+        // The spring's velocity is in full journeys per second.
+        let journeys = moves ? min(50, max(-50, startVelocity / distance)) : 0
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // The model jumps to the end; the animations play back the way there.
+        layoutPages()
+        stripLayer.transform = CATransform3DIdentity
+        var settle: CFTimeInterval = 0
+        if moves {
+            let motion = springAnimation(
+                "transform.translation.x", from: distance * pageWidth, to: 0, duration: duration, journeys: journeys
+            )
+            settle = motion.settlingDuration
+            stripLayer.add(motion, forKey: Self.motionKey)
+        }
+        for (pageIndex, space) in spaces.enumerated() {
+            guard let host = hosts[space.id] else { continue }
+            let start = Self.opacity(page: pageIndex, position: from)
+            let end = Self.opacity(page: pageIndex, position: target)
+            host.alphaValue = end
+            if abs(start - end) > 0.001 {
+                host.layer?.add(
+                    springAnimation("opacity", from: start, to: end, duration: duration, journeys: journeys),
+                    forKey: Self.motionKey
+                )
+            }
+            if SlideTuning.blur > 0 {
+                let blurStart = Self.blurRadius(page: pageIndex, position: from)
+                let blurEnd = Self.blurRadius(page: pageIndex, position: target)
+                setBlur(on: host, radius: blurEnd)
+                if abs(blurStart - blurEnd) > 0.01 {
+                    host.layer?.add(
+                        springAnimation(Self.blurKeyPath, from: blurStart, to: blurEnd, duration: duration, journeys: journeys),
+                        forKey: Self.blurMotionKey
+                    )
+                }
+            }
+        }
+        CATransaction.commit()
+        if flushes {
+            CATransaction.flush()
+        }
+
+        view.ignoresClicks = false
+        activeSlide = moves
+            ? (Spring(duration: duration, bounce: SlideTuning.bounce), CACurrentMediaTime(), from, target, startVelocity)
+            : nil
+        scheduleBlurClear(after: settle)
+    }
+
+    /// A mouse-down on a settling page. The model is already at the destination,
+    /// so the click reaches the row under the pointer straight away; the picture
+    /// catches up in a blink, and the store too if its commit was waiting.
+    fileprivate func landForClick() {
+        guard !isTracking, activeSlide != nil, let stripLayer = view?.strip.layer else { return }
+        let offset = (stripLayer.presentation() ?? stripLayer).transform.m41
+        let position = CGFloat(targetIndex) - (pageWidth > 0 ? offset / pageWidth : 0)
+        removeMotion()
+        activeSlide = nil
+        if let pendingSpaceID {
+            commitNow(pendingSpaceID)
+        }
+
+        guard abs(offset) > 0.5 else {
+            clearBlur()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        stripLayer.add(
+            landingAnimation("transform.translation.x", from: offset, to: 0),
+            forKey: Self.motionKey
+        )
+        let target = CGFloat(targetIndex)
+        for (pageIndex, space) in spaces.enumerated() {
+            guard let host = hosts[space.id] else { continue }
+            let start = Self.opacity(page: pageIndex, position: position)
+            let end = Self.opacity(page: pageIndex, position: target)
+            if abs(start - end) > 0.001 {
+                host.layer?.add(landingAnimation("opacity", from: start, to: end), forKey: Self.motionKey)
+            }
+            if hasBlurFilters {
+                let blurStart = Self.blurRadius(page: pageIndex, position: position)
+                let blurEnd = Self.blurRadius(page: pageIndex, position: target)
+                host.layer?.add(landingAnimation(Self.blurKeyPath, from: blurStart, to: blurEnd), forKey: Self.blurMotionKey)
+            }
+        }
+        CATransaction.commit()
+        CATransaction.flush()
+        scheduleBlurClear(after: Self.landingDuration)
+    }
+
+    private func landingAnimation(_ keyPath: String, from: CGFloat, to: CGFloat) -> CABasicAnimation {
+        let animation = CABasicAnimation(keyPath: keyPath)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = Self.landingDuration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        return animation
+    }
+
+    private func springAnimation(
+        _ keyPath: String, from: CGFloat, to: CGFloat, duration: TimeInterval, journeys: CGFloat
+    ) -> CASpringAnimation {
+        let animation = CASpringAnimation(perceptualDuration: duration, bounce: SlideTuning.bounce)
+        animation.keyPath = keyPath
+        animation.fromValue = from
+        animation.toValue = to
+        animation.initialVelocity = journeys
+        animation.duration = animation.settlingDuration
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        return animation
+    }
+
+    private static let motionKey = "spacePagerMotion"
+    private static let blurMotionKey = "spacePagerBlurMotion"
+    private static let blurFilterName = "spacePagerBlur"
+    private static let blurKeyPath = "filters.spacePagerBlur.inputRadius"
+
+    // MARK: Blur
+
+    /// With blur at 0, nothing here adds a filter or changes how a layer
+    /// renders. Above 0, each page needs Core Image rendering while it moves;
+    /// filters come off once the page has stopped.
+    private func prepareBlur() {
+        blurClear?.cancel()
+        blurClear = nil
+        let wanted = SlideTuning.blur > 0
+        if !wanted {
+            clearBlur()
+        }
+        for host in hosts.values where host.layerUsesCoreImageFilters != wanted {
+            host.layerUsesCoreImageFilters = wanted
+        }
+    }
+
+    private func setBlur(on host: NSHostingView<SpacePage>, radius: CGFloat) {
+        guard let layer = host.layer else { return }
+        if layer.filters?.isEmpty == false {
+            layer.setValue(radius, forKeyPath: Self.blurKeyPath)
+        } else if let filter = CIFilter(name: "CIGaussianBlur") {
+            filter.name = Self.blurFilterName
+            filter.setValue(radius, forKey: kCIInputRadiusKey)
+            layer.filters = [filter]
+            hasBlurFilters = true
+        }
+    }
+
+    private func scheduleBlurClear(after delay: TimeInterval) {
+        guard hasBlurFilters else { return }
+        blurClear?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.clearBlur()
+        }
+        blurClear = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func clearBlur() {
+        guard hasBlurFilters else { return }
+        hasBlurFilters = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for host in hosts.values {
+            host.layer?.removeAnimation(forKey: Self.blurMotionKey)
+            host.layer?.filters = nil
+        }
+        CATransaction.commit()
+    }
+
+    private static func blurRadius(page: Int, position: CGFloat) -> CGFloat {
+        SlideTuning.blur * min(abs(CGFloat(page) - position), 1)
+    }
+
+    /// Halts any spring where it is on screen and leaves the model there.
+    /// Returns that position, in pages.
+    @discardableResult
+    private func stopMotion() -> CGFloat {
+        guard let view, let stripLayer = view.strip.layer else { return CGFloat(targetIndex) }
+        let offset = (stripLayer.presentation() ?? stripLayer).transform.m41
+        let position = pageWidth > 0 ? CGFloat(targetIndex) - offset / pageWidth : CGFloat(targetIndex)
+        removeMotion()
+        activeSlide = nil
+        place(at: position)
+        return position
+    }
+
+    private func removeMotion() {
+        view?.strip.layer?.removeAnimation(forKey: Self.motionKey)
+        for host in hosts.values {
+            host.layer?.removeAnimation(forKey: Self.motionKey)
+            host.layer?.removeAnimation(forKey: Self.blurMotionKey)
+        }
+    }
+
+    private func currentVelocity() -> CGFloat {
+        guard let slide = activeSlide else { return 0 }
+        return slide.spring.velocity(
+            fromValue: slide.from,
+            toValue: slide.to,
+            initialVelocity: slide.velocity,
+            time: CACurrentMediaTime() - slide.start
+        )
+    }
+
+    /// Puts the pages at a position with no animation.
+    private func place(at position: CGFloat) {
+        guard let stripLayer = view?.strip.layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        stripLayer.transform = CATransform3DMakeTranslation((CGFloat(targetIndex) - position) * pageWidth, 0, 0)
+        for (pageIndex, space) in spaces.enumerated() {
+            guard let host = hosts[space.id] else { continue }
+            let opacity = Self.opacity(page: pageIndex, position: position)
+            if host.alphaValue != opacity {
+                host.alphaValue = opacity
+            }
+            if SlideTuning.blur > 0, isTracking || hasBlurFilters {
+                setBlur(on: host, radius: Self.blurRadius(page: pageIndex, position: position))
+            }
+        }
+        CATransaction.commit()
+    }
+
+    /// Incoming page fades in as it slides in; the outgoing one does the
+    /// reverse.
+    private static func opacity(page: Int, position: CGFloat) -> CGFloat {
+        1 - SlideTuning.fade * min(abs(CGFloat(page) - position), 1)
+    }
+
+    // MARK: Keeping up with the store
+
+    fileprivate func sync(
+        spaces newSpaces: [SidebarSpace],
+        activeSpaceID: SidebarSpace.ID,
+        pageWidth newWidth: CGFloat,
+        animated: Bool,
+        makePage: (SidebarSpace) -> SpacePage
+    ) {
+        guard let view else { return }
+        let previous = Dictionary(uniqueKeysWithValues: spaces.map { ($0.id, $0) })
+        let liveIDs = Set(newSpaces.map(\.id))
+        for (id, host) in hosts where !liveIDs.contains(id) {
+            host.removeFromSuperview()
+            hosts[id] = nil
+        }
+        for space in newSpaces {
+            if let host = hosts[space.id] {
+                if previous[space.id] != space {
+                    host.rootView = makePage(space)
+                }
+            } else {
+                let host = NSHostingView(rootView: makePage(space))
+                // The pager sets its frames, and the sidebar column already
+                // sits below the titlebar.
+                host.sizingOptions = []
+                host.safeAreaRegions = []
+                host.wantsLayer = true
+                hosts[space.id] = host
+                view.strip.addSubview(host)
+            }
+        }
+        let structureChanged = spaces.map(\.id) != newSpaces.map(\.id) || pageWidth != newWidth
+        spaces = newSpaces
+        pageWidth = newWidth
+
+        let pending = pendingSpaceID.flatMap { liveIDs.contains($0) ? $0 : nil }
+        let expected = pending ?? activeSpaceID
+        let index = newSpaces.firstIndex { $0.id == expected } ?? 0
+        if targetSpaceID == expected {
+            // The same space, perhaps at a new index after a reorder.
+            if index != targetIndex || structureChanged {
+                targetIndex = index
+                layoutPages()
+                if activeSlide == nil, !isTracking {
+                    place(at: CGFloat(index))
+                }
+            }
+        } else if targetSpaceID != nil, animated {
+            slide(toIndex: index, velocity: nil, flushes: false)
+        } else {
+            let moved = targetSpaceID != nil
+            if moved {
+                stopMotion()
+            }
+            targetIndex = index
+            targetSpaceID = expected
+            layoutPages()
+            place(at: CGFloat(index))
+            if isTracking {
+                trackingStart = CGFloat(index)
+                trackedPosition = trackingStart
+            } else {
+                view.ignoresClicks = false
+                clearBlur()
+            }
+        }
+    }
+
+    fileprivate func layoutPages() {
+        guard let view else { return }
+        let height = view.bounds.height
+        let stripFrame = NSRect(
+            x: -CGFloat(targetIndex) * pageWidth,
+            y: 0,
+            width: CGFloat(spaces.count) * pageWidth,
+            height: height
+        )
+        if view.strip.frame != stripFrame {
+            view.strip.frame = stripFrame
+        }
+        for (pageIndex, space) in spaces.enumerated() {
+            let frame = NSRect(x: CGFloat(pageIndex) * pageWidth, y: 0, width: pageWidth, height: height)
+            if let host = hosts[space.id], host.frame != frame {
+                host.frame = frame
+            }
+        }
+    }
+}
+
+/// Clips the moving strip to one page.
+private final class SpacePagerView: NSView {
+    let strip = NSView()
+    weak var pager: SpacePager?
+    /// True while fingers are down: the page under the pointer is moving with
+    /// them, so a click has nothing reliable to land on.
+    var ignoresClicks = false
+    private var mouseDownMonitor: Any?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        clipsToBounds = true
+        strip.wantsLayer = true
+        addSubview(strip)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    deinit {
+        if let mouseDownMonitor {
+            NSEvent.removeMonitor(mouseDownMonitor)
+        }
+    }
+
+    /// Runs ahead of the click's normal dispatch, so the slide has landed by
+    /// the time the click reaches a row.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, mouseDownMonitor == nil {
+            mouseDownMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] event in
+                if let self, event.window === self.window,
+                   self.bounds.contains(self.convert(event.locationInWindow, from: nil)) {
+                    self.pager?.landForClick()
+                }
+                return event
+            }
+        }
+        if window == nil, let mouseDownMonitor {
+            NSEvent.removeMonitor(mouseDownMonitor)
+            self.mouseDownMonitor = nil
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        pager?.layoutPages()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        ignoresClicks ? nil : super.hitTest(point)
+    }
+}
+
+private struct SpacePagerRepresentable: NSViewRepresentable {
+    let pager: SpacePager
+    let store: TerminalSessionStore
+    let spaces: [SidebarSpace]
+    let activeSpaceID: SidebarSpace.ID
+    let pageWidth: CGFloat
+    let onEditSpace: (SidebarSpace) -> Void
+
+    func makeNSView(context: Context) -> SpacePagerView {
+        let view = SpacePagerView(frame: .zero)
+        view.pager = pager
+        pager.view = view
+        pager.store = store
+        #if ENSO_DEVTOOLS
+        SpacePager.current = pager
+        #endif
+        return view
+    }
+
+    func updateNSView(_ view: SpacePagerView, context: Context) {
+        pager.sync(
+            spaces: spaces,
+            activeSpaceID: activeSpaceID,
+            pageWidth: pageWidth,
+            animated: context.transaction.animation != nil
+        ) { space in
+            SpacePage(store: store, space: space, onEditSpace: onEditSpace)
+        }
+        view.needsLayout = true
     }
 }
 
@@ -127,7 +678,8 @@ struct SidebarView: View {
 /// so a flick can never carry the pager past the adjacent space.
 private struct SidebarSwipeCapture: NSViewRepresentable {
     let onChanged: (CGFloat) -> Void
-    let onEnded: (CGFloat, CGFloat) -> Void
+    /// Translation, average recent delta, finger speed in points per second.
+    let onEnded: (CGFloat, CGFloat, CGFloat) -> Void
 
     func makeNSView(context: Context) -> CaptureView {
         let view = CaptureView()
@@ -143,12 +695,16 @@ private struct SidebarSwipeCapture: NSViewRepresentable {
 
     final class CaptureView: NSView {
         var onChanged: ((CGFloat) -> Void)?
-        var onEnded: ((CGFloat, CGFloat) -> Void)?
+        var onEnded: ((CGFloat, CGFloat, CGFloat) -> Void)?
 
         private var monitor: Any?
         private var gestureState: GestureState = .idle
         private var translation: CGFloat = 0
         private var recentDeltas: [CGFloat] = []
+        private var recentSamples: [(delta: CGFloat, time: TimeInterval)] = []
+        /// Finger speed at release: only what moved this recently counts, so
+        /// a finger that paused before lifting reads as still.
+        private static let velocityWindow: TimeInterval = 0.08
 
         private enum GestureState {
             case idle
@@ -181,6 +737,9 @@ private struct SidebarSwipeCapture: NSViewRepresentable {
 
         private func handle(_ event: NSEvent) -> NSEvent? {
             guard let window, event.window === window else { return event }
+            #if ENSO_DEVTOOLS
+            SpaceSwitchTest.shared.noteScrollEvent(event)
+            #endif
 
             if event.momentumPhase != [] {
                 guard gestureState == .coasting else { return event }
@@ -196,6 +755,7 @@ private struct SidebarSwipeCapture: NSViewRepresentable {
                 gestureState = bounds.contains(point) ? .pending : .idle
                 translation = 0
                 recentDeltas = []
+                recentSamples = []
                 return event
 
             case .changed:
@@ -213,6 +773,10 @@ private struct SidebarSwipeCapture: NSViewRepresentable {
                 if recentDeltas.count > 5 {
                     recentDeltas.removeFirst()
                 }
+                recentSamples.append((event.scrollingDeltaX, event.timestamp))
+                if recentSamples.count > 24 {
+                    recentSamples.removeFirst()
+                }
                 onChanged?(translation)
                 return nil
 
@@ -225,12 +789,20 @@ private struct SidebarSwipeCapture: NSViewRepresentable {
                 let velocity = recentDeltas.isEmpty
                     ? 0
                     : recentDeltas.reduce(0, +) / CGFloat(recentDeltas.count)
-                onEnded?(translation, velocity)
+                onEnded?(translation, velocity, fingerSpeed(at: event.timestamp))
                 return nil
 
             default:
                 return event
             }
+        }
+
+        private func fingerSpeed(at time: TimeInterval) -> CGFloat {
+            let recent = recentSamples.filter { time - $0.time <= Self.velocityWindow }
+            guard recent.count >= 2, let first = recent.first, time > first.time else { return 0 }
+            // The first sample's delta covers the time before it.
+            let moved = recent.dropFirst().reduce(0) { $0 + $1.delta }
+            return moved / CGFloat(time - first.time)
         }
     }
 }
@@ -1842,6 +2414,7 @@ struct RenameClickAway: NSViewRepresentable {
 
 private struct SpaceIndicatorBar: View {
     @ObservedObject var store: TerminalSessionStore
+    let onSelect: (SidebarSpace.ID) -> Void
     let onEdit: (SidebarSpace) -> Void
     let onCreate: () -> Void
 
@@ -1865,9 +2438,7 @@ private struct SpaceIndicatorBar: View {
                 let isActive = store.activeSpaceID == space.id
                 let isHovered = hoveredSpaceID == space.id
                 Button {
-                    withAnimation(.spring(duration: 0.32, bounce: 0.12)) {
-                        store.activateSpace(space.id)
-                    }
+                    onSelect(space.id)
                 } label: {
                     SpaceIndicatorIcon(icon: space.icon, isActive: isActive, size: 18)
                         .frame(width: 24, height: 24)
