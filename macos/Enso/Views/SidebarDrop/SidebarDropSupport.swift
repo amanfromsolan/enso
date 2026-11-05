@@ -85,7 +85,10 @@ final class SidebarScrollDriver {
 
     func updateAutoScroll(pointerViewportY: CGFloat) {
         guard let scrollView else { return stop() }
-        let height = scrollView.contentView.bounds.height
+        // The list runs under the bottom bar, whose controls take the drag
+        // themselves; the bottom zone sits above them, where the pointer can
+        // actually reach it.
+        let height = scrollView.contentView.bounds.height - SidebarChromeMetrics.footerHeight
         let zone = Self.edgeZone
         if pointerViewportY < zone {
             let penetration = min(1, max(0, (zone - pointerViewportY) / zone))

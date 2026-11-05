@@ -160,10 +160,10 @@ struct TabSwitcherHUD: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Switch Tabs")
-                .font(PaletteFont.text(13.5, Font.Weight.regular.bumped(for: colorScheme)))
+                .font(PaletteFont.secondary(Font.Weight.regular.bumped(for: colorScheme)))
                 .tracking(PaletteFont.tracking)
                 .foregroundStyle(Theme.text(0.38))
-                .padding(.leading, 16)
+                .padding(.leading, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 6)
 
@@ -171,9 +171,9 @@ struct TabSwitcherHUD: View {
                 row(session, isHighlighted: index == switcher.highlightedIndex)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-        .frame(width: 560)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
+        .frame(width: 520)
         .paletteCardChrome()
     }
 

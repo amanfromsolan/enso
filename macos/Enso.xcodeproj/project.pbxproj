@@ -56,6 +56,7 @@
 		A1UPDCRD012FD810C30001BF12 /* UpdateCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */; };
 		A1UPDCTL012FD810C30001BF12 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */; };
 		A1ROWBDG012FD810C30001BF12 /* RowProcessBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ROWBDG022FD810C30001BF12 /* RowProcessBadge.swift */; };
+		A1SDBCHR012FD810C30001BF12 /* SidebarChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SDBCHR022FD810C30001BF12 /* SidebarChrome.swift */; };
 		A1WHTNEW012FD810C30001BF12 /* WhatsNewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */; };
 /* End PBXBuildFile section */
 
@@ -128,6 +129,7 @@
 		A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCardView.swift; sourceTree = "<group>"; };
 		A1UPDCTL022FD810C30001BF12 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateController.swift; sourceTree = "<group>"; };
 		A1ROWBDG022FD810C30001BF12 /* RowProcessBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowProcessBadge.swift; sourceTree = "<group>"; };
+		A1SDBCHR022FD810C30001BF12 /* SidebarChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarChrome.swift; sourceTree = "<group>"; };
 		A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -297,6 +299,7 @@
 			isa = PBXGroup;
 			children = (
 				A1ROWBDG022FD810C30001BF12 /* RowProcessBadge.swift */,
+				A1SDBCHR022FD810C30001BF12 /* SidebarChrome.swift */,
 				A1SETPNL022FD810C30001BF12 /* SettingsPanelView.swift */,
 				A1SDBDRP002FD810C30001BF12 /* SidebarDrop */,
 				A10000052FD810C30001BF12 /* SidebarView.swift */,
@@ -504,6 +507,7 @@
 				A1SDBDRP032FD810C30001BF12 /* SidebarDropModel.swift in Sources */,
 				A1SDBDRP042FD810C30001BF12 /* SidebarDropSupport.swift in Sources */,
 				A1ROWBDG012FD810C30001BF12 /* RowProcessBadge.swift in Sources */,
+				A1SDBCHR012FD810C30001BF12 /* SidebarChrome.swift in Sources */,
 				A1SETPNL012FD810C30001BF12 /* SettingsPanelView.swift in Sources */,
 				A10000152FD810C30001BF12 /* TerminalHeaderView.swift in Sources */,
 				A10000162FD810C30001BF12 /* TerminalRootView.swift in Sources */,

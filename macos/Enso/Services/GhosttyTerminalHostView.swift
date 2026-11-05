@@ -85,7 +85,7 @@ final class SplitLayoutHostView: NSView {
     /// before every apply.
     weak var store: TerminalSessionStore?
     /// The card corner radius split panes wear; set by the representable.
-    var paneCornerRadius: CGFloat = 10
+    var paneCornerRadius: CGFloat = 6
 
     private var tree: SplitNode?
     /// The tree with the in-flight divider drag applied. Divider drags stay
@@ -100,8 +100,8 @@ final class SplitLayoutHostView: NSView {
     private var surfaces: [TerminalSession.ID: GhosttySurfaceView] = [:]
     /// One card per pane, holding that pane's header and surface. When the
     /// layout is split each card wears the app's terminal-card chrome
-    /// (rounded corners, hairline, shadow) so panes sit as individual
-    /// cards on the window chrome; the unsplit tab's single card is drawn
+    /// (rounded corners) so panes sit as individual cards on the window
+    /// chrome; the unsplit tab's single card is drawn
     /// by the root view and its lone pane card renders chromeless.
     private var cards: [TerminalSession.ID: PaneCardView] = [:]
     /// Live session snapshots for the panes on screen; kept so a layout
@@ -250,7 +250,7 @@ final class SplitLayoutHostView: NSView {
                 // The card's top band sits under the window's transparent
                 // titlebar; by default NSHostingView propagates that as a
                 // safe-area inset and SwiftUI shoves the content downward,
-                // out of its 46pt frame (hosting views don't clip) — the
+                // out of its 40pt frame (hosting views don't clip) — the
                 // header rendered mid-card over the terminal. Pane headers
                 // are pane chrome, not window chrome: no safe areas.
                 header.safeAreaRegions = []
@@ -375,10 +375,10 @@ final class SplitLayoutHostView: NSView {
     /// SplitDividerView.clampedRatio).
     static let minPaneExtent: CGFloat = 160
 
-    /// The in-pane header band: two lines (title, then cwd breadcrumb)
-    /// centered in the same 46pt the old header strip used, sitting on the
-    /// terminal background inside the pane.
-    static let paneHeaderHeight: CGFloat = 46
+    /// The in-pane header band, sitting on the terminal background inside
+    /// the pane. With the 6pt card inset this centres its row on y = 26, the
+    /// traffic lights' line: 6 + 40 / 2.
+    static let paneHeaderHeight: CGFloat = 40
 
     /// Below this pane height the header collapses entirely and the
     /// surface takes every point: the band plus ~3 lines of terminal is
@@ -814,10 +814,7 @@ final class PaneCardView: NSView {
     /// rounded rect (same radius, centered on the edge, so it reads as a
     /// ring around the card rather than an inset box). Only split layouts
     /// wear it — an unsplit tab has no siblings to disambiguate, so it
-    /// keeps zero resting chrome. A dedicated shape layer ABOVE the
-    /// content, deliberately independent of the outer layer's shadowPath:
-    /// the shadow's synchronous-path plumbing (see updateShadowPath) was
-    /// fiddly to get right and the ring must never disturb it.
+    /// keeps zero resting chrome. A dedicated shape layer ABOVE the content.
     private let ringLayer = CAShapeLayer()
     private var isFocused = false
 
@@ -884,19 +881,6 @@ final class PaneCardView: NSView {
         chromeEnabled = enabled
         cornerRadius = radius
         content.layer?.cornerRadius = enabled ? radius : 0
-        content.layer?.borderWidth = enabled ? 1 : 0
-        applyBorderColor()
-        if enabled {
-            // The single card's SwiftUI shadow, translated: black 22% at
-            // 12pt blur, 3pt downward.
-            layer?.shadowColor = NSColor.black.cgColor
-            layer?.shadowOpacity = 0.22
-            layer?.shadowRadius = 12
-            layer?.shadowOffset = CGSize(width: 0, height: -3)
-        } else {
-            layer?.shadowOpacity = 0
-        }
-        updateShadowPath()
         updateRingPath()
         // A chrome flip (split ⇄ unsplit) snaps rather than fades: the
         // whole card treatment changes in the same commit.
@@ -914,42 +898,20 @@ final class PaneCardView: NSView {
 
     override func layout() {
         super.layout()
-        updateShadowPath()
         updateRingPath()
     }
 
-    /// The one guaranteed-synchronous hook on every resize. The first
-    /// setChrome runs at creation while bounds are still zero, so the
-    /// path guard leaves shadowPath nil — and with no path, CALayer
-    /// derives the shadow from the composited content, which renders as
-    /// a squarish clipped blob around the Metal-backed card until some
-    /// later pass (an appearance change, any store publish) re-ran
-    /// setChrome with real bounds. A plain NSView gets no reliable
-    /// layout() call after the host assigns its frame, so the path must
-    /// chase the frame here.
+    /// The one guaranteed-synchronous hook on every resize: a plain NSView
+    /// gets no reliable layout() call after the host assigns its frame, so
+    /// the ring must chase the frame here.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        updateShadowPath()
         updateRingPath()
     }
 
-    private func updateShadowPath() {
-        guard chromeEnabled, bounds.width > 0, bounds.height > 0 else {
-            layer?.shadowPath = nil
-            return
-        }
-        let radius = min(cornerRadius, min(bounds.width, bounds.height) / 2)
-        layer?.shadowPath = CGPath(
-            roundedRect: bounds,
-            cornerWidth: radius, cornerHeight: radius,
-            transform: nil
-        )
-    }
-
-    /// The ring chases the card frame like the shadow path does, but with
-    /// implicit animations off — a divider drag resizes cards every mouse
-    /// event, and the ring must track rigidly, never wobble after the
-    /// frame.
+    /// The ring chases the card frame with implicit animations off — a
+    /// divider drag resizes cards every mouse event, and the ring must track
+    /// rigidly, never wobble after the frame.
     private func updateRingPath() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -993,9 +955,8 @@ final class PaneCardView: NSView {
     }
 
     /// Accent (respects the user's system accent setting) at a weight that
-    /// reads clearly without shouting; the unfocused cards keep the quiet
-    /// ink hairline. Re-resolved on appearance changes because CALayer
-    /// colors don't adapt on their own.
+    /// reads clearly without shouting. Re-resolved on appearance changes
+    /// because CALayer colors don't adapt on their own.
     private func applyRingColor() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             ringLayer.strokeColor = NSColor.controlAccentColor
@@ -1005,20 +966,7 @@ final class PaneCardView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        applyBorderColor()
         applyRingColor()
-    }
-
-    /// The single card's hairline is `Theme.ink` at 9% — white ink on the
-    /// dark appearance, near-black on light. CALayer colors don't adapt on
-    /// their own, so re-resolve whenever the effective appearance changes.
-    private func applyBorderColor() {
-        guard chromeEnabled else { return }
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let ink = isDark
-            ? NSColor(white: 1, alpha: 0.09)
-            : NSColor(white: 0.08, alpha: 0.09)
-        content.layer?.borderColor = ink.cgColor
     }
 
     /// Header/surface frames are computed top-down; a flipped container
@@ -1051,7 +999,12 @@ struct PaneHeaderView: View {
 
     var body: some View {
         if compact {
-            CompactPaneHeader(session: session, store: store, focused: focused, onActivate: onActivate)
+            CompactPaneHeader(
+                session: session,
+                store: store,
+                focused: focused,
+                onActivate: onActivate
+            )
         } else {
             FullPaneHeader(session: session, store: store, focused: focused)
         }
@@ -1170,7 +1123,7 @@ private struct FullPaneHeader: View {
         // as nearly double the inset it looks like.
         .padding(.leading, 16)
         .padding(.trailing, PaneHeaderControls.trailingInset)
-        .frame(height: 46)
+        .frame(height: SplitLayoutHostView.paneHeaderHeight)
         .frame(maxWidth: .infinity)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
@@ -1395,8 +1348,8 @@ private struct CompactPaneHeader: View {
         }
         .padding(.leading, 16)
         .padding(.trailing, PaneHeaderControls.trailingInset)
-        // Row centered in the fixed 46pt band, icon centered against the
-        // two-line text block.
+        // Row centered in the fixed 40pt band (the two text lines take 28),
+        // icon centered against the two-line text block.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
@@ -1488,7 +1441,7 @@ private struct PaneHeaderControls: View {
     @StateObject private var overflow = PaneOverflowMenu()
     @State private var isHovered = false
 
-    /// Sized to read as real controls in the 46pt band — the same weight
+    /// Sized to read as real controls in the 40pt band — the same weight
     /// class as the 24pt process badge across the strip, not hairline
     /// glyphs.
     static let buttonSize: CGFloat = 30
@@ -1829,7 +1782,7 @@ private struct PaneControlAnchorView: NSViewRepresentable {
 }
 
 /// Presents the pane controls' tooltip in its own borderless child window.
-/// A SwiftUI overlay was not an option: the header is an NSHostingView 46pt
+/// A SwiftUI overlay was not an option: the header is an NSHostingView 40pt
 /// tall inside a masked pane card, so anything drawn below the band is
 /// clipped away — and shrinking the tip to fit the band would be solving
 /// the wrong problem. A child window draws wherever it likes, orders and

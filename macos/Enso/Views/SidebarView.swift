@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 struct SidebarView: View {
     @ObservedObject var store: TerminalSessionStore
 
+    @ObservedObject private var updateController = UpdateController.shared
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var trailingOverscroll: CGFloat = 0
     @State private var spacePager = SpacePager()
     /// Presented by the root view as an in-window modal (owned chrome —
@@ -14,16 +16,59 @@ struct SidebarView: View {
     /// Overscroll distance past the last space that triggers space creation.
     static let newSpaceThreshold: CGFloat = 45
 
+    // Inactive-window chrome dim, the standard macOS treatment: sidebar text,
+    // icons, and tints drop toward grey while the window isn't key.
+    private var isWindowInactive: Bool { controlActiveState == .inactive }
+
+    /// With no update card the pager reaches the window's bottom so rows pass
+    /// under the bar's glass. A card sits above the bar instead, and the pager
+    /// stops above the card.
+    private var pagerRunsUnderFooter: Bool { updateController.phase == .idle }
+
     var body: some View {
         VStack(spacing: 0) {
             pager
             UpdateCardView(controller: .shared)
-            SpaceIndicatorBar(
+            if !pagerRunsUnderFooter {
+                Color.clear.frame(height: SidebarChromeMetrics.footerHeight)
+            }
+        }
+        // Down here rather than on the column: on an ancestor of the glass
+        // controls, these two would flatten it.
+        .saturation(isWindowInactive ? 0 : 1)
+        .opacity(isWindowInactive ? 0.6 : 1)
+        // Clear space for the traffic lights and the top line.
+        .padding(.top, SidebarChromeMetrics.topClearance)
+        .overlay(alignment: .bottom) {
+            SidebarFooter(
                 store: store,
+                isWindowInactive: isWindowInactive,
                 onSelect: { spacePager.switchSpace(to: $0) },
                 onEdit: { spaceEditor = .edit($0) },
                 onCreate: { spaceEditor = .create }
             )
+        }
+        // Drags the window, double-click zooms like a real titlebar. Handled
+        // in AppKit (see WindowDragHandle) because SwiftUI's WindowDragGesture
+        // starves a paired double-click tap. An overlay, not a stacked sibling:
+        // macOS 26 floats a scroll-edge pocket (NSScrollPocket) over the
+        // sidebar's top that out-z-orders anything earlier in the stack and
+        // ate these clicks; the overlay sits above it. The top line goes in
+        // the same overlay, above the handle, so its controls take their
+        // clicks and the empty parts of the band still drag.
+        .overlay(alignment: .top) {
+            ZStack(alignment: .top) {
+                WindowDragHandle()
+                    .frame(height: SidebarChromeMetrics.topClearance)
+
+                SidebarTopBar(
+                    store: store,
+                    isWindowInactive: isWindowInactive,
+                    onSelectSpace: { spacePager.switchSpace(to: $0) },
+                    onEditSpace: { spaceEditor = .edit($0) },
+                    onCreateSpace: { spaceEditor = .create }
+                )
+            }
         }
     }
 
@@ -37,8 +82,7 @@ struct SidebarView: View {
             store: store,
             spaces: store.spaces,
             activeSpaceID: store.activeSpaceID,
-            pageWidth: pageWidth,
-            onEditSpace: { spaceEditor = .edit($0) }
+            pageWidth: pageWidth
         )
         .frame(width: pageWidth)
         .background(
@@ -53,6 +97,9 @@ struct SidebarView: View {
                     finishSwipe(translation: translation, velocity: velocity, pointsPerSecond: pointsPerSecond)
                 }
             )
+            // The capture owns horizontal scrolls over its bounds; it must
+            // stop short of the bar or it would steal them from the pill.
+            .padding(.bottom, pagerRunsUnderFooter ? SidebarChromeMetrics.footerHeight : 0)
         )
         .overlay(alignment: .trailing) {
             if trailingOverscroll > 4 {
@@ -646,7 +693,6 @@ private struct SpacePagerRepresentable: NSViewRepresentable {
     let spaces: [SidebarSpace]
     let activeSpaceID: SidebarSpace.ID
     let pageWidth: CGFloat
-    let onEditSpace: (SidebarSpace) -> Void
 
     func makeNSView(context: Context) -> SpacePagerView {
         let view = SpacePagerView(frame: .zero)
@@ -666,7 +712,7 @@ private struct SpacePagerRepresentable: NSViewRepresentable {
             pageWidth: pageWidth,
             animated: context.transaction.animation != nil
         ) { space in
-            SpacePage(store: store, space: space, onEditSpace: onEditSpace)
+            SpacePage(store: store, space: space)
         }
         view.needsLayout = true
     }
@@ -872,7 +918,6 @@ private struct SpacePage: View {
     @ObservedObject private var agentSessions = AgentSessionStore.shared
     @Environment(\.colorScheme) private var colorScheme
     let space: SidebarSpace
-    let onEditSpace: (SidebarSpace) -> Void
 
     @State private var hoveredSessionID: TerminalSession.ID?
     /// The row whose hover button (× or −) claimed the click currently
@@ -907,52 +952,38 @@ private struct SpacePage: View {
     @State private var renamingFolderID: TerminalFolder.ID?
     @State private var draftFolderTitle = ""
     @FocusState private var folderRenameFocused: Bool
-    @State private var headerHovered = false
-    @State private var headerMenuHovered = false
     @State private var newTabHovered = false
-    @State private var isRenamingSpace = false
-    @State private var draftSpaceName = ""
-    @FocusState private var spaceNameFocused: Bool
+    /// The Active list's order while the pointer is over it, so rows don't
+    /// reshuffle under the cursor; nil when the pointer is elsewhere.
+    @State private var frozenActiveOrder: [TerminalSession.ID]?
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                pinnedZone
-                zoneDivider
-                ephemeralZone
+            if store.sidebarViewMode == .active {
+                activeList
+            } else {
+                folderTree
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
-            .animation(.snappy(duration: 0.22), value: rowLayout)
-            .animation(.snappy(duration: 0.22), value: store.collapsedFolderIDs)
-            // Behind the rows, so it only catches clicks on empty sidebar
-            // space — row clicks never race it into cancelling a rename.
-            .background(
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { cancelRenames() }
-            )
-            .background(SidebarScrollViewCapture(driver: scrollDriver))
-            .overlay(alignment: .topLeading) { dropIndicatorLine }
-            .contentShape(Rectangle())
-            // One drop target for the whole page: every pointer position
-            // resolves through the projection model, no per-zone strips.
-            .onDrop(of: [.text], delegate: SidebarSpaceDropDelegate(
-                onUpdate: { handleDragUpdate(at: $0) },
-                onExited: { endDragTracking() },
-                onPerform: { performDrop($0) }
-            ))
-            .coordinateSpace(name: Self.dropSpaceName)
-            .onPreferenceChange(SidebarRowFrameKey.self) { rowFrames = $0 }
-            .onPreferenceChange(SidebarDividerFrameKey.self) { dividerFrame = $0 }
         }
+        // Keeps the overlay scroller clear of the bottom bar's glass.
+        .contentMargins(.bottom, SidebarChromeMetrics.footerHeight, for: .scrollIndicators)
         .background(
             RenameClickAway(
-                active: renamingSessionID != nil || renamingFolderID != nil || isRenamingSpace
+                active: renamingSessionID != nil || renamingFolderID != nil
             ) {
                 commitActiveRename()
             }
         )
+        // The views swap instantly. Row hover and any drag state belong to the
+        // rows that were just removed, and drop feedback only exists in Folders.
+        .onChange(of: store.sidebarViewMode) { _, _ in
+            hoveredSessionID = nil
+            hoveredFolderID = nil
+            frozenActiveOrder = nil
+            if dragWatchTimer != nil {
+                cancelDrag()
+            }
+        }
         .onChange(of: folderRenameFocused) { _, focused in
             if !focused, let id = renamingFolderID,
                let folder = space.allFolders.first(where: { $0.id == id }) {
@@ -964,15 +995,112 @@ private struct SpacePage: View {
             case .session(let id):
                 guard let session = space.sessions.first(where: { $0.id == id }) else { return }
                 store.renameRequest = nil
+                // A rename needs a row to happen in.
+                if store.sidebarViewMode == .active,
+                   !displayedActiveSessions.contains(where: { $0.id == id }) {
+                    store.sidebarViewMode = .folders
+                }
                 beginRename(session)
             case .folder(let id):
                 guard let folder = space.allFolders.first(where: { $0.id == id }) else { return }
                 store.renameRequest = nil
+                store.sidebarViewMode = .folders
                 beginFolderRename(folder)
             case nil:
                 break
             }
         }
+    }
+
+    private var folderTree: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            pinnedZone
+            zoneDivider
+            ephemeralZone
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+        .animation(.snappy(duration: 0.22), value: rowLayout)
+        .animation(.snappy(duration: 0.22), value: store.collapsedFolderIDs)
+        // Behind the rows, so it only catches clicks on empty sidebar
+        // space — row clicks never race it into cancelling a rename.
+        .background(
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { cancelRenames() }
+        )
+        .background(SidebarScrollViewCapture(driver: scrollDriver))
+        .overlay(alignment: .topLeading) { dropIndicatorLine }
+        .contentShape(Rectangle())
+        // One drop target for the whole page: every pointer position
+        // resolves through the projection model, no per-zone strips.
+        .onDrop(of: [.text], delegate: SidebarSpaceDropDelegate(
+            onUpdate: { handleDragUpdate(at: $0) },
+            onExited: { endDragTracking() },
+            onPerform: { performDrop($0) }
+        ))
+        .coordinateSpace(name: Self.dropSpaceName)
+        .onPreferenceChange(SidebarRowFrameKey.self) { rowFrames = $0 }
+        .onPreferenceChange(SidebarDividerFrameKey.self) { dividerFrame = $0 }
+    }
+
+    // MARK: - Active view
+
+    /// The flat list: the ordinary session rows with a line saying where each
+    /// one lives. No page drop target, and rows don't start drags.
+    private var activeList: some View {
+        let rows = displayedActiveSessions
+        return VStack(alignment: .leading, spacing: 0) {
+            if rows.isEmpty {
+                Text("Nothing active")
+                    .font(PaletteFont.secondary(.regular))
+                    .tracking(PaletteFont.tracking)
+                    .foregroundStyle(Theme.text(0.28))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 8)
+            }
+            ForEach(rows) { session in
+                sessionRow(session, activeSubtitle: activeSubtitle(for: session))
+            }
+        }
+        .padding(.horizontal, 10)
+        // Unlike the tree, nothing here leaves room for the last row to
+        // scroll out from under the bottom bar.
+        .padding(.bottom, SidebarChromeMetrics.footerHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { cancelRenames() }
+        )
+        // Selecting a row clears its attention, which would move it right as
+        // the pointer sits on it. Order holds until the pointer leaves.
+        .onHover { hovering in
+            frozenActiveOrder = hovering ? liveActiveSessions.map(\.id) : nil
+        }
+    }
+
+    /// What needs you first, then what's running, each in tree order.
+    private var liveActiveSessions: [TerminalSession] {
+        let sessions = space.sessions
+        return sessions.filter { $0.status == .attention }
+            + sessions.filter { $0.status != .attention && $0.runningProcess != nil }
+    }
+
+    /// While frozen, every row stays put, even one that just stopped being
+    /// active (selecting it can do that), until it's closed. New ones append.
+    private var displayedActiveSessions: [TerminalSession] {
+        let live = liveActiveSessions
+        guard let frozenActiveOrder else { return live }
+        let sessions = space.sessions
+        let kept = frozenActiveOrder.compactMap { id in sessions.first { $0.id == id } }
+        let added = live.filter { !frozenActiveOrder.contains($0.id) }
+        return kept + added
+    }
+
+    private func activeSubtitle(for session: TerminalSession) -> String {
+        space.pinnedItems.folder(directlyContaining: session.id)?.title
+            ?? (session.workingDirectory as NSString).lastPathComponent
     }
 
     /// Row layout identity: animates structural changes (add/remove/reorder,
@@ -999,9 +1127,6 @@ private struct SpacePage: View {
     /// Click-away while renaming: keep the edit (matching focus-loss
     /// behavior) and let the click do its normal job.
     private func commitActiveRename() {
-        if isRenamingSpace {
-            commitSpaceRename()
-        }
         if let id = renamingSessionID, let session = space.sessions.first(where: { $0.id == id }) {
             commitRename(session)
         }
@@ -1012,8 +1137,7 @@ private struct SpacePage: View {
 
     /// Clicking empty sidebar space backs out of any in-progress rename.
     private func cancelRenames() {
-        guard isRenamingSpace || renamingSessionID != nil || renamingFolderID != nil else { return }
-        isRenamingSpace = false
+        guard renamingSessionID != nil || renamingFolderID != nil else { return }
         renamingSessionID = nil
         renamingFolderID = nil
         restoreTerminalFocus()
@@ -1025,153 +1149,14 @@ private struct SpacePage: View {
         GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
     }
 
-    // MARK: - Space header
-
-    private var spaceHeader: some View {
-        HStack(spacing: 8) {
-            SpaceIndicatorIcon(icon: space.icon, isActive: true, size: 20)
-                .frame(width: 20)
-
-            if isRenamingSpace {
-                TextField("", text: $draftSpaceName)
-                    .textFieldStyle(.plain)
-                    .font(PaletteFont.text(14, .medium))
-                    .foregroundStyle(Theme.text(1))
-                    .focused($spaceNameFocused)
-                    .onSubmit {
-                        commitSpaceRename()
-                        restoreTerminalFocus()
-                    }
-                    .onExitCommand {
-                        isRenamingSpace = false
-                        restoreTerminalFocus()
-                    }
-            } else {
-                Text(space.name)
-                    .font(PaletteFont.text(14, .medium))
-                    .tracking(PaletteFont.tracking)
-                    .foregroundStyle(Theme.text(0.78))
-                    .lineLimit(1)
-                    // Rename only on the name text, not the whole header.
-                    .onTapGesture(count: 2) {
-                        beginSpaceRename()
-                    }
-            }
-
-            Spacer(minLength: 0)
-
-            // Inserted only on hover so the title gets the full row width when
-            // idle; the fixed minHeight below keeps the row from shifting.
-            if headerHovered && !isRenamingSpace {
-                // Collapse/expand-all toggle, left of the ⋯ menu. Only present
-                // when the space has folders to fold; laid out alongside the
-                // menu so the header height never shifts. Shows the inward
-                // chevrons while any folder is open (click folds everything)
-                // and flips to the outward chevrons once all are folded (click
-                // reopens). Custom template assets so they tint like the
-                // neighboring SF Symbols.
-                if !space.allFolders.isEmpty {
-                    HoverIconButton(
-                        help: allFoldersCollapsed ? "Expand All Folders" : "Collapse All Folders",
-                        action: {
-                            if allFoldersCollapsed {
-                                store.expandAllFolders(inSpace: space.id)
-                            } else {
-                                store.collapseAllFolders(inSpace: space.id)
-                            }
-                        }
-                    ) {
-                        Image(allFoldersCollapsed ? "ExpandFolders" : "CollapseFolders")
-                            .renderingMode(.template)
-                    }
-                }
-
-                Menu {
-                    Button("Rename", systemImage: "pencil") {
-                        beginSpaceRename()
-                    }
-                    Button("Edit Icon & Name…", systemImage: "pencil.and.outline") {
-                        onEditSpace(space)
-                    }
-                    Divider()
-                    Button("Delete Space", systemImage: "trash") {
-                        CloseConfirmation.deleteSpace(store, space.id)
-                    }
-                    .disabled(store.spaces.count == 1)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.text(headerMenuHovered ? 0.9 : 0.55))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                // Without fixedSize the borderless popup cell still reserves
-                // trailing indicator width, so the 18pt frame centers a wider
-                // cell and shoves the glyph left; fixedSize lets the reclaimed
-                // label be its true size and sit dead-center.
-                .fixedSize()
-                .frame(width: 18, height: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Theme.ink.opacity(headerMenuHovered ? 0.12 : 0))
-                )
-                .onHover { headerMenuHovered = $0 }
-                // The hover state outlives the view (it belongs to the page),
-                // and removal can beat the exit event — picking Rename tears
-                // this branch out mid-hover. Reset on the way out so the ⋯
-                // never comes back pre-highlighted.
-                .onDisappear { headerMenuHovered = false }
-            }
-        }
-        .frame(minHeight: 18)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(headerHovered ? Theme.ink.opacity(0.05) : Color.clear)
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            headerHovered = hovering
-        }
-        .padding(.bottom, 4)
-    }
-
-    /// Every folder in this space — at every depth — is collapsed; the
-    /// toggle then offers to expand rather than collapse.
-    private var allFoldersCollapsed: Bool {
-        space.allFolders.allSatisfy { store.collapsedFolderIDs.contains($0.id) }
-    }
-
-    private func beginSpaceRename() {
-        draftSpaceName = space.name
-        isRenamingSpace = true
-        spaceNameFocused = true
-    }
-
-    private func commitSpaceRename() {
-        guard isRenamingSpace else { return }
-        isRenamingSpace = false
-        store.renameSpace(space.id, to: draftSpaceName)
-    }
-
     private var pinnedZone: some View {
         // Zero list spacing: the row gap lives inside each row's vertical
         // padding instead, so drag hit-areas stay contiguous. Drops anywhere
         // in the zone resolve through the page-level projection.
         VStack(alignment: .leading, spacing: 0) {
-            spaceHeader
-                .onChange(of: spaceNameFocused) { _, focused in
-                    if !focused, isRenamingSpace {
-                        commitSpaceRename()
-                    }
-                }
-
             if space.pinnedItems.isEmpty {
                 Text("Drag tabs here to keep them")
-                    .font(PaletteFont.text(12, .regular))
+                    .font(PaletteFont.secondary(.regular))
                     .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.28))
                     .padding(.horizontal, 6)
@@ -1185,7 +1170,7 @@ private struct SpacePage: View {
                 displayEntry(entry, depth: 0)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Split-container grouping
@@ -1332,7 +1317,7 @@ private struct SpacePage: View {
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 14)
                     Text("New Terminal")
-                        .font(PaletteFont.text(14, .regular))
+                        .font(PaletteFont.primary(.regular))
                         .tracking(PaletteFont.tracking)
                     Spacer(minLength: 0)
                 }
@@ -1363,7 +1348,7 @@ private struct SpacePage: View {
                 .foregroundStyle(Theme.ink.opacity(0.6))
                 .frame(width: 16, height: 16)
             Text(title)
-                .font(PaletteFont.text(14, .regular))
+                .font(PaletteFont.primary(.regular))
                 .tracking(PaletteFont.tracking)
                 .foregroundStyle(Theme.text(0.9))
                 .lineLimit(1)
@@ -1412,7 +1397,7 @@ private struct SpacePage: View {
                 if isRenaming {
                     TextField("", text: $draftFolderTitle)
                         .textFieldStyle(.plain)
-                        .font(PaletteFont.text(14, .medium))
+                        .font(PaletteFont.primary(.medium))
                         .foregroundStyle(Theme.text(1))
                         .focused($folderRenameFocused)
                         .onSubmit {
@@ -1423,7 +1408,7 @@ private struct SpacePage: View {
                         }
                 } else {
                     Text(folder.title)
-                        .font(PaletteFont.text(14, .medium))
+                        .font(PaletteFont.primary(.medium))
                         .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(0.82))
                         .lineLimit(1)
@@ -1443,7 +1428,7 @@ private struct SpacePage: View {
                 Spacer(minLength: 0)
 
                 // Inserted only on hover so the title gets the full row width
-                // when idle — see spaceHeader. Gated off during rename too,
+                // when idle. Gated off during rename too,
                 // so hovering can't resize the focused rename field.
                 // A flush cluster: 24pt frames touching each other, filling
                 // the content box so the row's 4pt insets are what set their
@@ -1585,8 +1570,10 @@ private struct SpacePage: View {
         }
     }
 
+    /// `activeSubtitle` marks a row of the Active list: a second line under
+    /// the title, and no drag. Without it the row is the tree's, untouched.
     @ViewBuilder
-    private func sessionRow(_ session: TerminalSession) -> some View {
+    private func sessionRow(_ session: TerminalSession, activeSubtitle: String? = nil) -> some View {
         let isSelected = store.selection == session.id
         let isMultiSelected = store.multiSelection.contains(session.id)
         let isRenaming = renamingSessionID == session.id
@@ -1643,37 +1630,18 @@ private struct SpacePage: View {
             }
             .frame(width: 16, height: 16)
 
-            if isRenaming {
-                TextField("", text: $draftTitle)
-                    .textFieldStyle(.plain)
-                    .font(PaletteFont.text(14, .regular))
-                    .foregroundStyle(Theme.text(1))
-                    .focused($renameFieldFocused)
-                    .onSubmit {
-                        commitRename(session)
-                        restoreTerminalFocus()
-                    }
-                    .onExitCommand {
-                        renamingSessionID = nil
-                        restoreTerminalFocus()
-                    }
+            if let activeSubtitle {
+                VStack(alignment: .leading, spacing: 1) {
+                    sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
+
+                    Text(activeSubtitle)
+                        .font(PaletteFont.secondary(.regular))
+                        .tracking(PaletteFont.tracking)
+                        .foregroundStyle(Theme.text(0.38))
+                        .lineLimit(1)
+                }
             } else {
-                Text(session.title)
-                    .font(PaletteFont.text(14, .regular))
-                    .tracking(PaletteFont.tracking)
-                    // Sleeping rows ghost toward the background.
-                    .foregroundStyle(Theme.text(
-                        session.isSleeping ? (isSelected ? 0.55 : 0.38) : (isSelected ? 0.95 : 0.62)
-                    ))
-                    .lineLimit(1)
-                    .nameShimmer(namer.namingSessions.contains(session.id))
-                    // Rename only when the double-click lands on the
-                    // title itself, not anywhere in the row.
-                    .simultaneousGesture(TapGesture().onEnded {
-                        if NSApp.currentEvent?.clickCount == 2 {
-                            beginRename(session)
-                        }
-                    })
+                sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
             }
 
             Spacer(minLength: 0)
@@ -1759,17 +1727,21 @@ private struct SpacePage: View {
                 handleTap(session)
             }
         })
-        .onDrag {
+        .modifier(OptionalRowDrag(isEnabled: activeSubtitle == nil, data: {
             let payload = SidebarDragPayload.tabs(Array(contextTargets(for: session)))
             beginDragTracking(payload)
             return NSItemProvider(object: payload.stringValue as NSString)
-        } preview: {
+        }, preview: {
             sessionDragPreview(session)
-        }
+        }))
         .contextMenu {
             contextMenu(for: session)
         }
-        .background(rowFrameReporter(session.id))
+        .background {
+            if activeSubtitle == nil {
+                rowFrameReporter(session.id)
+            }
+        }
         // Every sidebar row spaces itself with the same top gap, so the
         // rhythm is uniform across tabs and folders and drag hit-areas stay
         // contiguous. The gap sits outside the reported frame.
@@ -1782,6 +1754,42 @@ private struct SpacePage: View {
         // Rows shifted by a folder collapse move as one geometry unit;
         // without this the icon and text interpolate at different rates.
         .geometryGroup()
+    }
+
+    @ViewBuilder
+    private func sessionRowTitle(_ session: TerminalSession, isSelected: Bool, isRenaming: Bool) -> some View {
+        if isRenaming {
+            TextField("", text: $draftTitle)
+                .textFieldStyle(.plain)
+                .font(PaletteFont.primary(.regular))
+                .foregroundStyle(Theme.text(1))
+                .focused($renameFieldFocused)
+                .onSubmit {
+                    commitRename(session)
+                    restoreTerminalFocus()
+                }
+                .onExitCommand {
+                    renamingSessionID = nil
+                    restoreTerminalFocus()
+                }
+        } else {
+            Text(session.title)
+                .font(PaletteFont.primary(.regular))
+                .tracking(PaletteFont.tracking)
+                // Sleeping rows ghost toward the background.
+                .foregroundStyle(Theme.text(
+                    session.isSleeping ? (isSelected ? 0.55 : 0.38) : (isSelected ? 0.95 : 0.62)
+                ))
+                .lineLimit(1)
+                .nameShimmer(namer.namingSessions.contains(session.id))
+                // Rename only when the double-click lands on the
+                // title itself, not anywhere in the row.
+                .simultaneousGesture(TapGesture().onEnded {
+                    if NSApp.currentEvent?.clickCount == 2 {
+                        beginRename(session)
+                    }
+                })
+        }
     }
 
     /// Selected tab background. In dark mode it's the familiar bright wash; in
@@ -1972,10 +1980,12 @@ private struct SpacePage: View {
             : [session.id]
     }
 
-    /// Visible tab order for shift-click ranges; derived from the same
-    /// flatten as drop projection, so the two can never drift.
+    /// Visible tab order for shift-click ranges; in the tree, derived from
+    /// the same flatten as drop projection, so the two can never drift.
     private func visibleOrder() -> [TerminalSession.ID] {
-        flatRows.filter { $0.kind == .tab }.map(\.id)
+        store.sidebarViewMode == .active
+            ? displayedActiveSessions.map(\.id)
+            : flatRows.filter { $0.kind == .tab }.map(\.id)
     }
 
     // MARK: - Drag and drop
@@ -2169,6 +2179,21 @@ private struct SpacePage: View {
             }
         }
         return true
+    }
+}
+
+/// A row's drag source, absent from the Active list where nothing reorders.
+private struct OptionalRowDrag<Preview: View>: ViewModifier {
+    let isEnabled: Bool
+    let data: () -> NSItemProvider
+    let preview: () -> Preview
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.onDrag(data, preview: preview)
+        } else {
+            content
+        }
     }
 }
 
@@ -2412,203 +2437,29 @@ struct RenameClickAway: NSViewRepresentable {
 
 // MARK: - Space indicators
 
-private struct SpaceIndicatorBar: View {
-    @ObservedObject var store: TerminalSessionStore
-    let onSelect: (SidebarSpace.ID) -> Void
-    let onEdit: (SidebarSpace) -> Void
-    let onCreate: () -> Void
-
-    @State private var hoveredSpaceID: SidebarSpace.ID?
-    @State private var plusHovered = false
-    /// The insertion index a hovered space drag would commit to, or nil
-    /// when nothing droppable is hovered (including the dragged indicator's
-    /// own slot, which shows no line).
-    @State private var dropIndex: Int?
-    /// Indicator frames in the bar's coordinate space, collected via the
-    /// same preference the sidebar rows use.
-    @State private var indicatorFrames: [UUID: CGRect] = [:]
-
-    private static let dropSpaceName = "spaceIndicatorDropSpace"
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Spacer(minLength: 0)
-
-            ForEach(store.spaces) { space in
-                let isActive = store.activeSpaceID == space.id
-                let isHovered = hoveredSpaceID == space.id
-                Button {
-                    onSelect(space.id)
-                } label: {
-                    SpaceIndicatorIcon(icon: space.icon, isActive: isActive, size: 18)
-                        .frame(width: 24, height: 24)
-                        .background(
-                            Circle().fill(Theme.ink.opacity(isHovered ? 0.1 : 0))
-                        )
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    if hovering {
-                        hoveredSpaceID = space.id
-                    } else if hoveredSpaceID == space.id {
-                        hoveredSpaceID = nil
-                    }
-                }
-                .help(space.name)
-                .contextMenu {
-                    Button("Edit Space…", systemImage: "pencil") {
-                        onEdit(space)
-                    }
-                    Button("Delete Space", systemImage: "trash") {
-                        CloseConfirmation.deleteSpace(store, space.id)
-                    }
-                    .disabled(store.spaces.count == 1)
-                }
-                .onDrag {
-                    let payload = SidebarDragPayload.space(space.id)
-                    store.activeSidebarDrag = payload
-                    return NSItemProvider(object: payload.stringValue as NSString)
-                } preview: {
-                    SpaceIndicatorIcon(icon: space.icon, isActive: true, size: 18)
-                        .frame(width: 24, height: 24)
-                }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: SidebarRowFrameKey.self,
-                            value: [space.id: geo.frame(in: .named(Self.dropSpaceName))]
-                        )
-                    }
-                )
-            }
-
-            Button(action: onCreate) {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Theme.text(plusHovered ? 0.7 : 0.3))
-                    .frame(width: 24, height: 24)
-                    .background(
-                        Circle().fill(Theme.ink.opacity(plusHovered ? 0.1 : 0))
-                    )
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .onHover { plusHovered = $0 }
-            .help("New Space (or swipe past the last space)")
-
-            Spacer(minLength: 0)
-        }
-        .coordinateSpace(name: Self.dropSpaceName)
-        .onPreferenceChange(SidebarRowFrameKey.self) { indicatorFrames = $0 }
-        // Keyed to the order, not wrapped around the store mutation: the
-        // reorder must stay un-animated store-wide (see performDrop), so
-        // only the bar slides its dots.
-        .animation(.spring(duration: 0.32, bounce: 0.12), value: store.spaces.map(\.id))
-        .overlay(alignment: .topLeading) { dropIndicator }
-        .onDrop(of: [.text], delegate: SidebarSpaceDropDelegate(
-            onUpdate: { handleDragUpdate(at: $0) },
-            onExited: { dropIndex = nil },
-            onPerform: { performDrop($0) }
-        ))
-        .frame(height: 30)
-        .padding(.bottom, 6)
-    }
-
-    /// The insertion indicator: a short vertical line in the gap between
-    /// indicators, the bar's rotation of the sidebar's drop line.
-    @ViewBuilder
-    private var dropIndicator: some View {
-        if let index = dropIndex, let x = gapX(at: index) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor)
-                .frame(width: 2, height: 16)
-                .offset(x: x - 1, y: 7)
-                .allowsHitTesting(false)
-        }
-    }
-
-    /// Center of the 6pt gap the given insertion index lands in.
-    private func gapX(at index: Int) -> CGFloat? {
-        let frames = store.spaces.compactMap { indicatorFrames[$0.id] }
-        guard frames.count == store.spaces.count, !frames.isEmpty else { return nil }
-        return index == 0 ? frames[0].minX - 3 : frames[min(index, frames.count) - 1].maxX + 3
-    }
-
-    /// The insertion index for a pointer X: how many indicators sit with
-    /// their midpoint left of it.
-    private func insertionIndex(at x: CGFloat) -> Int {
-        store.spaces.filter { space in
-            guard let frame = indicatorFrames[space.id] else { return false }
-            return frame.midX < x
-        }.count
-    }
-
-    private func handleDragUpdate(at location: CGPoint) -> Bool {
-        guard case .space(let draggedID) = store.activeSidebarDrag else {
-            dropIndex = nil
-            return false
-        }
-        let index = insertionIndex(at: location.x)
-        // The dragged indicator's own slot: a drop would change nothing, so
-        // show nothing — but it isn't a forbidden position either.
-        if let from = store.spaces.firstIndex(where: { $0.id == draggedID }),
-           index == from || index == from + 1 {
-            dropIndex = nil
-        } else {
-            dropIndex = index
-        }
-        return true
-    }
-
-    private func performDrop(_ info: DropInfo) -> Bool {
-        let index = dropIndex
-        dropIndex = nil
-        store.activeSidebarDrag = nil
-        // Only space drags get past dropUpdated, so even the no-op own-slot
-        // release reports handled: returning false would fly the drag image
-        // back to its origin dot.
-        guard let index else { return true }
-        let providers = info.itemProviders(for: [.text])
-        guard !providers.isEmpty else { return true }
-        Task { @MainActor in
-            var items: [String] = []
-            for provider in providers {
-                if let item = await provider.sidebarDragString() {
-                    items.append(item)
-                }
-            }
-            guard case .space(let spaceID) = SidebarDragPayload.decode(items: items) else { return }
-            // No withAnimation: the pager derives its offset from the active
-            // space's index, so an animated reorder sweeps neighboring space
-            // pages through the tab list above the bar. Un-animated, the
-            // offset jumps while the same page stays on screen — invisible —
-            // and the bar's keyed animation slides the dots on its own.
-            store.moveSpace(spaceID, toIndex: index)
-        }
-        return true
-    }
-}
-
-private struct SpaceIndicatorIcon: View {
+/// A space's mark. `isActive: false` only ever appears in the pill, whose
+/// other cells must still read clearly beside the thumb.
+struct SpaceIndicatorIcon: View {
     let icon: SidebarSpace.Icon
     let isActive: Bool
     var size: CGFloat = 18
+
+    private static let inactiveOpacity: Double = 0.75
 
     var body: some View {
         switch icon {
         case .dot:
             Circle()
-                .fill(Theme.ink.opacity(isActive ? 0.85 : 0.25))
+                .fill(Theme.ink.opacity(isActive ? 0.85 : Self.inactiveOpacity))
                 .frame(width: size * 0.36, height: size * 0.36)
         case .symbol(let name):
             Image(systemName: name)
                 .font(.system(size: size * 0.61, weight: .medium))
-                .foregroundStyle(Theme.text(isActive ? 0.9 : 0.3))
+                .foregroundStyle(Theme.text(isActive ? 0.9 : Self.inactiveOpacity))
         case .emoji(let emoji):
             Text(emoji)
                 .font(.system(size: size * 0.67))
-                .opacity(isActive ? 1 : 0.4)
+                .opacity(isActive ? 1 : Self.inactiveOpacity)
         }
     }
 }

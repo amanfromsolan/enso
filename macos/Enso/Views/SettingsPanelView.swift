@@ -324,7 +324,7 @@ private struct DeveloperSettings: View {
 #endif
 
 private struct AppearanceSettings: View {
-    @AppStorage("AppleFontSmoothing") private var fontSmoothing = 2
+    @AppStorage("AppleFontSmoothing") private var fontSmoothing = 0
     @AppStorage(AppAppearance.defaultsKey) private var appearanceRaw = AppAppearance.system.rawValue
 
     private var smoothingOn: Binding<Bool> {

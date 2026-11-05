@@ -64,6 +64,14 @@ final class TerminalSessionStore: ObservableObject {
         didSet { UserDefaults.standard.set(isSidebarVisible, forKey: "sidebarVisible") }
     }
 
+    /// What the sidebar's list shows: the folder tree, or the flat list of
+    /// what's active. Picked in the top line's capsule; remembered across
+    /// launches.
+    @Published var sidebarViewMode: SidebarViewMode =
+        UserDefaults.standard.string(forKey: "sidebarViewMode").flatMap(SidebarViewMode.init) ?? .folders {
+        didSet { UserDefaults.standard.set(sidebarViewMode.rawValue, forKey: "sidebarViewMode") }
+    }
+
     /// The one source of truth for the sidebar's width — every layout that
     /// once hardcoded 248 now follows this. The trailing-edge drag handle
     /// writes it live; the setter hard-clamps so no caller can push it out

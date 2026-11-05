@@ -130,11 +130,14 @@ struct EnsoApp: App {
     private static var attentionActivationObserver: NSObjectProtocol?
 
     init() {
-        // macOS ships with font smoothing off since Big Sur, which renders
-        // small light-on-dark UI text thin and brittle. Opt this app back in
-        // (CoreText reads the app's preference domain at startup).
-        if UserDefaults.standard.object(forKey: "AppleFontSmoothing") == nil {
-            UserDefaults.standard.set(2, forKey: "AppleFontSmoothing")
+        // Font smoothing off: at 1 or 2 the chrome's text reads too heavy.
+        // Applied once to everyone, including installs that saved the old
+        // default of 2, and written explicitly so the look doesn't depend on
+        // the system's default (CoreText reads the app's preference domain at
+        // startup). The flag leaves the Appearance setting in charge afterward.
+        if !UserDefaults.standard.bool(forKey: "fontSmoothingOffApplied") {
+            UserDefaults.standard.set(0, forKey: "AppleFontSmoothing")
+            UserDefaults.standard.set(true, forKey: "fontSmoothingOffApplied")
         }
 
         // Start libghostty before any view reads the theme background.

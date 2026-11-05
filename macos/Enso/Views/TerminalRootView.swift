@@ -15,9 +15,9 @@ struct TerminalRootView: View {
     @State private var isFullScreen = false
     // Card corner radius, kept concentric with the window's own curve so the
     // frame reads as one shape. Read live off the NSWindow (see
-    // WindowCornerRadiusReader); starts at the fixed floor and only grows once
-    // the window reports a larger radius, so a failed read stays put.
-    @State private var cardCornerRadius: CGFloat = WindowCornerRadiusReader.inset
+    // WindowCornerRadiusReader); starts at the OS's known value (see
+    // initialCardRadius), so a failed read stays put.
+    @State private var cardCornerRadius: CGFloat = WindowCornerRadiusReader.initialCardRadius
     @SceneStorage("selectedSessionID") private var storedSelection: String?
 
     // Inactive-window chrome dim, the standard macOS treatment: sidebar text,
@@ -44,16 +44,6 @@ struct TerminalRootView: View {
         HStack(spacing: 0) {
             if store.isSidebarVisible {
                 sidebarColumn
-                // Drags the window, double-click zooms like a real titlebar.
-                // Handled in AppKit (see WindowDragHandle) because SwiftUI's
-                // WindowDragGesture starves a paired double-click tap. An
-                // overlay, not a stacked sibling: macOS 26 floats a scroll-
-                // edge pocket (NSScrollPocket) over the sidebar's top that
-                // out-z-orders anything earlier in the stack and ate these
-                // clicks; the overlay sits above it.
-                .overlay(alignment: .top) {
-                    WindowDragHandle().frame(height: 40)
-                }
                 // Drag the trailing edge to resize. The handle spans the full
                 // height and insets its own hit strip below the top 40pt so it
                 // never steals the window-drag strip up in the traffic-light
@@ -79,25 +69,15 @@ struct TerminalRootView: View {
             // representable mid-switch.
             TerminalWorkspaceView(store: store, cardCornerRadius: cardCornerRadius)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Split: the clip outsets far past the workspace so the
-                // pane cards' own shadows fade into the chrome instead of
-                // being cut off at the old card boundary — a clipped
-                // shadow reads as a faint containing box around the panes.
-                // (An inset value, not a structural branch: swapping the
-                // modifier would recreate the Metal-backed representable.)
+                // Split: the clip outsets past the workspace so the focused
+                // pane's ring, which straddles the card edge, isn't cut off
+                // at the old card boundary. (An inset value, not a structural
+                // branch: swapping the modifier would recreate the Metal-
+                // backed representable.)
                 .clipShape(RoundedRectangle(
                     cornerRadius: cardCornerRadius,
                     style: .continuous
                 ).inset(by: isSplitSelection ? -60 : 0))
-                .overlay(
-                    RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
-                        .strokeBorder(Theme.ink.opacity(0.09), lineWidth: 1)
-                        .opacity(isSplitSelection ? 0 : 1)
-                )
-                .shadow(
-                    color: isSplitSelection ? .clear : .black.opacity(0.22),
-                    radius: 12, y: 3
-                )
                 .overlay {
                     if switcher.isShowingHUD {
                         ZStack {
@@ -116,10 +96,10 @@ struct TerminalRootView: View {
                 // exactly where the terminal begins instead of a gutter short
                 // of it.
                 .padding(EdgeInsets(
-                    top: 10,
-                    leading: store.isSidebarVisible ? 0 : 10,
-                    bottom: 10,
-                    trailing: 10
+                    top: WindowCornerRadiusReader.inset,
+                    leading: store.isSidebarVisible ? 0 : WindowCornerRadiusReader.inset,
+                    bottom: WindowCornerRadiusReader.inset,
+                    trailing: WindowCornerRadiusReader.inset
                 ))
                 // The gutter above the card reads as titlebar to the eye but
                 // belonged to no view, so double-clicks there silently died.
@@ -129,7 +109,7 @@ struct TerminalRootView: View {
                 // the card begins, so the card's own handle and the title
                 // cluster keep their clicks.
                 .overlay(alignment: .top) {
-                    WindowDragHandle().frame(height: 10)
+                    WindowDragHandle().frame(height: WindowCornerRadiusReader.inset)
                 }
         }
         // Pinning while peeked commits instantly: the panel is already on
@@ -190,7 +170,7 @@ struct TerminalRootView: View {
         // sidebar; in full screen this is the only toggle affordance. Same
         // concealment as the windowed titlebar copy — sidebar closed and
         // not peeking means no icon — and the same fading wrapper, so it
-        // never pops structurally.
+        // never pops structurally. Centred on the capsule across from it.
         .overlay(alignment: .topLeading) {
             if isFullScreen {
                 TitlebarSidebarToggle(
@@ -201,7 +181,7 @@ struct TerminalRootView: View {
                     store.isSidebarVisible.toggle()
                 }
                 .padding(.leading, 16)
-                .padding(.top, 8)
+                .padding(.top, 15)
             }
         }
         .overlay(alignment: .top) {
@@ -314,19 +294,13 @@ struct TerminalRootView: View {
         GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
     }
 
-    /// The sidebar column shared by the docked and peeked presentations:
-    /// traffic-light clearance, the sidebar itself, the inactive-window dim,
-    /// and the panel width.
+    /// The sidebar column shared by the docked and peeked presentations. The
+    /// top line, the drag band behind it and the inactive-window dim all live
+    /// inside SidebarView now: the space menu needs its pager, and the dim
+    /// can't sit on an ancestor of the glass controls.
     private var sidebarColumn: some View {
-        VStack(spacing: 0) {
-            // Clear space for the traffic lights.
-            Color.clear.frame(height: 40)
-
-            SidebarView(store: store, spaceEditor: $spaceEditor)
-        }
-        .saturation(isWindowInactive ? 0 : 1)
-        .opacity(isWindowInactive ? 0.6 : 1)
-        .frame(width: store.sidebarWidth)
+        SidebarView(store: store, spaceEditor: $spaceEditor)
+            .frame(width: store.sidebarWidth)
     }
 
     /// The hidden sidebar shown as an overlay while the left edge is hovered.
@@ -335,16 +309,18 @@ struct TerminalRootView: View {
             .frame(maxHeight: .infinity)
             .background(
                 // Same tint the pinned sidebar sits on, so pinning from a peek
-                // doesn't shift the panel's brightness.
+                // doesn't shift the panel's brightness. The shadow goes on
+                // this opaque backdrop, not the column, to stay off the glass
+                // controls' ancestors.
                 SidebarMaterial()
                     .overlay(Theme.windowWash)
+                    .shadow(color: .black.opacity(0.45), radius: 30, x: 10)
             )
             .overlay(alignment: .trailing) {
                 Rectangle()
                     .fill(Theme.ink.opacity(0.08))
                     .frame(width: 1)
             }
-            .shadow(color: .black.opacity(0.45), radius: 30, x: 10)
     }
 
     private func restoreSelection() {
@@ -416,7 +392,7 @@ private struct ModalPopEffect: ViewModifier {
 /// it. SwiftUI hover is unreliable over the terminal's NSView (it owns its
 /// own tracking areas), so a local monitor watches every move.
 private struct PeekMouseMonitor: NSViewRepresentable {
-    /// A narrow edge strip: the terminal card starts at x = 10, so anything
+    /// A narrow edge strip: the terminal card starts at x = 6, so anything
     /// wider turns the card's left margin into a live trigger and the
     /// sidebar pops for a pointer merely visiting the terminal's left side.
     static let revealEdge: CGFloat = 12
@@ -546,10 +522,10 @@ private struct PeekMouseMonitor: NSViewRepresentable {
 }
 
 /// Reads the window's live corner radius and hands back the card radius that
-/// nests concentrically inside it: `windowRadius − inset`, floored at the old
-/// fixed 10 so macOS 15 (square-ish window) keeps today's exact look. macOS 26
-/// with the unified toolbar reports a noticeably larger radius, so the card
-/// comes out visibly rounder than 10.
+/// nests concentrically inside it: `windowRadius − inset`, floored at the
+/// inset itself so macOS 15 (square-ish window) still gets a rounded card.
+/// macOS 26 with the unified toolbar reports a noticeably larger radius, so
+/// the card comes out visibly rounder than that.
 ///
 /// The window is AppKit-side, so a hidden representable pulls it from
 /// `view.window` and publishes it up. The read uses the same defensive KVC
@@ -558,7 +534,20 @@ private struct PeekMouseMonitor: NSViewRepresentable {
 /// private API fails open to the fixed radius instead of crashing.
 private struct WindowCornerRadiusReader: NSViewRepresentable {
     /// Card inset from the window edge; also the floor for the computed radius.
-    static let inset: CGFloat = 10
+    static let inset: CGFloat = 6
+
+    /// The radius to start from, and it has to be right: the card's SwiftUI
+    /// clip keeps the radius of its first render, because a later change
+    /// doesn't reach the pixels around the Metal-backed terminal (seen on
+    /// macOS 27). Split panes round in AppKit and do follow the live read.
+    /// macOS 26+ windows are 16pt; earlier ones are 11pt, whose 5pt remainder
+    /// stays at the floor.
+    static var initialCardRadius: CGFloat {
+        if #available(macOS 26, *) {
+            return 16 - inset
+        }
+        return inset
+    }
 
     let onChange: (CGFloat) -> Void
 
@@ -883,7 +872,7 @@ private struct TitlebarSidebarToggle: View {
     }
 }
 
-/// Trailing-edge grip that drag-resizes the sidebar. An 8pt hit strip with a
+/// Trailing-edge grip that drag-resizes the sidebar. A 6pt hit strip with a
 /// 3pt capsule that only shows while hovered or dragging; the drag writes
 /// store.sidebarWidth live (the store clamps to its min/max). Shows the
 /// standard horizontal-resize cursor over the strip.
@@ -899,13 +888,13 @@ private struct SidebarResizeHandle: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             // Visible indicator: rides the card's full vertical run — the
-            // card is inset 10pt from the window top and bottom, so the
+            // card is inset 6pt from the window top and bottom, so the
             // capsule matches its height. Purely visual; hit-testing stays
             // with the grab strip so the top band keeps dragging the window.
             Capsule()
                 .fill(Theme.ink.opacity(isActive ? 0.22 : 0))
                 .frame(width: 3)
-                .padding(.vertical, 10)
+                .padding(.vertical, WindowCornerRadiusReader.inset)
                 .allowsHitTesting(false)
 
             // Invisible grab area at the edge; wider than the indicator so
@@ -913,7 +902,7 @@ private struct SidebarResizeHandle: View {
             // top 40pt so it never steals the window-drag strip up in the
             // traffic-light row.
             Color.clear
-                .frame(width: 8)
+                .frame(width: WindowCornerRadiusReader.inset)
                 .contentShape(Rectangle())
                 .overlay(ResizeCursor())
                 .onHover { isHovering = $0 }

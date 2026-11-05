@@ -909,27 +909,20 @@ struct CommandCenterView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
 
-    // Palette-only typography: SF Compact (installed via Apple's SF font
-    // pack; bundle the faces before shipping). The variable "SF Compact"
-    // for titles, Text for small labels. Symbols stay on .system.
-    private func compactDisplay(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        PaletteFont.display(size, weight.bumped(for: colorScheme))
-    }
-
-    private func compactText(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        PaletteFont.text(size, weight.bumped(for: colorScheme))
+    private var secondaryFont: Font {
+        PaletteFont.secondary(Font.Weight.regular.bumped(for: colorScheme))
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 Image(systemName: center.isRenaming ? "pencil" : "magnifyingglass")
-                    .font(.system(size: 17, weight: .regular))
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(Theme.text(0.4))
 
                 TextField(center.inputPlaceholder, text: $center.query)
                     .textFieldStyle(.plain)
-                    .font(compactDisplay(18))
+                    .font(PaletteFont.input(Font.Weight.regular.bumped(for: colorScheme)))
                     .foregroundStyle(Theme.text(0.92))
                     .focused($searchFocused)
                     // Backstop for Esc events the key monitor doesn't
@@ -938,8 +931,8 @@ struct CommandCenterView: View {
                     // full screen instead of just closing the palette.
                     .onExitCommand { center.escapePressed() }
             }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 15)
 
             Rectangle()
                 .fill(Theme.ink.opacity(0.06))
@@ -952,15 +945,15 @@ struct CommandCenterView: View {
                         .foregroundStyle(Theme.text(0.2))
                     Text("esc Cancel")
                 }
-                .font(compactText(12, .regular))
+                .font(secondaryFont)
                 .foregroundStyle(Theme.text(0.4))
-                .padding(.vertical, 14)
+                .padding(.vertical, 10)
             } else if center.items.isEmpty {
                 Text("No matches")
-                    .font(compactText(13))
+                    .font(secondaryFont)
                     .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(0.35))
-                    .padding(.vertical, 24)
+                    .padding(.vertical, 16)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -973,15 +966,15 @@ struct CommandCenterView: View {
                                     .id(item.id)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 6)
-                        .padding(.bottom, 12)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 4)
+                        .padding(.bottom, 8)
                     }
                     .frame(maxHeight: 440)
                     // Inset the viewport itself: scrollTo pins the last row
                     // to the viewport's bottom edge, so in-content padding
                     // alone never shows under it.
-                    .padding(.bottom, 10)
+                    .padding(.bottom, 6)
                     .onChange(of: center.highlightedIndex) { _, index in
                         guard center.items.indices.contains(index) else { return }
                         proxy.scrollTo(center.items[index].id)
@@ -989,7 +982,7 @@ struct CommandCenterView: View {
                 }
             }
         }
-        .frame(width: 600)
+        .frame(width: 560)
         .paletteCardChrome()
         .onAppear {
             center.openWindow = openWindow
@@ -1003,11 +996,11 @@ struct CommandCenterView: View {
 
     private func sectionHeader(_ title: String, isFirst: Bool) -> some View {
         Text(title)
-            .font(compactText(13.5, .regular))
+            .font(secondaryFont)
             .tracking(PaletteFont.tracking)
             .foregroundStyle(Theme.text(0.38))
-            .padding(.leading, 16)
-            .padding(.top, isFirst ? 6 : 18)
+            .padding(.leading, 12)
+            .padding(.top, isFirst ? 6 : 14)
             .padding(.bottom, 6)
     }
 
@@ -1048,20 +1041,20 @@ struct PaletteRowView: View {
     let isHighlighted: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             iconView
-                .frame(width: 20, alignment: .center)
+                .frame(width: 16, height: 16, alignment: .center)
 
             HStack(spacing: 8) {
                 Text(title)
-                    .font(display(16))
+                    .font(primaryFont)
                     .tracking(PaletteFont.tracking)
                     .foregroundStyle(Theme.text(isHighlighted ? 0.98 : 0.85))
                     .lineLimit(1)
 
                 if let kindLabel {
                     Text(kindLabel)
-                        .font(display(16))
+                        .font(primaryFont)
                         .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(0.28))
                         .lineLimit(1)
@@ -1073,7 +1066,7 @@ struct PaletteRowView: View {
             if let context {
                 HStack(spacing: 6) {
                     Text(context)
-                        .font(text(15))
+                        .font(PaletteFont.secondary(Font.Weight.regular.bumped(for: colorScheme)))
                         .tracking(PaletteFont.tracking)
                         .foregroundStyle(Theme.text(isHighlighted ? 0.5 : 0.38))
                         .lineLimit(1)
@@ -1086,25 +1079,21 @@ struct PaletteRowView: View {
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
                             .foregroundStyle(Theme.text(isHighlighted ? 0.45 : 0.34))
-                            .frame(width: 13, height: 13)
+                            .frame(width: 12, height: 12)
                     }
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(isHighlighted ? Theme.ink.opacity(0.1) : Color.clear)
         )
     }
 
-    private func display(_ size: CGFloat) -> Font {
-        PaletteFont.display(size, Font.Weight.regular.bumped(for: colorScheme))
-    }
-
-    private func text(_ size: CGFloat) -> Font {
-        PaletteFont.text(size, Font.Weight.regular.bumped(for: colorScheme))
+    private var primaryFont: Font {
+        PaletteFont.paletteRow(Font.Weight.regular.bumped(for: colorScheme))
     }
 
     @ViewBuilder
@@ -1118,30 +1107,30 @@ struct PaletteRowView: View {
                 .renderingMode(.template)
                 .aspectRatio(contentMode: .fit)
                 .foregroundStyle(Theme.ink.opacity(isHighlighted ? 0.9 : 0.4))
-                .frame(width: 22, height: 22)
+                .frame(width: 16, height: 16)
         case .sleeping:
             // The sidebar's moon at chrome-row scale, same quiet ink as the
             // idle glyph it stands in for.
             Image(systemName: "moon.zzz.fill")
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.ink.opacity(isHighlighted ? 0.8 : 0.4))
         case .symbol(let name):
             Image(systemName: name)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Theme.text(isHighlighted ? 0.9 : 0.7))
         case .space(let spaceIcon):
             switch spaceIcon {
             case .dot:
                 Circle()
                     .fill(Theme.ink.opacity(isHighlighted ? 0.9 : 0.55))
-                    .frame(width: 9, height: 9)
+                    .frame(width: 7, height: 7)
             case .symbol(let name):
                 Image(systemName: name)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.text(isHighlighted ? 0.9 : 0.7))
             case .emoji(let emoji):
                 Text(emoji)
-                    .font(.system(size: 15))
+                    .font(.system(size: 12))
                     .opacity(isHighlighted ? 1 : 0.7)
             }
         }
@@ -1160,12 +1149,26 @@ enum PaletteFont {
     /// size-dependent tracking.
     static let tracking: CGFloat = 0.25
 
-    static func display(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight)
+    /// The chrome's whole type scale; hierarchy within it comes from weight and
+    /// ink. Sidebar row titles and names.
+    static func primary(_ weight: Font.Weight = .regular) -> Font {
+        .system(size: 13, weight: weight)
     }
 
-    static func text(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight)
+    /// Row titles in the Command Center and the tab switcher, which float over
+    /// the terminal and read a step larger than the sidebar.
+    static func paletteRow(_ weight: Font.Weight = .regular) -> Font {
+        .system(size: 14, weight: weight)
+    }
+
+    /// Row context, section headers and hints.
+    static func secondary(_ weight: Font.Weight = .regular) -> Font {
+        .system(size: 12, weight: weight)
+    }
+
+    /// The Command Center's search field.
+    static func input(_ weight: Font.Weight = .regular) -> Font {
+        .system(size: 16, weight: weight)
     }
 }
 
@@ -1210,16 +1213,16 @@ struct PaletteCardChrome: ViewModifier {
                     .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
                     .shadow(color: .black.opacity(0.65), radius: 70, y: 30)
             )
-            .padding(5)
+            .padding(3)
             .background(
-                // A hollow 5pt ring only — no fill behind the card, so the
+                // A hollow 3pt ring only — no fill behind the card, so the
                 // ring's blur can't grey the card down. Radii stay
-                // concentric (19 = 14 + 5).
-                RoundedRectangle(cornerRadius: 19, style: .continuous)
-                    .strokeBorder(.ultraThinMaterial, lineWidth: 5)
+                // concentric (17 = 14 + 3).
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .strokeBorder(.ultraThinMaterial, lineWidth: 3)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 19, style: .continuous)
-                            .strokeBorder(Theme.ink.opacity(0.15), lineWidth: 5)
+                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                            .strokeBorder(Theme.ink.opacity(0.15), lineWidth: 3)
                     )
             )
             .background(
