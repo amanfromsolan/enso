@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyKit
+import OSLog
 import SwiftUI
 
 /// Owns the single libghostty app instance: global init, config loading,
@@ -295,6 +296,13 @@ final class GhosttyRuntime {
         }
     }
 
+    #if DEBUG
+    nonisolated private static let actionLog = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "Enso",
+        category: "GhosttyRuntime"
+    )
+    #endif
+
     nonisolated private static func handleAction(
         app: ghostty_app_t?,
         target: ghostty_target_s,
@@ -315,15 +323,11 @@ final class GhosttyRuntime {
             return true
 
         case GHOSTTY_ACTION_PWD:
-            NSLog("GhosttyRuntime: PWD action received")
             guard target.tag == GHOSTTY_TARGET_SURFACE,
                   let surface = target.target.surface,
                   let userdata = ghostty_surface_userdata(surface),
                   let pwdPtr = action.action.pwd.pwd
-            else {
-                NSLog("GhosttyRuntime: PWD action guard failed")
-                return false
-            }
+            else { return false }
             let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
             let pwd = String(cString: pwdPtr)
             Task { @MainActor in
@@ -393,8 +397,22 @@ final class GhosttyRuntime {
             }
             return true
 
+        // Unhandled, and frequent enough during normal use to drown out the
+        // debug log below: per frame while output scrolls, per mouse move or
+        // keystroke, per selection drag, per command.
+        case GHOSTTY_ACTION_SCROLLBAR,
+             GHOSTTY_ACTION_MOUSE_OVER_LINK,
+             GHOSTTY_ACTION_MOUSE_VISIBILITY,
+             GHOSTTY_ACTION_SELECTION_CHANGED,
+             GHOSTTY_ACTION_COLOR_CHANGE,
+             GHOSTTY_ACTION_PROGRESS_REPORT,
+             GHOSTTY_ACTION_COMMAND_FINISHED:
+            return false
+
         default:
-            NSLog("GhosttyRuntime: unhandled action tag=%d", action.tag.rawValue)
+            #if DEBUG
+            actionLog.debug("unhandled action tag=\(action.tag.rawValue)")
+            #endif
             return false
         }
     }
