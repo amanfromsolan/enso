@@ -1046,10 +1046,12 @@ private struct SpacePage: View {
 
     // MARK: - Active view
 
-    /// The flat list: the ordinary session rows with a line saying where each
-    /// one lives. No page drop target, and rows don't start drags.
+    /// The ordinary session rows, grouped under quiet folder headers. Tabs in
+    /// no folder lead with no header. No page drop target, and rows don't
+    /// start drags.
     private var activeList: some View {
         let rows = displayedActiveSessions
+        let folders = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, activeFolder(of: $0)) })
         return VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
                 Text("Nothing active")
@@ -1059,8 +1061,12 @@ private struct SpacePage: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
             }
-            ForEach(rows) { session in
-                sessionRow(session, activeSubtitle: activeSubtitle(for: session))
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, session in
+                if let folder = folders[session.id] ?? nil,
+                   index == 0 || (folders[rows[index - 1].id] ?? nil)?.id != folder.id {
+                    activeHeader(folder.title, isFirst: index == 0)
+                }
+                sessionRow(session, inActiveList: true)
             }
         }
         .padding(.horizontal, 10)
@@ -1080,27 +1086,78 @@ private struct SpacePage: View {
         }
     }
 
-    /// What needs you first, then what's running, each in tree order.
+    /// A folder's name over its rows: secondary text, never a clickable row.
+    private func activeHeader(_ title: String, isFirst: Bool) -> some View {
+        Text(title)
+            .font(PaletteFont.secondary(.semibold))
+            .tracking(PaletteFont.tracking)
+            .foregroundStyle(Theme.text(0.38))
+            .lineLimit(1)
+            .padding(.leading, 9)
+            .padding(.top, isFirst ? 4 : 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The folder a row is grouped under: the one holding it directly.
+    private func activeFolder(of session: TerminalSession) -> TerminalFolder? {
+        space.pinnedItems.folder(directlyContaining: session.id)
+    }
+
+    /// Where a session sits within its group, or nil when it isn't listed:
+    /// what needs you, then what's running, then what's asleep. Asleep means
+    /// what the row shows as asleep: an explicit sleep, or an agent waiting to
+    /// resume after a relaunch.
+    private func activeRank(_ session: TerminalSession) -> Int? {
+        if session.status == .attention { return 0 }
+        if session.runningProcess != nil { return 1 }
+        if session.isSleeping { return 2 }
+        if agentSessions.dormantAgent(forTab: session.id) != nil,
+           GhosttySurfaceManager.shared.existingView(for: session.id) == nil {
+            return 2
+        }
+        return nil
+    }
+
+    /// Tabs in no folder first, then folders with something needing you, then
+    /// the rest, folders in tree order. Within each, the ranks above, then
+    /// tree order.
     private var liveActiveSessions: [TerminalSession] {
-        let sessions = space.sessions
-        return sessions.filter { $0.status == .attention }
-            + sessions.filter { $0.status != .attention && $0.runningProcess != nil }
+        var order: [TerminalFolder.ID?] = []
+        var groups: [TerminalFolder.ID?: [(session: TerminalSession, rank: Int, index: Int)]] = [:]
+        for (index, session) in space.sessions.enumerated() {
+            guard let rank = activeRank(session) else { continue }
+            let key = activeFolder(of: session)?.id
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append((session, rank, index))
+        }
+        let needsYou = { (key: TerminalFolder.ID?) in groups[key]?.contains { $0.rank == 0 } ?? false }
+        let ordered = order.filter { $0 == nil }
+            + order.filter { $0 != nil && needsYou($0) }
+            + order.filter { $0 != nil && !needsYou($0) }
+        return ordered.flatMap { key in
+            (groups[key] ?? [])
+                .sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }
+                .map(\.session)
+        }
     }
 
     /// While frozen, every row stays put, even one that just stopped being
-    /// active (selecting it can do that), until it's closed. New ones append.
+    /// active (selecting it can do that), until it's closed. New ones join
+    /// the end of their folder's group, so no folder gets a second header.
     private var displayedActiveSessions: [TerminalSession] {
         let live = liveActiveSessions
         guard let frozenActiveOrder else { return live }
         let sessions = space.sessions
         let kept = frozenActiveOrder.compactMap { id in sessions.first { $0.id == id } }
         let added = live.filter { !frozenActiveOrder.contains($0.id) }
-        return kept + added
-    }
-
-    private func activeSubtitle(for session: TerminalSession) -> String {
-        space.pinnedItems.folder(directlyContaining: session.id)?.title
-            ?? (session.workingDirectory as NSString).lastPathComponent
+        var order: [TerminalFolder.ID?] = []
+        var groups: [TerminalFolder.ID?: [TerminalSession]] = [:]
+        for session in kept + added {
+            let key = activeFolder(of: session)?.id
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(session)
+        }
+        return order.flatMap { groups[$0] ?? [] }
     }
 
     /// Row layout identity: animates structural changes (add/remove/reorder,
@@ -1436,7 +1493,7 @@ private struct SpacePage: View {
                 // distance from the edges.
                 if isHovered && !isRenaming {
                     HStack(spacing: 0) {
-                        HoverIconButton(systemName: "plus", help: "New Terminal in Folder", size: 24, washOpacity: 0.09) {
+                        HoverIconButton(systemName: "plus", help: "New Terminal in Folder", size: 22, washOpacity: 0.09) {
                             store.createSession(inFolder: folder.id)
                         }
 
@@ -1453,7 +1510,7 @@ private struct SpacePage: View {
             // The extra leading keeps the text block where it always was.
             .frame(minHeight: 24)
             .padding(.leading, 9)
-            .padding(.trailing, 4)
+            .padding(.trailing, 3)
             .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -1554,13 +1611,14 @@ private struct SpacePage: View {
             }
         }
         // An open top-level folder sits in a soft tray that holds its header
-        // and children together. It starts below the header's row gap, and
-        // the bottom inset matches that gap so the last row breathes like the
-        // rest. Nested folders don't get a tray of their own (no boxes in
+        // and children together. It starts below the header's row gap. Its
+        // bottom inset matches the 6pt the children keep on the right, and
+        // its corners are concentric with theirs: the rows' 7pt plus that
+        // 6pt. Nested folders don't get a tray of their own (no boxes in
         // boxes).
-        .padding(.bottom, showsTray ? SpacePage.rowGap : 0)
+        .padding(.bottom, showsTray ? 6 : 0)
         .background(alignment: .top) {
-            let tray = RoundedRectangle(cornerRadius: 9)
+            let tray = RoundedRectangle(cornerRadius: 13)
             tray
                 .fill(Theme.ink.opacity(colorScheme == .light ? 0.04 : 0.035))
                 .overlay(tray.strokeBorder(Theme.ink.opacity(0.07), lineWidth: 0.5))
@@ -1586,20 +1644,18 @@ private struct SpacePage: View {
         }
     }
 
-    /// `activeSubtitle` marks a row of the Active list: a second line under
-    /// the title, and no drag. Without it the row is the tree's, untouched.
+    /// `inActiveList` marks a row of the Active list, which doesn't start
+    /// drags. Without it the row is the tree's, untouched.
     @ViewBuilder
-    private func sessionRow(_ session: TerminalSession, activeSubtitle: String? = nil) -> some View {
+    private func sessionRow(_ session: TerminalSession, inActiveList: Bool = false) -> some View {
         let isSelected = store.selection == session.id
         let isMultiSelected = store.multiSelection.contains(session.id)
         let isRenaming = renamingSessionID == session.id
 
         HStack(spacing: 8) {
-            // Badge and text in their own row: top-aligned when there's a
-            // subtitle, so the icon sits on the title line instead of
-            // floating between the two lines. Trailing controls stay
+            // Badge and text in their own row; trailing controls stay
             // centered on the whole row.
-            HStack(alignment: activeSubtitle == nil ? .center : .top, spacing: 8) {
+            HStack(spacing: 8) {
                 // Uniform slot: detected-process badge when something known
                 // is running, spinner while naming, accent dot otherwise.
                 // The badge outranks the spinner: auto-naming fires on a
@@ -1650,23 +1706,8 @@ private struct SpacePage: View {
                     }
                 }
                 .frame(width: 16, height: 16)
-                // Nudged down from flush-top so it sits between the title
-                // line and the row's middle.
-                .padding(.top, activeSubtitle == nil ? 0 : 3)
 
-                if let activeSubtitle {
-                    VStack(alignment: .leading, spacing: 1) {
-                        sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
-
-                        Text(activeSubtitle)
-                            .font(PaletteFont.secondary(.regular))
-                            .tracking(PaletteFont.tracking)
-                            .foregroundStyle(Theme.text(0.38))
-                            .lineLimit(1)
-                    }
-                } else {
-                    sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
-                }
+                sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
             }
 
             Spacer(minLength: 0)
@@ -1682,7 +1723,7 @@ private struct SpacePage: View {
                 let sleeps = store.isPinned(session.id) && !session.isSleeping
                 HoverIconButton(
                     help: sleeps ? "Put to Sleep" : "Close Tab",
-                    size: 24,
+                    size: 22,
                     idleTint: 0.5,
                     washOpacity: 0.09,
                     action: {
@@ -1708,16 +1749,17 @@ private struct SpacePage: View {
                 Circle()
                     .fill(Color.orange)
                     .frame(width: 6, height: 6)
-                    // The dot keeps its pre-icon-inset spot (9pt optical)
-                    // instead of following the icons out to the 4pt inset.
-                    .padding(.trailing, 5)
+                    // The dot keeps its 9pt optical spot instead of following
+                    // the icons out to the 3pt inset.
+                    .padding(.trailing, 6)
             }
         }
         // 24pt content box in 2pt vertical insets — see the folder header:
-        // same 28pt row, hover × reaches close to the edges, text stays put.
+        // same 28pt row. The 22pt hover × sits 3pt from the edge on every
+        // side.
         .frame(minHeight: 24)
         .padding(.leading, 9)
-        .padding(.trailing, 4)
+        .padding(.trailing, 3)
         .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
@@ -1752,7 +1794,7 @@ private struct SpacePage: View {
                 handleTap(session)
             }
         })
-        .modifier(OptionalRowDrag(isEnabled: activeSubtitle == nil, data: {
+        .modifier(OptionalRowDrag(isEnabled: !inActiveList, data: {
             let payload = SidebarDragPayload.tabs(Array(contextTargets(for: session)))
             beginDragTracking(payload)
             return NSItemProvider(object: payload.stringValue as NSString)
@@ -1763,7 +1805,7 @@ private struct SpacePage: View {
             contextMenu(for: session)
         }
         .background {
-            if activeSubtitle == nil {
+            if !inActiveList {
                 rowFrameReporter(session.id)
             }
         }
@@ -2254,6 +2296,8 @@ private struct HoverIconButton<Label: View>: View {
                 .foregroundStyle(Theme.text(isHovered ? 0.9 : idleTint))
                 .frame(width: size, height: size)
                 .background(
+                    // Concentric with the row it sits in: the row's 7pt
+                    // corner, less the 3pt inset around this button.
                     RoundedRectangle(cornerRadius: 4)
                         .fill(Theme.ink.opacity(isHovered ? washOpacity : 0))
                 )
