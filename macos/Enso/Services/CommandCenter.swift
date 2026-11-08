@@ -1152,7 +1152,31 @@ enum PaletteFont {
     /// The chrome's whole type scale; hierarchy within it comes from weight and
     /// ink. Sidebar row titles and names.
     static func primary(_ weight: Font.Weight = .regular) -> Font {
-        .system(size: 13, weight: weight)
+        if weight == .regular {
+            return regularPrimary
+        }
+        return .system(size: 13, weight: weight)
+    }
+
+    /// Regular sidebar text sits at 475 on SF's variable wght axis (400
+    /// regular, ~510 medium) when font smoothing is off, which recovers
+    /// smoothing's heft while keeping the glyphs crisp. With smoothing on,
+    /// plain regular, so the two thickenings don't stack. Resolved once:
+    /// CoreText also only reads the smoothing preference at launch.
+    private static let regularPrimary: Font = {
+        let smoothingOn = UserDefaults.standard.integer(forKey: "AppleFontSmoothing") != 0
+        return smoothingOn
+            ? .system(size: 13, weight: .regular)
+            : Font(variableSystemFont(size: 13, wght: 475))
+    }()
+
+    private static func variableSystemFont(size: CGFloat, wght: Double) -> CTFont {
+        let base = NSFont.systemFont(ofSize: size)
+        let descriptor = base.fontDescriptor.addingAttributes([
+            NSFontDescriptor.AttributeName(rawValue: kCTFontVariationAttribute as String):
+                [0x7767_6874: wght], // 'wght'
+        ])
+        return (NSFont(descriptor: descriptor, size: size) ?? base) as CTFont
     }
 
     /// Row titles in the Command Center and the tab switcher, which float over

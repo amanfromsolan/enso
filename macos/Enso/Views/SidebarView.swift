@@ -1383,6 +1383,7 @@ private struct SpacePage: View {
         let peekingSession = isExpanded
             ? nil
             : folder.allSessions.first { $0.id == store.selection }
+        let showsTray = isExpanded && depth == 0 && !folder.items.isEmpty
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -1447,13 +1448,13 @@ private struct SpacePage: View {
                     }
                 }
             }
-            // 24pt content box in 4pt vertical insets: same 32pt row as the
-            // old 18-in-7, but the hover icons reach to 4pt off every edge.
+            // 24pt content box in 2pt vertical insets: a 28pt row, with the
+            // hover icons reaching to 2pt off the top and bottom edges.
             // The extra leading keeps the text block where it always was.
             .frame(minHeight: 24)
             .padding(.leading, 9)
             .padding(.trailing, 4)
-            .padding(.vertical, 4)
+            .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7)
@@ -1552,6 +1553,21 @@ private struct SpacePage: View {
                     .padding(.trailing, 6)
             }
         }
+        // An open top-level folder sits in a soft tray that holds its header
+        // and children together. It starts below the header's row gap, and
+        // the bottom inset matches that gap so the last row breathes like the
+        // rest. Nested folders don't get a tray of their own (no boxes in
+        // boxes).
+        .padding(.bottom, showsTray ? SpacePage.rowGap : 0)
+        .background(alignment: .top) {
+            let tray = RoundedRectangle(cornerRadius: 9)
+            tray
+                .fill(Theme.ink.opacity(colorScheme == .light ? 0.04 : 0.035))
+                .overlay(tray.strokeBorder(Theme.ink.opacity(0.07), lineWidth: 0.5))
+                .padding(.top, SpacePage.rowGap)
+                .opacity(showsTray ? 1 : 0)
+                .allowsHitTesting(false)
+        }
         .geometryGroup()
     }
 
@@ -1559,7 +1575,7 @@ private struct SpacePage: View {
     /// but rows would get unusably narrow if the indent kept growing, so
     /// levels past the fourth stop indenting visually.
     private static func childIndent(at depth: Int) -> CGFloat {
-        depth < 4 ? 14 : 0
+        depth < 4 ? 10 : 0
     }
 
     /// A dropped folder reopens if it was expanded before its drag
@@ -1579,69 +1595,78 @@ private struct SpacePage: View {
         let isRenaming = renamingSessionID == session.id
 
         HStack(spacing: 8) {
-            // Uniform slot: detected-process badge when something known
-            // is running, spinner while naming, accent dot otherwise.
-            // The badge outranks the spinner: auto-naming fires on a
-            // tab's first real command, and hiding the fresh badge
-            // behind the spinner read as the icon skipping that command.
-            Group {
-                if session.isSleeping {
-                    // Sleeping tab: the moon takes the badge slot. Process
-                    // detection died with the shell, and the dormant badge
-                    // machinery is paused while the tab sleeps, so nothing
-                    // below can claim it.
-                    Image(systemName: "moon.zzz.fill")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
-                } else if let process = session.runningProcess {
-                    ProcessBadgeView(process: process, isSelected: isSelected)
-                } else if agentSessions.dormantAgent(forTab: session.id) != nil,
-                          GhosttySurfaceManager.shared.existingView(for: session.id) == nil {
-                    // An agent session lives here but isn't running yet
-                    // (eager sweep hasn't reached it, or it's past the warm
-                    // cap). After a relaunch such a tab is effectively
-                    // sleeping — it resumes on first visit — so it wears
-                    // the same moon as an explicit sleep; a tinted agent
-                    // mark here read as a third state. The moon clears the
-                    // moment the restore is consumed or the Settings
-                    // toggle flips (the store publishes both); the flip to
-                    // the full-color badge rides on process detection
-                    // updating the session once the resume command runs.
-                    // A tab that already has a surface is live, whatever
-                    // the restore bookkeeping still says — a moon over a
-                    // running shell would be a plain lie.
-                    Image(systemName: "moon.zzz.fill")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
-                } else if namer.namingSessions.contains(session.id) {
-                    AutoNamingIndicator()
-                        .frame(width: 8, height: 8)
+            // Badge and text in their own row: top-aligned when there's a
+            // subtitle, so the icon sits on the title line instead of
+            // floating between the two lines. Trailing controls stay
+            // centered on the whole row.
+            HStack(alignment: activeSubtitle == nil ? .center : .top, spacing: 8) {
+                // Uniform slot: detected-process badge when something known
+                // is running, spinner while naming, accent dot otherwise.
+                // The badge outranks the spinner: auto-naming fires on a
+                // tab's first real command, and hiding the fresh badge
+                // behind the spinner read as the icon skipping that command.
+                Group {
+                    if session.isSleeping {
+                        // Sleeping tab: the moon takes the badge slot. Process
+                        // detection died with the shell, and the dormant badge
+                        // machinery is paused while the tab sleeps, so nothing
+                        // below can claim it.
+                        Image(systemName: "moon.zzz.fill")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
+                    } else if let process = session.runningProcess {
+                        ProcessBadgeView(process: process, isSelected: isSelected)
+                    } else if agentSessions.dormantAgent(forTab: session.id) != nil,
+                              GhosttySurfaceManager.shared.existingView(for: session.id) == nil {
+                        // An agent session lives here but isn't running yet
+                        // (eager sweep hasn't reached it, or it's past the warm
+                        // cap). After a relaunch such a tab is effectively
+                        // sleeping — it resumes on first visit — so it wears
+                        // the same moon as an explicit sleep; a tinted agent
+                        // mark here read as a third state. The moon clears the
+                        // moment the restore is consumed or the Settings
+                        // toggle flips (the store publishes both); the flip to
+                        // the full-color badge rides on process detection
+                        // updating the session once the resume command runs.
+                        // A tab that already has a surface is live, whatever
+                        // the restore bookkeeping still says — a moon over a
+                        // running shell would be a plain lie.
+                        Image(systemName: "moon.zzz.fill")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
+                    } else if namer.namingSessions.contains(session.id) {
+                        AutoNamingIndicator()
+                            .frame(width: 8, height: 8)
+                    } else {
+                        // Idle terminal glyph in the folder grey — a
+                        // template, so Theme.ink adapts it to the light/
+                        // dark sidebar. Unselected rows stay whisper-quiet.
+                        Image("TerminalIdle16")
+                            .resizable()
+                            .renderingMode(.template)
+                            .aspectRatio(contentMode: .fit)
+                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.85 : 0.4))
+                            .frame(width: 16, height: 16)
+                    }
+                }
+                .frame(width: 16, height: 16)
+                // Nudged down from flush-top so it sits between the title
+                // line and the row's middle.
+                .padding(.top, activeSubtitle == nil ? 0 : 3)
+
+                if let activeSubtitle {
+                    VStack(alignment: .leading, spacing: 1) {
+                        sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
+
+                        Text(activeSubtitle)
+                            .font(PaletteFont.secondary(.regular))
+                            .tracking(PaletteFont.tracking)
+                            .foregroundStyle(Theme.text(0.38))
+                            .lineLimit(1)
+                    }
                 } else {
-                    // Idle terminal glyph in the folder grey — a
-                    // template, so Theme.ink adapts it to the light/
-                    // dark sidebar. Unselected rows stay whisper-quiet.
-                    Image("TerminalIdle16")
-                        .resizable()
-                        .renderingMode(.template)
-                        .aspectRatio(contentMode: .fit)
-                        .foregroundStyle(Theme.ink.opacity(isSelected ? 0.85 : 0.4))
-                        .frame(width: 16, height: 16)
-                }
-            }
-            .frame(width: 16, height: 16)
-
-            if let activeSubtitle {
-                VStack(alignment: .leading, spacing: 1) {
                     sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
-
-                    Text(activeSubtitle)
-                        .font(PaletteFont.secondary(.regular))
-                        .tracking(PaletteFont.tracking)
-                        .foregroundStyle(Theme.text(0.38))
-                        .lineLimit(1)
                 }
-            } else {
-                sessionRowTitle(session, isSelected: isSelected, isRenaming: isRenaming)
             }
 
             Spacer(minLength: 0)
@@ -1688,12 +1713,12 @@ private struct SpacePage: View {
                     .padding(.trailing, 5)
             }
         }
-        // 24pt content box in 4pt insets — see the folder header: same 32pt
-        // row, hover × reaches to 4pt off the edges, text stays put.
+        // 24pt content box in 2pt vertical insets — see the folder header:
+        // same 28pt row, hover × reaches close to the edges, text stays put.
         .frame(minHeight: 24)
         .padding(.leading, 9)
         .padding(.trailing, 4)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             selectedRowBackground(
@@ -1803,10 +1828,7 @@ private struct SpacePage: View {
     ) -> some View {
         let shape = RoundedRectangle(cornerRadius: 7)
         if isSelected {
-            shape
-                .fill(colorScheme == .light ? Color.white : Color.white.opacity(0.14))
-                .shadow(color: .black.opacity(0.14), radius: 0.40357, x: 0, y: 0.75)
-                .shadow(color: .black.opacity(0.06), radius: 2, x: 0, y: 2)
+            RaisedChip(shape: shape)
         } else if isMultiSelected {
             shape.fill(Theme.ink.opacity(0.07))
         } else if isHovered {

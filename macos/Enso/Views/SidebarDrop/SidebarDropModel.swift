@@ -258,11 +258,11 @@ struct SidebarDropResolver {
     /// Pointer above this Y belongs to the pinned zone, below to ephemeral.
     private let zoneBoundaryY: CGFloat
 
-    /// Child rows sit 14pt in from their folder, per nesting level; used
+    /// Child rows sit 10pt in from their folder, per nesting level; used
     /// to synthesize a child-depth line under a folder row with no visible
     /// children, and as the rightward-travel step that picks a deeper
     /// landing in an ambiguous gap.
-    private static let childIndent: CGFloat = 14
+    private static let childIndent: CGFloat = 10
     /// Insertion lines inset 4pt from the anchor row's edges, matching the
     /// old indicator style.
     private static let lineInset: CGFloat = 4

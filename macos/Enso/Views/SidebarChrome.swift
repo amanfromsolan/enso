@@ -38,13 +38,18 @@ enum SidebarChromeMetrics {
     static let modeInset: CGFloat = 3
 
     /// The bottom bar is as compact as the top capsule, so the two read as a
-    /// pair; the + is a circle of the same height.
+    /// pair. The + circle is 2pt smaller: a circle reads larger than a
+    /// capsule of the same height.
     static let pillHeight: CGFloat = 32
+    static let plusSize: CGFloat = 30
+    /// The bar's lift off the window's bottom edge; a touch more than the
+    /// gutter so it doesn't crowd the edge.
+    static let footerBottomInset: CGFloat = 10
     static let pillCellWidth: CGFloat = 36
     static let pillCellHeight: CGFloat = 26
     static let pillInset: CGFloat = 3
     /// How far rows must clear to sit above the bottom bar.
-    static let footerHeight: CGFloat = edgeInset + pillHeight + edgeInset
+    static let footerHeight: CGFloat = edgeInset + pillHeight + footerBottomInset
 }
 
 // MARK: - Glass
@@ -60,24 +65,69 @@ enum SidebarGlass {
         #endif
     }()
 
-    /// The thumbs' slide: the only motion this chrome adds, and quick enough
-    /// that a click feels instant.
+    /// The thumbs' slide: unhurried, overshooting and settling like jelly.
     static func thumbAnimation(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .spring(duration: 0.14, bounce: 0)
+        reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.4)
+    }
+
+    /// How far a held thumb dips, and the soft, wobbly spring it dips and
+    /// recovers on.
+    static let pressedThumbScale: CGFloat = 0.88
+    static func pressAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.5)
+    }
+}
+
+/// The jelly in the thumb's slide: it stretches wide and thin as it sets
+/// off, then wobbles back to shape as it lands. Runs each time `trigger`
+/// changes; Reduce Motion leaves the thumb rigid.
+private struct JellyStretch<Trigger: Equatable>: ViewModifier {
+    let trigger: Trigger
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private struct Shape { var x: CGFloat = 1; var y: CGFloat = 1 }
+
+    func body(content: Content) -> some View {
+        if reduceMotion {
+            content
+        } else {
+            content.keyframeAnimator(initialValue: Shape(), trigger: trigger) { view, shape in
+                view.scaleEffect(x: shape.x, y: shape.y)
+            } keyframes: { _ in
+                KeyframeTrack(\.x) {
+                    CubicKeyframe(1.22, duration: 0.12)
+                    SpringKeyframe(1, duration: 0.6, spring: .init(duration: 0.5, bounce: 0.55))
+                }
+                KeyframeTrack(\.y) {
+                    CubicKeyframe(0.86, duration: 0.12)
+                    SpringKeyframe(1, duration: 0.6, spring: .init(duration: 0.5, bounce: 0.55))
+                }
+            }
+        }
+    }
+}
+
+/// The capsules' cells: the icon dips while held and springs back on release,
+/// and the press is reported so the capsule can dip its thumb along with it.
+struct SidebarPressStyle: ButtonStyle {
+    var onPressChange: (Bool) -> Void = { _ in }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.85 : 1)
+            .animation(SidebarGlass.pressAnimation(reduceMotion: reduceMotion), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                onPressChange(pressed)
+            }
     }
 }
 
 extension View {
     /// The bases of the three controls. Below macOS 26 (or forced), a thin
     /// material with a one-point ink rim.
-    @ViewBuilder
     func sidebarGlass<S: InsettableShape>(in shape: S) -> some View {
-        if #available(macOS 26, *), !SidebarGlass.forcesFallback {
-            glassEffect(.regular, in: shape)
-        } else {
-            background(shape.fill(.ultraThinMaterial))
-                .overlay(shape.strokeBorder(Theme.ink.opacity(0.1), lineWidth: 1).allowsHitTesting(false))
-        }
+        modifier(SidebarGlassBase(shape: shape))
     }
 
     /// The bases sit above scrolling content on their own terms; the system's
@@ -92,14 +142,82 @@ extension View {
     }
 }
 
-/// The sliding selection in both capsules: a plain neutral fill, because glass
-/// inside glass reads muddy. Only the capsules themselves are glass.
+/// The sidebar's one "selected" look, shared by the active tab and the
+/// capsules' sliding thumbs: a near-solid, slightly translucent chip with a
+/// hairline rim lit across its middle and fading toward both ends, over a
+/// soft wide shadow. Plain fills rather than system glass (no glass inside
+/// the glass capsules), so it draws the same on every macOS version.
+struct RaisedChip<S: InsettableShape>: View {
+    let shape: S
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let light = colorScheme == .light
+        let rimEnd = Color.white.opacity(light ? 0.5 : 0.03)
+        shape
+            .fill(Color.white.opacity(light ? 0.82 : 0.13))
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(
+                        stops: [
+                            .init(color: rimEnd, location: 0),
+                            .init(color: Color.white.opacity(light ? 1 : 0.24), location: 0.5),
+                            .init(color: rimEnd, location: 1),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 0.5
+                )
+            )
+            .shadow(color: .black.opacity(light ? 0.06 : 0.2), radius: 0.5, x: 0, y: 0.5)
+            // The diffused lift. Stronger in light mode, where a white chip
+            // on pale glass has little else to separate it.
+            .shadow(
+                color: .black.opacity(light ? 0.13 : 0.22),
+                radius: light ? 8 : 6,
+                x: 0,
+                y: light ? 3 : 2
+            )
+    }
+}
+
+/// The glass behind the capsules and the + circle. Light: regular glass
+/// with a faint dark tint, settling a step below the bright glass thumb.
+/// Dark: a deeper 10% tint, so the clear glass thumb lifts out of it.
+private struct SidebarGlassBase<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *), !SidebarGlass.forcesFallback {
+            content.glassEffect(
+                .regular.tint(Color.black.opacity(colorScheme == .dark ? 0.1 : 0.05)),
+                in: shape
+            )
+        } else {
+            content
+                .background(shape.fill(.ultraThinMaterial))
+                .overlay(shape.strokeBorder(Theme.ink.opacity(0.1), lineWidth: 1).allowsHitTesting(false))
+        }
+    }
+}
+
+/// The sliding selection in both capsules: glass on glass on macOS 26+
+/// (regular in light, clear in dark), the raised chip before that
+/// or when glass is forced off.
 struct SidebarThumb: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Always darker than the capsule it sits in, in both appearances.
     var body: some View {
-        Capsule().fill(Color.black.opacity(colorScheme == .dark ? 0.4 : 0.14))
+        if #available(macOS 26, *), !SidebarGlass.forcesFallback {
+            Color.clear.glassEffect(
+                colorScheme == .dark ? .clear : .regular,
+                in: Capsule()
+            )
+        } else {
+            RaisedChip(shape: Capsule())
+        }
     }
 }
 
@@ -391,6 +509,8 @@ private struct SidebarModeCapsule: View {
     let isWindowInactive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// A cell is held down; the thumb dips with it.
+    @State private var isPressing = false
 
     private var thumbX: CGFloat {
         SidebarChromeMetrics.modeInset
@@ -407,6 +527,9 @@ private struct SidebarModeCapsule: View {
 
             SidebarThumb()
                 .frame(width: SidebarChromeMetrics.modeCellWidth, height: SidebarChromeMetrics.modeCellHeight)
+                .scaleEffect(isPressing && !reduceMotion ? SidebarGlass.pressedThumbScale : 1)
+                .animation(SidebarGlass.pressAnimation(reduceMotion: reduceMotion), value: isPressing)
+                .modifier(JellyStretch(trigger: store.sidebarViewMode))
                 .offset(x: thumbX)
                 .animation(SidebarGlass.thumbAnimation(reduceMotion: reduceMotion), value: store.sidebarViewMode)
                 .allowsHitTesting(false)
@@ -442,7 +565,7 @@ private struct SidebarModeCapsule: View {
                 }
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarPressStyle { isPressing = $0 })
         .help(name)
         .accessibilityLabel(name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -462,7 +585,6 @@ struct SidebarFooter: View {
     let onEdit: (SidebarSpace) -> Void
     let onCreate: () -> Void
 
-    @State private var plusHovered = false
 
     var body: some View {
         HStack(spacing: SidebarChromeMetrics.edgeInset) {
@@ -476,22 +598,21 @@ struct SidebarFooter: View {
             Button(action: onCreate) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.text(plusHovered ? 1 : 0.85))
+                    .foregroundStyle(Theme.text(0.85))
                     .modifier(SidebarInactiveDim(isInactive: isWindowInactive))
-                    .frame(width: SidebarChromeMetrics.pillHeight, height: SidebarChromeMetrics.pillHeight)
+                    .frame(width: SidebarChromeMetrics.plusSize, height: SidebarChromeMetrics.plusSize)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             // Not interactive glass: that stretches toward the pointer, and
             // this has to stay a true circle.
             .sidebarGlass(in: Circle())
-            .frame(width: SidebarChromeMetrics.pillHeight, height: SidebarChromeMetrics.pillHeight)
-            .onHover { plusHovered = $0 }
+            .frame(width: SidebarChromeMetrics.plusSize, height: SidebarChromeMetrics.plusSize)
             .help("New Space (or swipe past the last space)")
             .accessibilityLabel("New Space")
         }
         .frame(maxWidth: .infinity)
-        .padding(.bottom, SidebarChromeMetrics.edgeInset)
+        .padding(.bottom, SidebarChromeMetrics.footerBottomInset)
     }
 }
 
@@ -509,7 +630,8 @@ private struct SpacePill: View {
 
     /// Written only while the icons actually scroll.
     @State private var scrollOffset: CGFloat = 0
-    @State private var hoveredSpaceID: SidebarSpace.ID?
+    /// A cell is held down; the thumb dips with it.
+    @State private var isPressing = false
     /// The insertion index a hovered space drag would commit to, or nil when
     /// nothing droppable is hovered (including the dragged cell's own slot).
     @State private var dropIndex: Int?
@@ -529,7 +651,7 @@ private struct SpacePill: View {
     private var maxWidth: CGFloat {
         store.sidebarWidth
             - SidebarChromeMetrics.edgeInset * 3
-            - SidebarChromeMetrics.pillHeight
+            - SidebarChromeMetrics.plusSize
     }
 
     private var width: CGFloat { min(contentWidth, maxWidth) }
@@ -595,6 +717,9 @@ private struct SpacePill: View {
         let opacity = max(0, 1 - abs(clamped - scrolled) / 12)
         return SidebarThumb()
             .frame(width: Self.cell, height: SidebarChromeMetrics.pillCellHeight)
+            .scaleEffect(isPressing && !reduceMotion ? SidebarGlass.pressedThumbScale : 1)
+            .animation(SidebarGlass.pressAnimation(reduceMotion: reduceMotion), value: isPressing)
+            .modifier(JellyStretch(trigger: activeIndex))
             .offset(x: rest)
             .animation(SidebarGlass.thumbAnimation(reduceMotion: reduceMotion), value: activeIndex)
             .offset(x: clamped - rest)
@@ -629,7 +754,6 @@ private struct SpacePill: View {
 
     private func cell(for space: SidebarSpace) -> some View {
         let isActive = store.activeSpaceID == space.id
-        let isHovered = hoveredSpaceID == space.id
         let hasAttention = space.sessions.contains { $0.status == .attention }
         return Button {
             onSelect(space.id)
@@ -641,19 +765,9 @@ private struct SpacePill: View {
                         SidebarAttentionDot().offset(x: 9, y: -7)
                     }
                 }
-                .background(
-                    Capsule().fill(Theme.ink.opacity(isHovered && !isActive ? 0.08 : 0))
-                )
                 .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            if hovering {
-                hoveredSpaceID = space.id
-            } else if hoveredSpaceID == space.id {
-                hoveredSpaceID = nil
-            }
-        }
+        .buttonStyle(SidebarPressStyle { isPressing = $0 })
         .help(space.name)
         .accessibilityLabel(space.name)
         .contextMenu {

@@ -130,15 +130,10 @@ struct EnsoApp: App {
     private static var attentionActivationObserver: NSObjectProtocol?
 
     init() {
-        // Font smoothing off: at 1 or 2 the chrome's text reads too heavy.
-        // Applied once to everyone, including installs that saved the old
-        // default of 2, and written explicitly so the look doesn't depend on
-        // the system's default (CoreText reads the app's preference domain at
-        // startup). The flag leaves the Appearance setting in charge afterward.
-        if !UserDefaults.standard.bool(forKey: "fontSmoothingOffApplied") {
-            UserDefaults.standard.set(0, forKey: "AppleFontSmoothing")
-            UserDefaults.standard.set(true, forKey: "fontSmoothingOffApplied")
-        }
+        // Font smoothing is left at the system default (off since Big Sur)
+        // unless the user turns it on in Appearance; nothing is written or
+        // migrated here. The sidebar compensates for smoothing-off with a
+        // heavier text weight instead (see PaletteFont.primary).
 
         // Start libghostty before any view reads the theme background.
         GhosttyRuntime.shared.ensureStarted()
