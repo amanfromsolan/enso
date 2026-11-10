@@ -112,6 +112,14 @@ struct TerminalRootView: View {
                     WindowDragHandle().frame(height: WindowCornerRadiusReader.inset)
                 }
         }
+        // The active space's colour: the tonal surface under the sidebar
+        // and the deeper gutter step around the card, over the frost.
+        // Nothing at all for an uncoloured space. Inside the sidebar
+        // toggle's animation so the surface tracks the sliding column.
+        .background(alignment: .leading) {
+            SpaceToneGround(sidebarWidth: store.isSidebarVisible ? store.sidebarWidth : 0)
+                .spaceTone(from: store.toneDriver)
+        }
         // Pinning while peeked commits instantly: the panel is already on
         // screen, and animating the handoff flashes the sidebar untinted
         // for a frame (the frosted NSVisualEffectView composites ahead of
@@ -126,6 +134,7 @@ struct TerminalRootView: View {
         #endif
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TrafficLightInset(
+            toneDriver: store.toneDriver,
             buttonsHidden: !isChromeRevealed,
             isSidebarVisible: store.isSidebarVisible,
             isWindowInactive: isWindowInactive,
@@ -176,7 +185,8 @@ struct TerminalRootView: View {
                 TitlebarSidebarToggle(
                     isSidebarVisible: store.isSidebarVisible,
                     isConcealed: !isChromeRevealed,
-                    isWindowInactive: isWindowInactive
+                    isWindowInactive: isWindowInactive,
+                    toneDriver: store.toneDriver
                 ) {
                     store.isSidebarVisible.toggle()
                 }
@@ -212,27 +222,73 @@ struct TerminalRootView: View {
                 }
             }
         }
-        // Space editor as an owned in-window modal: macOS sheet windows
-        // force their own chrome (border, corner radius), so we draw the
-        // card and dimming scrim ourselves.
-        .overlay {
-            if let mode = spaceEditor {
-                OwnedModalOverlay(onDismiss: dismissSpaceEditor) {
-                    SpaceEditorSheet(mode: mode) { name, icon in
+        // Space editor in a native popover, pointing at the sidebar it
+        // edits. It hangs off an invisible line at the sidebar's trailing
+        // edge rather than the column itself, so it stays put when a peeked
+        // sidebar slides away as the popover takes focus. Clicking outside
+        // dismisses it like Cancel. No dim: the sidebar and chrome take on
+        // the colour live while the pad is dragged.
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .allowsHitTesting(false)
+                // arrowEdge is the side of the anchor the popover sits on (macOS
+                // NSPopover's preferredEdge), so .trailing puts it right of
+                // the sidebar with the arrow pointing back at it.
+                .popover(item: spaceEditorPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .trailing) { mode in
+                    SpaceEditorSheet(mode: mode) { name, icon, colour in
                         switch mode {
                         case .create:
-                            store.createSpace(name: name, icon: icon)
+                            store.createSpace(name: name, icon: icon, colour: colour)
                         case .edit(let space):
                             store.updateSpace(space.id, name: name, icon: icon)
+                            if store.spaces.first(where: { $0.id == space.id })?.colour != colour {
+                                // Saves and drops the preview; the chrome is
+                                // already showing this colour, so no jump.
+                                store.commitSpaceColour(space.id, colour)
+                            }
                         }
                     } onDismiss: {
                         dismissSpaceEditor()
+                    } onColourPreview: { hue, strength, settling in
+                        // A new space has nothing to preview on yet; its
+                        // colour arrives with it on Create.
+                        guard case .edit(let space) = mode else { return }
+                        previewSpaceColour(space.id, hue: hue, strength: strength, settling: settling)
                     }
                 }
-            }
+                // Padding, not offset: an offset only moves the drawing, and
+                // the popover anchors to the layout frame, which would stay
+                // at the window's left edge.
+                .padding(.leading, store.sidebarWidth)
         }
-        // What's New: same owned-modal treatment as the space editor —
-        // native sheets were tried and rejected (animation too slow, scrim
+        // Delete Space's confirmation: the same kind of popover from the
+        // same edge, on its own anchor (one popover per view). Any of the
+        // Delete Space menu items opens it through CloseConfirmation.
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .popover(item: spaceDeletionPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .trailing) { pending in
+                    if let space = store.spaces.first(where: { $0.id == pending.id }) {
+                        DeleteSpaceConfirmation(
+                            space: space,
+                            warning: CloseConfirmation.spaceStakeWarning(store, space.id)
+                        ) {
+                            store.pendingSpaceDeletion = nil
+                            store.deleteSpace(space.id)
+                            restoreTerminalFocus()
+                        } onCancel: {
+                            dismissSpaceDeletion()
+                        }
+                    }
+                }
+                .padding(.leading, store.sidebarWidth)
+        }
+        // What's New: an owned in-window modal (the space editor was one too
+        // before it moved to a popover). Native sheets were tried and rejected (animation too slow, scrim
         // unfixably light-on-light, no styling knobs). Update Now / Skip
         // This Version reply to Sparkle through the controller; close just
         // tucks the sheet away, card stays. The palette's "What's New"
@@ -275,14 +331,68 @@ struct TerminalRootView: View {
                 openWindow(id: SettingsPanel.windowID)
             }
         }
+        // Belt and braces for any path that drops the editor without
+        // dismissSpaceEditor: a preview must never be left behind.
+        .onChange(of: spaceEditor) { _, editor in
+            if editor == nil, store.previewColour != nil {
+                store.previewColour = nil
+            }
+        }
         .onChange(of: store.selection) { _, selection in
             storedSelection = selection?.uuidString
         }
     }
 
+    /// The popover's binding. A close from outside (a click elsewhere, the
+    /// popover's own Escape) goes through dismissSpaceEditor, like Cancel.
+    private var spaceEditorPopover: Binding<SpaceEditorSheet.Mode?> {
+        Binding(
+            get: { spaceEditor },
+            set: { newValue in
+                if newValue == nil {
+                    if spaceEditor != nil { dismissSpaceEditor() }
+                } else {
+                    spaceEditor = newValue
+                }
+            }
+        )
+    }
+
+    /// The deletion popover's binding: the store's pending space, wrapped
+    /// so `.popover(item:)` can key on it. Closing from outside cancels.
+    private var spaceDeletionPopover: Binding<PendingSpaceDeletion?> {
+        Binding(
+            get: { store.pendingSpaceDeletion.map(PendingSpaceDeletion.init) },
+            set: { newValue in
+                if newValue == nil { dismissSpaceDeletion() }
+            }
+        )
+    }
+
+    private func dismissSpaceDeletion() {
+        guard store.pendingSpaceDeletion != nil else { return }
+        store.pendingSpaceDeletion = nil
+        restoreTerminalFocus()
+    }
+
     private func dismissSpaceEditor() {
+        // Cancel, Escape, the close button, a click outside, or after Save: the
+        // colour pad's preview never outlives the sheet. Unsaved, the chrome
+        // springs back to the saved colour.
+        store.previewColour = nil
         spaceEditor = nil
         GhosttySurfaceManager.shared.restoreFocus(to: store.selection)
+    }
+
+    /// The sheet's colour pad drives the chrome through the store's preview.
+    /// The pill's context menu can open the sheet on a space that isn't
+    /// showing, whose preview the store would ignore; touching the pad
+    /// brings that space up first, so the colour is visible while you pick.
+    private func previewSpaceColour(_ spaceID: SidebarSpace.ID, hue: Double, strength: Double, settling: Bool) {
+        if store.activeSpaceID != spaceID, store.spaces.contains(where: { $0.id == spaceID }) {
+            store.activateSpace(spaceID)
+        }
+        store.previewColour = SpaceColourPreview(spaceID: spaceID, hue: hue, strength: strength, animated: settling)
     }
 
     private func dismissWhatsNew() {
@@ -298,9 +408,15 @@ struct TerminalRootView: View {
     /// top line, the drag band behind it and the inactive-window dim all live
     /// inside SidebarView now: the space menu needs its pager, and the dim
     /// can't sit on an ancestor of the glass controls.
+    ///
+    /// The space tone is scoped to the chrome that draws with it (this
+    /// column, the ground, the toggles), not the whole root: a crossfade
+    /// frame changes the environment, and the terminal's representable
+    /// shouldn't be asked to update for it.
     private var sidebarColumn: some View {
         SidebarView(store: store, spaceEditor: $spaceEditor)
             .frame(width: store.sidebarWidth)
+            .spaceTone(from: store.toneDriver)
     }
 
     /// The hidden sidebar shown as an overlay while the left edge is hovered.
@@ -314,13 +430,15 @@ struct TerminalRootView: View {
                 // controls' ancestors.
                 SidebarMaterial()
                     .overlay(Theme.windowWash)
+                    .overlay(Rectangle().fill(Tone.surface))
                     .shadow(color: .black.opacity(0.45), radius: 30, x: 10)
             )
             .overlay(alignment: .trailing) {
                 Rectangle()
-                    .fill(Theme.ink.opacity(0.08))
+                    .fill(Tone.ink(0.08))
                     .frame(width: 1)
             }
+            .spaceTone(from: store.toneDriver)
     }
 
     private func restoreSelection() {
@@ -338,20 +456,23 @@ struct TerminalRootView: View {
     }
 }
 
-/// Scaffold for owned in-window modals: a dimming scrim that dismisses on
-/// tap, with the sheet content layered above it.
+/// Scaffold for owned in-window modals: a scrim that dismisses on tap
+/// (dimming, unless `dimsBackground` is false: then a clear catcher), with
+/// the sheet content layered above it.
 private struct OwnedModalOverlay<Content: View>: View {
+    let dimsBackground: Bool
     let onDismiss: () -> Void
     let content: Content
 
-    init(onDismiss: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    init(dimsBackground: Bool = true, onDismiss: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.dimsBackground = dimsBackground
         self.onDismiss = onDismiss
         self.content = content()
     }
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.5)
+            Color.black.opacity(dimsBackground ? 0.5 : 0)
                 .contentShape(Rectangle())
                 .onTapGesture { onDismiss() }
                 .ignoresSafeArea()
@@ -669,6 +790,9 @@ private struct WindowCornerRadiusReader: NSViewRepresentable {
 /// constrained to the zoom button with the lights' own gap, it shows and
 /// hides exactly when they do.
 private struct TrafficLightInset: NSViewRepresentable {
+    /// The titlebar toggle lives in its own hosting view, outside the root's
+    /// environment, so it takes the space tone straight from the driver.
+    var toneDriver: SpaceToneDriver
     var buttonsHidden: Bool
     var isSidebarVisible: Bool
     var isWindowInactive: Bool
@@ -686,6 +810,7 @@ private struct TrafficLightInset: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.toneDriver = toneDriver
         context.coordinator.onFullScreenChange = onFullScreenChange
         context.coordinator.setButtonsHidden(buttonsHidden)
         context.coordinator.setWindowInactive(isWindowInactive)
@@ -701,6 +826,7 @@ private struct TrafficLightInset: NSViewRepresentable {
         private var isFullScreen = false
         private var isWindowInactive = false
         var onFullScreenChange: (Bool) -> Void = { _ in }
+        var toneDriver: SpaceToneDriver?
         private var isSidebarVisible = true
         private var toggleAction: () -> Void = {}
         private var toggleHost: NSHostingView<TitlebarSidebarToggle>?
@@ -825,6 +951,7 @@ private struct TrafficLightInset: NSViewRepresentable {
                 isSidebarVisible: isSidebarVisible,
                 isConcealed: buttonsHidden || isFullScreen,
                 isWindowInactive: isWindowInactive,
+                toneDriver: toneDriver,
                 action: toggleAction
             )
         }
@@ -862,9 +989,18 @@ private struct TitlebarSidebarToggle: View {
     var isSidebarVisible: Bool
     var isConcealed: Bool
     var isWindowInactive: Bool
+    var toneDriver: SpaceToneDriver?
     var action: () -> Void
 
     var body: some View {
+        if let toneDriver {
+            toggle.spaceTone(from: toneDriver)
+        } else {
+            toggle
+        }
+    }
+
+    private var toggle: some View {
         SidebarToggleButton(isSidebarVisible: isSidebarVisible, action: action)
             .opacity(isConcealed ? 0 : (isWindowInactive ? 0.5 : 1))
             .allowsHitTesting(!isConcealed)
@@ -962,4 +1098,20 @@ private struct SidebarMaterial: NSViewRepresentable {
 
 #Preview {
     TerminalRootView(store: .preview)
+}
+
+extension SpaceEditorSheet.Mode: Identifiable {
+    /// For `.popover(item:)`: a different space (or create vs edit) is a
+    /// different popover.
+    var id: String {
+        switch self {
+        case .create: "create"
+        case .edit(let space): "edit-\(space.id)"
+        }
+    }
+}
+
+/// `.popover(item:)` needs an Identifiable; the pending space's ID is it.
+private struct PendingSpaceDeletion: Identifiable {
+    let id: SidebarSpace.ID
 }

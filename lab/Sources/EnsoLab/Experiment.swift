@@ -24,6 +24,14 @@ enum ExperimentCatalog {
             folder: "Command Palette",
             makeView: { AnyView(Exp01CommandPalette()) }
         ),
+        Experiment(
+            id: "02-glass-blob",
+            number: "02",
+            title: "Liquid glass drop",
+            subtitle: "The colour pad with a real Liquid Glass drop. Switch how it squashes.",
+            folder: "Space Colour",
+            makeView: { AnyView(Exp02GlassBlob()) }
+        ),
     ]
 
     /// Sections in first-seen order, each with its experiments.

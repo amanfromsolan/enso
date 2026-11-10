@@ -62,6 +62,16 @@ struct TerminalWorkspaceView: View {
                 }
             }
         }
+        // The space tint for an unsplit card with no pane card on it (a
+        // sleeping tab, No Tabs), between the theme background below and
+        // the content above. A live tab's opaque pane card covers this and
+        // wears its own tint layer. Fed by the driver in AppKit, so the
+        // tone never re-renders this view.
+        .background {
+            if !isSplitSelection {
+                TerminalTintBackground(driver: store.toneDriver)
+            }
+        }
         .background(isSplitSelection ? Color.clear : GhosttyRuntime.shared.themeBackground)
         // Space/tab switches run inside withAnimation; a cross-fade here
         // makes the SwiftUI pane headers and the Metal-backed terminal

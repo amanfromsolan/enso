@@ -2,7 +2,8 @@ import AppKit
 
 /// The close confirmation, shared by every entry point that closes on a
 /// user's gesture — the pane header's ×, the sidebar row's ×, the context
-/// menu (single or bulk), ⌘W, the palette, and Delete Space. Sleep's twin,
+/// menu (single or bulk), ⌘W and the palette. (Delete Space asks in its
+/// own popover instead; see `deleteSpace`.) Sleep's twin,
 /// with the stakes reversed: a sleep parks the conversation, a close
 /// destroys it, so the copy names what is lost. Opt-in rather than
 /// always-on — closing a tab is the ordinary gesture and most tabs have
@@ -118,15 +119,25 @@ enum CloseConfirmation {
     }
 
     /// Delete Space — the one gesture that closes a whole space's worth of
-    /// tabs at once. Both menu items route through here so the ask happens
-    /// once, for the space rather than per tab, and the teardown goes
-    /// through `close` like every other exit.
+    /// tabs at once. Every menu item routes through here. It always asks
+    /// (a space is its name, icon, colour and folders too, not just tabs,
+    /// and there's no undo), in the confirmation popover off the sidebar
+    /// rather than an alert, so the "Confirm before closing tabs" toggle
+    /// doesn't apply. The popover names what's at stake with
+    /// `spaceStakeWarning`; confirming calls `store.deleteSpace`, whose
+    /// teardown goes through `close` like every other exit.
     static func deleteSpace(_ store: TerminalSessionStore, _ spaceID: SidebarSpace.ID) {
-        guard let space = store.spaces.first(where: { $0.id == spaceID }) else { return }
-        guard consentsToClose(
-            store, sessionIDs: Set(space.sessions.map(\.id)), subject: .space
-        ) else { return }
-        store.deleteSpace(spaceID)
+        guard store.spaces.count > 1, store.spaces.contains(where: { $0.id == spaceID }) else { return }
+        store.pendingSpaceDeletion = spaceID
+    }
+
+    /// What deleting the space would end or discard, in the same words the
+    /// close alert uses; nil when it has nothing live or saved to lose.
+    static func spaceStakeWarning(_ store: TerminalSessionStore, _ spaceID: SidebarSpace.ID) -> String? {
+        guard let space = store.spaces.first(where: { $0.id == spaceID }) else { return nil }
+        let ids = Set(space.sessions.map(\.id))
+        guard let stake = stake(store, sessionIDs: ids) else { return nil }
+        return informativeText(for: stake, subject: .space, plural: ids.count > 1)
     }
 
     /// "looks busy" for the same reason sleep hedges: the busy signal

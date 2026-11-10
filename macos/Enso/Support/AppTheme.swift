@@ -18,7 +18,7 @@ enum Theme {
     /// Universal foreground / overlay ink: white on dark, near-black on light.
     /// Replaces `.white.opacity(x)` for text, hairlines, borders, and the
     /// low-opacity hover / selection washes.
-    static let ink = Color(nsColor: dynamic(dark: .white, light: NSColor(white: 0.08, alpha: 1)))
+    nonisolated static let ink = Color(nsColor: dynamic(dark: .white, light: NSColor(white: 0.08, alpha: 1)))
 
     /// The opposite of ``ink``: black on dark, white on light. For a label or
     /// glyph that must contrast a solid ``ink`` fill (the modal primary button,
@@ -59,7 +59,7 @@ enum Theme {
     /// at the same nominal opacity — the faded look that works on black is too
     /// pale on a light frost. Use this for text and text-like glyphs; keep the
     /// plain ``ink`` for hairlines, borders, and hover/selection washes.
-    static func text(_ opacity: Double) -> Color {
+    nonisolated static func text(_ opacity: Double) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
             case .darkAqua:
@@ -86,7 +86,7 @@ enum Theme {
     ))
 
     /// Builds a dynamic NSColor that resolves per light/dark appearance.
-    static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
+    nonisolated static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in
             switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
             case .darkAqua: dark
@@ -174,8 +174,20 @@ enum AppAppearance: String, CaseIterable {
 /// sidebar's material under the window wash, 24pt corners, a dark-mode
 /// hairline, and the standard modal shadow pair. Pair it with a matching
 /// 24pt clipShape on the modal's content.
+///
+/// `undimmed`: the modal sits over the live window with no scrim (the space
+/// editor, so the chrome taking on the colour stays visible). Nothing dark
+/// rings it there, so it gets a hairline in both appearances and a tighter,
+/// lighter far shadow that lifts the card without shading the window.
 struct ModalFrostBackdrop: View {
+    var undimmed = false
     @Environment(\.colorScheme) private var colorScheme
+
+    private var rim: Color {
+        let dark = colorScheme == .dark
+        if undimmed { return dark ? .white.opacity(0.1) : .black.opacity(0.1) }
+        return .white.opacity(dark ? 0.05 : 0)
+    }
 
     var body: some View {
         FrostMaterial()
@@ -183,10 +195,14 @@ struct ModalFrostBackdrop: View {
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.05 : 0))
+                    .strokeBorder(rim, lineWidth: undimmed ? 0.5 : 1)
             )
             .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
-            .shadow(color: .black.opacity(0.65), radius: 70, y: 30)
+            .shadow(
+                color: .black.opacity(undimmed ? (colorScheme == .dark ? 0.45 : 0.22) : 0.65),
+                radius: undimmed ? 36 : 70,
+                y: undimmed ? 16 : 30
+            )
     }
 }
 

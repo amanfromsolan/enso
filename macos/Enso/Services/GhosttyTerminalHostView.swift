@@ -82,8 +82,17 @@ final class SplitLayoutHostView: NSView {
     var onRatioChange: ((SplitPath, Double) -> Void)?
     var onRatioCommit: (() -> Void)?
     /// For the pane headers' rename plumbing; set by the representable
-    /// before every apply.
-    weak var store: TerminalSessionStore?
+    /// before every apply. Also the source of the cards' space tint.
+    weak var store: TerminalSessionStore? {
+        didSet {
+            guard let store, store !== oldValue else { return }
+            tintFeed.attach(to: store.toneDriver)
+        }
+    }
+    /// The space tint every pane card wears, straight from the tone driver
+    /// (never through the representable, which must not re-render per
+    /// crossfade frame).
+    private let tintFeed = TerminalTintFeed()
     /// The card corner radius split panes wear; set by the representable.
     var paneCornerRadius: CGFloat = 6
 
@@ -136,6 +145,21 @@ final class SplitLayoutHostView: NSView {
     /// Top-left origin so layout math reads top-to-bottom like the tree.
     override var isFlipped: Bool { true }
 
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        tintFeed.onChange = { [weak self] tint in
+            guard let self else { return }
+            for card in self.cards.values {
+                card.setTint(tint)
+            }
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
     func apply(
         tree: SplitNode?,
         sessions: [TerminalSession.ID: TerminalSession],
@@ -186,6 +210,7 @@ final class SplitLayoutHostView: NSView {
         for id in sessions.keys {
             let card = cards[id] ?? {
                 let card = PaneCardView()
+                card.setTint(tintFeed.tint)
                 cards[id] = card
                 // Below every sibling: dividers overhang the card edges by
                 // a few points, and their grab strips must stay on top of
@@ -827,6 +852,14 @@ final class PaneCardView: NSView {
     private let scrimLayer = CALayer()
     private static let scrimOpacity: Float = 0.25
 
+    /// The active space's tint (x/terminal.js, ≤ 3%): a translucent fill
+    /// in the hue over the whole card, header included. Above the scrim, so
+    /// every pane's background takes the same tint and the unfocused dim
+    /// still recedes toward it (tint over scrim is exactly a scrim in the
+    /// tinted background colour). Hidden with no colour. A bare CALayer, so
+    /// clicks, selection, links, cursor rects and drops never see it.
+    private let tintLayer = CALayer()
+
     /// The pane's header hosting view. The focus treatment fades it —
     /// title, breadcrumb, and all — so an unfocused pane's header reads
     /// as deactivated the way a background window's titlebar does. The
@@ -862,6 +895,9 @@ final class PaneCardView: NSView {
         scrimLayer.opacity = 0
         scrimLayer.zPosition = 10
         content.layer?.addSublayer(scrimLayer)
+        tintLayer.isHidden = true
+        tintLayer.zPosition = 11
+        content.layer?.addSublayer(tintLayer)
         // Added after the content subview so the stroke draws above the
         // card's clipped edge (its outer half lives past the bounds, which
         // masksToBounds = false on this view leaves visible).
@@ -885,6 +921,12 @@ final class PaneCardView: NSView {
         // A chrome flip (split ⇄ unsplit) snaps rather than fades: the
         // whole card treatment changes in the same commit.
         applyRingVisibility(animated: false)
+    }
+
+    /// The space tint, pushed by the host's `TerminalTintFeed` (every
+    /// crossfade frame while one runs).
+    func setTint(_ tint: ToneRGB) {
+        TerminalTint.apply(tint, to: tintLayer)
     }
 
     /// Focus moved between panes: fade the ring over rather than popping
@@ -917,6 +959,7 @@ final class PaneCardView: NSView {
         CATransaction.setDisableActions(true)
         ringLayer.frame = bounds
         scrimLayer.frame = content.bounds
+        tintLayer.frame = content.bounds
         let radius = min(cornerRadius, min(bounds.width, bounds.height) / 2)
         ringLayer.path = CGPath(
             roundedRect: bounds,

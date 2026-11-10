@@ -1,4 +1,5 @@
 import CoreImage
+import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -82,7 +83,8 @@ struct SidebarView: View {
             store: store,
             spaces: store.spaces,
             activeSpaceID: store.activeSpaceID,
-            pageWidth: pageWidth
+            pageWidth: pageWidth,
+            onEditSpace: { spaceEditor = .edit($0) }
         )
         .frame(width: pageWidth)
         .background(
@@ -693,6 +695,10 @@ private struct SpacePagerRepresentable: NSViewRepresentable {
     let spaces: [SidebarSpace]
     let activeSpaceID: SidebarSpace.ID
     let pageWidth: CGFloat
+    /// Captured by each page when it's built. Pages only rebuild when their
+    /// space changes, so a fresh closure here costs nothing; the old one
+    /// writes through the same binding.
+    let onEditSpace: (SidebarSpace) -> Void
 
     func makeNSView(context: Context) -> SpacePagerView {
         let view = SpacePagerView(frame: .zero)
@@ -712,7 +718,7 @@ private struct SpacePagerRepresentable: NSViewRepresentable {
             pageWidth: pageWidth,
             animated: context.transaction.animation != nil
         ) { space in
-            SpacePage(store: store, space: space)
+            SpacePage(store: store, space: space, onEditSpace: onEditSpace)
         }
         view.needsLayout = true
     }
@@ -871,17 +877,17 @@ private struct NewSpaceTeaser: View {
                         light: NSColor(white: 0, alpha: 0.12)
                     )))
                 Circle()
-                    .stroke(Theme.ink.opacity(0.14), lineWidth: 2)
+                    .stroke(Tone.ink(0.14), lineWidth: 2)
                 Circle()
                     .trim(from: 0, to: progress)
                     .stroke(
-                        Color.accentColor,
+                        Tone.accent(),
                         style: StrokeStyle(lineWidth: 2, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Theme.ink.opacity(0.35 + 0.65 * progress))
+                    .foregroundStyle(Tone.ink(0.35 + 0.65 * progress))
         }
         .frame(width: 30, height: 30)
         .scaleEffect(0.72 + 0.42 * progress)
@@ -918,6 +924,7 @@ private struct SpacePage: View {
     @ObservedObject private var agentSessions = AgentSessionStore.shared
     @Environment(\.colorScheme) private var colorScheme
     let space: SidebarSpace
+    let onEditSpace: (SidebarSpace) -> Void
 
     @State private var hoveredSessionID: TerminalSession.ID?
     /// The row whose hover button (× or −) claimed the click currently
@@ -967,6 +974,33 @@ private struct SpacePage: View {
         }
         // Keeps the overlay scroller clear of the bottom bar's glass.
         .contentMargins(.bottom, SidebarChromeMetrics.footerHeight, for: .scrollIndicators)
+        // On the scroll view, not its content: the scroll view always fills
+        // the page, so empty space below a short list gets the menu too.
+        // Rows and folder headers carry their own menus, and the innermost
+        // menu wins, so this only answers where nothing else does.
+        .contextMenu {
+            // The same actions as the menu bar's New Top-Level Terminal
+            // (⌥⌘N) and New Folder (⇧⌘N), so the shortcuts shown here are
+            // the real ones: a top-level tab in this space, continuing in
+            // the selected tab's working directory.
+            Button("New Terminal", systemImage: "plus") {
+                store.createSession(inSpace: space.id, workingDirectory: store.selectedSession?.workingDirectory)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            Button("New Folder", systemImage: "folder.badge.plus") {
+                store.createFolder(inSpace: space.id)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            Divider()
+            Button("Edit Space…", systemImage: "pencil") {
+                onEditSpace(space)
+            }
+            Divider()
+            Button("Delete Space", systemImage: "trash") {
+                CloseConfirmation.deleteSpace(store, space.id)
+            }
+            .disabled(store.spaces.count == 1)
+        }
         .background(
             RenameClickAway(
                 active: renamingSessionID != nil || renamingFolderID != nil
@@ -1010,6 +1044,10 @@ private struct SpacePage: View {
                 break
             }
         }
+        // Each page is its own hosting graph: give it the space tone here.
+        // A modifier with its own observation, so a crossfade frame never
+        // re-runs this body.
+        .spaceTone(from: store.toneDriver)
     }
 
     private var folderTree: some View {
@@ -1057,7 +1095,7 @@ private struct SpacePage: View {
                 Text("Nothing active")
                     .font(PaletteFont.secondary(.regular))
                     .tracking(PaletteFont.tracking)
-                    .foregroundStyle(Theme.text(0.28))
+                    .foregroundStyle(Tone.text(0.28))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
             }
@@ -1091,7 +1129,7 @@ private struct SpacePage: View {
         Text(title)
             .font(PaletteFont.secondary(.semibold))
             .tracking(PaletteFont.tracking)
-            .foregroundStyle(Theme.text(0.38))
+            .foregroundStyle(Tone.text(0.38))
             .lineLimit(1)
             .padding(.leading, 9)
             .padding(.top, isFirst ? 4 : 14)
@@ -1215,7 +1253,7 @@ private struct SpacePage: View {
                 Text("Drag tabs here to keep them")
                     .font(PaletteFont.secondary(.regular))
                     .tracking(PaletteFont.tracking)
-                    .foregroundStyle(Theme.text(0.28))
+                    .foregroundStyle(Tone.text(0.28))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
             }
@@ -1337,7 +1375,7 @@ private struct SpacePage: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Theme.ink.opacity(0.09), lineWidth: 1)
+                .strokeBorder(Tone.ink(0.09), lineWidth: 1)
         )
         .padding(.top, SpacePage.rowGap)
         .geometryGroup()
@@ -1345,7 +1383,7 @@ private struct SpacePage: View {
 
     private var zoneDivider: some View {
         Rectangle()
-            .fill(Theme.ink.opacity(0.1))
+            .fill(Tone.ink(0.1))
             .frame(height: 1)
             .padding(.horizontal, 4)
             .padding(.vertical, 8)
@@ -1378,12 +1416,12 @@ private struct SpacePage: View {
                         .tracking(PaletteFont.tracking)
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(Theme.text(newTabHovered ? 0.7 : 0.45))
+                .foregroundStyle(Tone.text(newTabHovered ? 0.7 : 0.45))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 7)
-                        .fill(newTabHovered ? Theme.ink.opacity(0.05) : Color.clear)
+                        .fill(Tone.ink(newTabHovered ? 0.05 : 0))
                 )
                 .contentShape(Rectangle())
             }
@@ -1448,7 +1486,7 @@ private struct SpacePage: View {
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(Theme.ink.opacity(0.6))
+                    .foregroundStyle(Tone.glyph(0.6))
                     .frame(width: 16, height: 16)
                     .frame(width: 16)
 
@@ -1456,7 +1494,7 @@ private struct SpacePage: View {
                     TextField("", text: $draftFolderTitle)
                         .textFieldStyle(.plain)
                         .font(PaletteFont.primary(.medium))
-                        .foregroundStyle(Theme.text(1))
+                        .foregroundStyle(Tone.text(1))
                         .focused($folderRenameFocused)
                         .onSubmit {
                             commitFolderRename(folder)
@@ -1468,7 +1506,7 @@ private struct SpacePage: View {
                     Text(folder.title)
                         .font(PaletteFont.primary(.medium))
                         .tracking(PaletteFont.tracking)
-                        .foregroundStyle(Theme.text(0.82))
+                        .foregroundStyle(Tone.text(0.82))
                         .lineLimit(1)
                         // Rename only on the title text; elsewhere the row
                         // just toggles expansion.
@@ -1499,7 +1537,7 @@ private struct SpacePage: View {
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Theme.text(0.4))
+                            .foregroundStyle(Tone.text(0.4))
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                             .frame(width: 24, height: 24)
                     }
@@ -1515,11 +1553,7 @@ private struct SpacePage: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(
-                        isDropInto
-                            ? Color.accentColor.opacity(0.22)
-                            : (isHovered ? Theme.ink.opacity(0.06) : Color.clear)
-                    )
+                    .fill(isDropInto ? Tone.accent(0.22) : Tone.ink(isHovered ? 0.06 : 0))
             )
             .contentShape(Rectangle())
             .modifier(RowPressScale())
@@ -1620,8 +1654,8 @@ private struct SpacePage: View {
         .background(alignment: .top) {
             let tray = RoundedRectangle(cornerRadius: 13)
             tray
-                .fill(Theme.ink.opacity(colorScheme == .light ? 0.04 : 0.035))
-                .overlay(tray.strokeBorder(Theme.ink.opacity(0.07), lineWidth: 0.5))
+                .fill(Tone.ink(colorScheme == .light ? 0.04 : 0.035))
+                .overlay(tray.strokeBorder(Tone.ink(0.07), lineWidth: 0.5))
                 .padding(.top, SpacePage.rowGap)
                 .opacity(showsTray ? 1 : 0)
                 .allowsHitTesting(false)
@@ -1669,7 +1703,7 @@ private struct SpacePage: View {
                         // below can claim it.
                         Image(systemName: "moon.zzz.fill")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
+                            .foregroundStyle(Tone.glyph(isSelected ? 0.7 : 0.4))
                     } else if let process = session.runningProcess {
                         ProcessBadgeView(process: process, isSelected: isSelected)
                     } else if agentSessions.dormantAgent(forTab: session.id) != nil,
@@ -1689,7 +1723,7 @@ private struct SpacePage: View {
                         // running shell would be a plain lie.
                         Image(systemName: "moon.zzz.fill")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.7 : 0.4))
+                            .foregroundStyle(Tone.glyph(isSelected ? 0.7 : 0.4))
                     } else if namer.namingSessions.contains(session.id) {
                         AutoNamingIndicator()
                             .frame(width: 8, height: 8)
@@ -1701,7 +1735,7 @@ private struct SpacePage: View {
                             .resizable()
                             .renderingMode(.template)
                             .aspectRatio(contentMode: .fit)
-                            .foregroundStyle(Theme.ink.opacity(isSelected ? 0.85 : 0.4))
+                            .foregroundStyle(Tone.glyph(isSelected ? 0.85 : 0.4))
                             .frame(width: 16, height: 16)
                     }
                 }
@@ -1829,7 +1863,7 @@ private struct SpacePage: View {
             TextField("", text: $draftTitle)
                 .textFieldStyle(.plain)
                 .font(PaletteFont.primary(.regular))
-                .foregroundStyle(Theme.text(1))
+                .foregroundStyle(Tone.text(1))
                 .focused($renameFieldFocused)
                 .onSubmit {
                     commitRename(session)
@@ -1844,7 +1878,7 @@ private struct SpacePage: View {
                 .font(PaletteFont.primary(.regular))
                 .tracking(PaletteFont.tracking)
                 // Sleeping rows ghost toward the background.
-                .foregroundStyle(Theme.text(
+                .foregroundStyle(Tone.text(
                     session.isSleeping ? (isSelected ? 0.55 : 0.38) : (isSelected ? 0.95 : 0.62)
                 ))
                 .lineLimit(1)
@@ -1872,9 +1906,9 @@ private struct SpacePage: View {
         if isSelected {
             RaisedChip(shape: shape)
         } else if isMultiSelected {
-            shape.fill(Theme.ink.opacity(0.07))
+            shape.fill(Tone.ink(0.07))
         } else if isHovered {
-            shape.fill(Theme.ink.opacity(0.05))
+            shape.fill(Tone.ink(0.05))
         } else {
             shape.fill(Color.clear)
         }
@@ -2091,11 +2125,11 @@ private struct SpacePage: View {
             let ringSize: CGFloat = 7
             ZStack(alignment: .topLeading) {
                 Circle()
-                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .strokeBorder(Tone.accent(), lineWidth: 2)
                     .frame(width: ringSize, height: ringSize)
                     .offset(x: minX, y: y - ringSize / 2)
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.accentColor)
+                    .fill(Tone.accent())
                     .frame(width: max(maxX - minX - ringSize - 1, 2), height: 2)
                     .offset(x: minX + ringSize + 1, y: y - 1)
             }
@@ -2293,13 +2327,13 @@ private struct HoverIconButton<Label: View>: View {
     var body: some View {
         Button(action: action) {
             label
-                .foregroundStyle(Theme.text(isHovered ? 0.9 : idleTint))
+                .foregroundStyle(Tone.text(isHovered ? 0.9 : idleTint))
                 .frame(width: size, height: size)
                 .background(
                     // Concentric with the row it sits in: the row's 7pt
                     // corner, less the 3pt inset around this button.
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Theme.ink.opacity(isHovered ? washOpacity : 0))
+                        .fill(Tone.ink(isHovered ? washOpacity : 0))
                 )
                 .contentShape(Rectangle())
         }
@@ -2346,7 +2380,7 @@ private struct ProcessBadgeView: View {
             // not identity, so they don't take the tab accent (issue #43).
             Image(systemName: name)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Theme.ink.opacity(isSelected ? 0.8 : 0.55))
+                .foregroundStyle(Tone.glyph(isSelected ? 0.8 : 0.55))
         case .dot:
             // A live process without artwork: the idle terminal glyph
             // turns blue so "something is running here" reads at a glance;
@@ -2384,7 +2418,7 @@ private struct AutoNamingIndicator: View {
         Circle()
             .trim(from: 0.18, to: 1)
             .stroke(
-                Theme.ink.opacity(0.6),
+                Tone.glyph(0.6),
                 style: StrokeStyle(lineWidth: 1.2, lineCap: .round)
             )
             .rotationEffect(.degrees(spinning ? 360 : 0))
@@ -2509,19 +2543,35 @@ struct SpaceIndicatorIcon: View {
     let icon: SidebarSpace.Icon
     let isActive: Bool
     var size: CGFloat = 18
+    /// The space's own colour. A coloured space's mark wears it in the pill
+    /// while another space is active, so you can tell spaces apart there.
+    var colour: SpaceColour = .none
 
     private static let inactiveOpacity: Double = 0.75
+
+    /// Inactive and coloured: the space's own pill-cell colour. Otherwise
+    /// the active tone's ink, which is today's ink with no colour.
+    private var markStyle: AnyShapeStyle {
+        if !isActive, !colour.isNone {
+            return AnyShapeStyle(SpaceCellStyle(colour: colour))
+        }
+        return AnyShapeStyle(isActive ? Tone.text(0.9) : Tone.text(Self.inactiveOpacity))
+    }
 
     var body: some View {
         switch icon {
         case .dot:
             Circle()
-                .fill(Theme.ink.opacity(isActive ? 0.85 : Self.inactiveOpacity))
+                .fill(
+                    !isActive && !colour.isNone
+                        ? AnyShapeStyle(SpaceCellStyle(colour: colour))
+                        : AnyShapeStyle(Tone.inkMark(isActive ? 0.85 : Self.inactiveOpacity))
+                )
                 .frame(width: size * 0.36, height: size * 0.36)
         case .symbol(let name):
             Image(systemName: name)
                 .font(.system(size: size * 0.61, weight: .medium))
-                .foregroundStyle(Theme.text(isActive ? 0.9 : Self.inactiveOpacity))
+                .foregroundStyle(markStyle)
         case .emoji(let emoji):
             Text(emoji)
                 .font(.system(size: size * 0.67))
@@ -2553,11 +2603,25 @@ struct SpaceEditorSheet: View {
     }
 
     let mode: Mode
-    let onSave: (String, SidebarSpace.Icon) -> Void
+    let onSave: (String, SidebarSpace.Icon, SpaceColour) -> Void
     let onDismiss: () -> Void
+    /// The colour pad's live value: (hue, strength, settling). `settling` is
+    /// the snap on release (spring to it); otherwise it's a drag frame
+    /// (render instantly). Nothing is saved until Save.
+    var onColourPreview: (Double, Double, Bool) -> Void = { _, _, _ in }
 
     @State private var name = ""
     @State private var icon: SidebarSpace.Icon = .dot
+    /// The pad's snapped colour: what Save stores.
+    @State private var colour: SpaceColour = .none
+    /// The pad's live position (continuous while dragging), for the icon
+    /// disc's tint so it follows the drag rather than only the snap. An
+    /// observable object, not @State values: the pad writes it every frame
+    /// of a drag, and only the two small disc views read it, so a frame
+    /// re-evaluates those and not this whole body (the pad, the text field,
+    /// the glass buttons, and the popover's hosting root with them).
+    @State private var live = SpaceEditorLiveColour()
+    @Environment(\.colorScheme) private var colorScheme
     @State private var pickerTab: PickerTab = .icons
     @State private var symbolQuery = ""
     @State private var emojiQuery = ""
@@ -2575,36 +2639,45 @@ struct SpaceEditorSheet: View {
     private let catalog = IconCatalog.shared
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            // The icon leads, centred over the form.
             iconPreview
-                .padding(.top, 32)
-                .padding(.bottom, 14)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 6)
+                .padding(.bottom, 18)
 
-            Text(isCreating ? "Create a Space" : "Edit Space")
-                .font(.system(size: 17, weight: .semibold))
-                .padding(.bottom, 14)
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("Name")
+                TextField("Name your space", text: $name)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13.5))
+                    .focused($nameFocused)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(nameFieldBackground)
+                    .onSubmit(saveAndDismiss)
+            }
+            .padding(.bottom, 14)
 
-            TextField("Name your space", text: $name)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13.5))
-                .focused($nameFocused)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Theme.ink.opacity(nameFocused ? 0.12 : 0.06))
-                )
-                .onSubmit(saveAndDismiss)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 22)
+            fieldLabel("Accent")
+                .padding(.bottom, 8)
 
-            // Bottom-aligned footer, web-modal style: two equal-width
-            // solid buttons spanning the sheet.
+            colourPad
+                .padding(.bottom, 20)
+
+            // Footer: two equal-width Liquid Glass buttons spanning the
+            // sheet (solid before macOS 26), default action last.
             HStack(spacing: 8) {
-                Button("Cancel") {
+                Button {
                     onDismiss()
+                } label: {
+                    Text("Cancel")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                 }
-                .buttonStyle(ModalSecondaryButtonStyle())
+                .modalGlassButton(prominent: false)
                 .keyboardShortcut(.cancelAction)
 
                 Button {
@@ -2615,41 +2688,24 @@ struct SpaceEditorSheet: View {
                             .font(.system(size: 11, weight: .bold))
                         Text(isCreating ? "Create Space" : "Save")
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
                 }
-                .buttonStyle(ModalPrimaryButtonStyle(accent: .accentColor))
+                .modalGlassButton(prominent: true)
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
         }
-        .frame(width: 340)
-        .overlay(alignment: .topTrailing) {
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text(closeHovered ? 0.85 : 0.45))
-                    .frame(width: 30, height: 30)
-                    .background(
-                        Circle().fill(Theme.ink.opacity(closeHovered ? 0.08 : 0))
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { closeHovered = $0 }
-            .arrowCursorOnHover()
-            .padding(10)
-        }
-        // Fully owned chrome: presented as an in-window overlay, not a
-        // macOS sheet, so no system border or forced corner radius. Same
-        // frost as What's New.
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .background(ModalFrostBackdrop())
+        .padding(.horizontal, 24)
+        .padding(.bottom, 20)
+        .frame(width: 380)
+        // Hosted in a native popover (TerminalRootView), which draws the
+        // material, corner radius and arrow.
         .onAppear {
             if case .edit(let space) = mode {
                 name = space.name
                 icon = space.icon
+                colour = space.colour
+                live.set(space.colour)
             } else {
                 // A random pick greets new spaces; the dot is always one tap
                 // away as the first Icons tile.
@@ -2657,6 +2713,61 @@ struct SpaceEditorSheet: View {
                 nameFocused = true
             }
         }
+    }
+
+    // MARK: Header
+
+    /// Title and close on one line. The close glyph's right edge lines up
+    /// with the fields' right edge (24pt in), so header and form share edges.
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text(isCreating ? "New Space" : "Edit Space")
+                .font(.system(size: 14, weight: .semibold))
+            Spacer(minLength: 8)
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.text(closeHovered ? 0.9 : 0.62))
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle().fill(Theme.ink.opacity(closeHovered ? 0.12 : 0.07))
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { closeHovered = $0 }
+            .arrowCursorOnHover()
+            .help("Close")
+            // Pulls the button out so its glyph, not its circle, meets the
+            // 24pt content edge.
+            .padding(.trailing, -9)
+        }
+        .frame(height: 50)
+    }
+
+    /// Recessed with a hairline: a faint ink fill that sits into the panel,
+    /// a thin inner border to keep the edge crisp on any material, and an
+    /// accent border while focused.
+    private var nameFieldBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        return shape
+            .fill(Theme.ink.opacity(0.045))
+            .overlay(
+                shape.strokeBorder(
+                    nameFocused ? Color.accentColor.opacity(0.7) : Theme.ink.opacity(0.12),
+                    lineWidth: nameFocused ? 1 : 0.5
+                )
+            )
+            .animation(.easeOut(duration: 0.12), value: nameFocused)
+    }
+
+    private func fieldLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.text(0.62))
+            .padding(.leading, 2)
     }
 
     // MARK: Preview + shuffle
@@ -2685,6 +2796,10 @@ struct SpaceEditorSheet: View {
                 // would disappear into the light panel.
                 Circle()
                     .fill(Theme.iconWell)
+                // Soft tint: a pale wash of the picked colour over the well,
+                // fading in over the first strength step so "no colour" is
+                // exactly the plain well.
+                SpaceEditorDiscWash(live: live)
 
                 // Keyed on what's showing, so every swap — a shuffle or the
                 // hover plus — plays the shrink-out / spring-in transition
@@ -2692,7 +2807,9 @@ struct SpaceEditorSheet: View {
                 Group {
                     switch discContent {
                     case .icon(let current):
-                        SpaceIndicatorIcon(icon: current, isActive: true, size: 46)
+                        // The icon in the colour's ink (the pill's colour for
+                        // a coloured space); plain ink with no colour.
+                        SpaceEditorDiscIcon(live: live, icon: current)
                     case .plus:
                         // Sized like the space icon it stands in for.
                         Image(systemName: "plus")
@@ -2740,9 +2857,7 @@ struct SpaceEditorSheet: View {
         } label: {
             Image(systemName: "shuffle")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Theme.inverseInk.opacity(0.8))
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(Theme.ink.opacity(0.94)))
+                .modifier(ShuffleDiscSurface())
                 // A low-damping spring back to 1 overshoots into a pop.
                 .scaleEffect(shufflePop ? 0.8 : 1)
                 .animation(.spring(response: 0.3, dampingFraction: 0.42), value: shufflePop)
@@ -2987,13 +3102,143 @@ struct SpaceEditorSheet: View {
     }
 
     private func saveAndDismiss() {
-        onSave(name, icon)
+        onSave(name, icon, colour)
         onDismiss()
+    }
+
+    // MARK: Colour
+
+    /// Sideways is hue, up is stronger, the bottom row is no colour. Its
+    /// field is the real tonal surface (SpaceTone.pickerField), so it
+    /// previews what each spot gives; the window follows the drag live.
+    private var colourPad: some View {
+        let dark = colorScheme == .dark
+        return SpaceColourPad(
+            hue: Double(colour.hue.rawValue),
+            strength: Double(colour.strength),
+            swatch: { h, s in SpaceTone.pickerField(hue: h, strength: s, dark: dark).color },
+            accent: { h in SpaceTone.pickerAccent(hue: h, dark: dark).color },
+            hueNames: SpaceHue.allCases.map(\.name),
+            onChange: { h, s in
+                live.hue = h
+                live.strength = s
+                onColourPreview(h, s, false)
+            },
+            onCommit: { h, s in
+                let snapped = SpaceColour(hue: SpaceHue(rawValue: h) ?? .blue, strength: s)
+                colour = snapped
+                live.set(snapped)
+                onColourPreview(Double(h), Double(s), true)
+            }
+        )
+        .frame(height: 136)
     }
 
     private var isCreating: Bool {
         if case .create = mode { return true }
         return false
+    }
+}
+
+/// Delete Space's confirmation, in a popover off the sidebar like the space
+/// editor (TerminalRootView). Names the space and what goes with it, adds the
+/// close alert's warning when an agent or a running process would be lost,
+/// and keeps Return off the destructive button: Esc or Cancel backs out,
+/// only a click on Delete deletes.
+struct DeleteSpaceConfirmation: View {
+    let space: SidebarSpace
+    /// `CloseConfirmation.spaceStakeWarning`: nil when nothing's at stake.
+    let warning: String?
+    let onDelete: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Theme.iconWell)
+                    Image(systemName: "trash")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Theme.text(0.85))
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Delete \u{201C}\(displayName)\u{201D}?")
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(2)
+                    Text(summary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if let warning {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text(warning)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text(0.82))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.orange.opacity(0.1))
+                )
+                .padding(.top, 14)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .modalGlassButton(prominent: false)
+                .keyboardShortcut(.cancelAction)
+
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Delete")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+                }
+                // A step deeper than system red (#FF3B30), so it reads as
+                // weighty rather than alarm-bright.
+                .modalGlassButton(prominent: true, tint: Color(red: 0.84, green: 0.17, blue: 0.14))
+            }
+            .padding(.top, 18)
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private var displayName: String {
+        space.name.isEmpty ? "Untitled" : space.name
+    }
+
+    /// "Its 3 tabs and 1 folder close with it. This can't be undone."
+    private var summary: String {
+        let tabs = space.sessions.count
+        let folders = space.allFolders.count
+        var parts: [String] = []
+        if tabs > 0 { parts.append("\(tabs) tab\(tabs == 1 ? "" : "s")") }
+        if folders > 0 { parts.append("\(folders) folder\(folders == 1 ? "" : "s")") }
+        let undo = "This can\u{2019}t be undone."
+        guard !parts.isEmpty else { return undo }
+        return "Its \(parts.joined(separator: " and ")) close with it. \(undo)"
     }
 }
 
@@ -3104,6 +3349,93 @@ extension View {
 }
 
 // MARK: - Button styles
+
+/// The colour pad's live position while it drags (continuous hue 0...8,
+/// strength 0...3), owned by the Edit Space sheet. Observable so a per-frame
+/// write invalidates only the views that read it (the icon disc's wash and
+/// icon), not the sheet.
+@Observable
+private final class SpaceEditorLiveColour {
+    var hue: Double = 0
+    var strength: Double = 0
+
+    func set(_ colour: SpaceColour) {
+        hue = Double(colour.hue.rawValue)
+        strength = Double(colour.strength)
+    }
+
+    /// The nearest whole colour to the pad's live position.
+    var nearest: SpaceColour {
+        let hue = SpaceHue(rawValue: Int(hue.rounded())) ?? .blue
+        return SpaceColour(hue: hue, strength: Int(strength.rounded()))
+    }
+}
+
+/// The disc's tint wash: the frost a quarter of the way to the vivid swatch,
+/// a little more at Medium and Strong, mixed in OKLab; fading in over the
+/// first strength step so "no colour" is exactly the plain well.
+private struct SpaceEditorDiscWash: View {
+    let live: SpaceEditorLiveColour
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        let frost = dark ? ToneRGB(42, 43, 45) : ToneRGB(238, 238, 240)
+        let swatch = SpaceTone.pickerAccent(hue: live.hue, dark: dark)
+        let k = min(1, max(0, (live.strength - 1) / 2))
+        Circle()
+            .fill(OKLab.mix(frost, swatch, (dark ? 0.32 : 0.26) * (0.7 + 0.6 * k)).color)
+            .opacity(min(1, max(0, live.strength)))
+    }
+}
+
+/// The icon in the live colour's ink (the pill's colour for a coloured space);
+/// plain ink with no colour.
+private struct SpaceEditorDiscIcon: View {
+    let live: SpaceEditorLiveColour
+    let icon: SidebarSpace.Icon
+
+    var body: some View {
+        let colour = live.nearest
+        SpaceIndicatorIcon(icon: icon, isActive: colour.isNone, size: 46, colour: colour)
+    }
+}
+
+/// The shuffle button's disc: interactive Liquid Glass on macOS 26+, the solid ink disc before.
+private struct ShuffleDiscSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content
+                .foregroundStyle(Theme.ink.opacity(0.85))
+                .frame(width: 32, height: 32)
+                .glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            content
+                .foregroundStyle(Theme.inverseInk.opacity(0.8))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Theme.ink.opacity(0.94)))
+        }
+    }
+}
+
+extension View {
+    /// Liquid Glass footer button on macOS 26+ (`.glassProminent` in the accent colour for the
+    /// primary action, `.glass` for the secondary); the solid modal styles below on earlier systems.
+    @ViewBuilder
+    func modalGlassButton(prominent: Bool, tint: Color = .accentColor) -> some View {
+        if #available(macOS 26, *) {
+            if prominent {
+                buttonStyle(.glassProminent).tint(tint).controlSize(.large)
+            } else {
+                buttonStyle(.glass).controlSize(.large)
+            }
+        } else if prominent {
+            buttonStyle(ModalPrimaryButtonStyle(accent: tint))
+        } else {
+            buttonStyle(ModalSecondaryButtonStyle())
+        }
+    }
+}
 
 /// Solid white primary action, web-modal style: full-width rounded
 /// rectangle, dark label, no gradient or border. Brightens on hover.
