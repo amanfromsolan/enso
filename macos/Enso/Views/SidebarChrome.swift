@@ -150,18 +150,27 @@ extension View {
 struct RaisedChip<S: InsettableShape>: View {
     let shape: S
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.spaceTone) private var tone
 
     var body: some View {
         let light = colorScheme == .light
-        let rimEnd = Color.white.opacity(light ? 0.5 : 0.03)
+        let dark = !light
+        // A space's tone tints the chip and its rim and shadows; the rim keeps
+        // its lit-middle gradient (the ends at the same fraction of the
+        // middle as today's white rim).
+        let rimEnd = tone.color(
+            ToneStyle(neutral: .white(light: 0.5, dark: 0.03), role: .chipRim, lightAlpha: 0.5, darkAlpha: 0.125),
+            dark: dark
+        )
+        let rimMiddle = tone.color(ToneStyle(neutral: .white(light: 1, dark: 0.24), role: .chipRim), dark: dark)
         shape
-            .fill(Color.white.opacity(light ? 0.82 : 0.13))
+            .fill(Tone.chip)
             .overlay(
                 shape.strokeBorder(
                     LinearGradient(
                         stops: [
                             .init(color: rimEnd, location: 0),
-                            .init(color: Color.white.opacity(light ? 1 : 0.24), location: 0.5),
+                            .init(color: rimMiddle, location: 0.5),
                             .init(color: rimEnd, location: 1),
                         ],
                         startPoint: .leading,
@@ -170,11 +179,11 @@ struct RaisedChip<S: InsettableShape>: View {
                     lineWidth: 0.5
                 )
             )
-            .shadow(color: .black.opacity(light ? 0.06 : 0.2), radius: 0.5, x: 0, y: 0.5)
+            .shadow(color: tone.color(Tone.chipShadowNear, dark: dark), radius: 0.5, x: 0, y: 0.5)
             // The diffused lift. Stronger in light mode, where a white chip
             // on pale glass has little else to separate it.
             .shadow(
-                color: .black.opacity(light ? 0.13 : 0.22),
+                color: tone.color(Tone.chipShadowFar, dark: dark),
                 radius: light ? 8 : 6,
                 x: 0,
                 y: light ? 3 : 2
@@ -188,17 +197,20 @@ struct RaisedChip<S: InsettableShape>: View {
 private struct SidebarGlassBase<S: InsettableShape>: ViewModifier {
     let shape: S
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.spaceTone) private var tone
 
     func body(content: Content) -> some View {
         if #available(macOS 26, *), !SidebarGlass.forcesFallback {
+            // A space's tone swaps the dark tint for its pale glass tone:
+            // still Liquid Glass, just tinted.
             content.glassEffect(
-                .regular.tint(Color.black.opacity(colorScheme == .dark ? 0.1 : 0.05)),
+                .regular.tint(tone.color(Tone.glassTint, dark: colorScheme == .dark)),
                 in: shape
             )
         } else {
             content
-                .background(shape.fill(.ultraThinMaterial))
-                .overlay(shape.strokeBorder(Theme.ink.opacity(0.1), lineWidth: 1).allowsHitTesting(false))
+                .background(shape.fill(.ultraThinMaterial).overlay(shape.fill(Tone.glassFill)))
+                .overlay(shape.strokeBorder(Tone.glassRim, lineWidth: 1).allowsHitTesting(false))
         }
     }
 }
@@ -208,11 +220,14 @@ private struct SidebarGlassBase<S: InsettableShape>: ViewModifier {
 /// or when glass is forced off.
 struct SidebarThumb: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.spaceTone) private var tone
 
     var body: some View {
         if #available(macOS 26, *), !SidebarGlass.forcesFallback {
+            let glass: Glass = colorScheme == .dark ? .clear : .regular
+            // Tinted with the space's chip tone, partly, so it stays glass.
             Color.clear.glassEffect(
-                colorScheme == .dark ? .clear : .regular,
+                tone.isNeutral ? glass : glass.tint(tone.color(Tone.thumbTint, dark: colorScheme == .dark)),
                 in: Capsule()
             )
         } else {
@@ -306,13 +321,13 @@ struct SidebarTopBar: View {
                 Text(space.name)
                     .font(PaletteFont.primary(.semibold))
                     .tracking(PaletteFont.tracking)
-                    .foregroundStyle(Theme.text(0.92))
+                    .foregroundStyle(Tone.text(0.92))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.text(isHovered ? 0.9 : 0.65))
+                    .foregroundStyle(Tone.text(isHovered ? 0.9 : 0.65))
                     .frame(width: 14)
             }
             .padding(.leading, SidebarChromeMetrics.namePadding)
@@ -320,7 +335,7 @@ struct SidebarTopBar: View {
             .frame(height: SidebarChromeMetrics.nameHeight)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(Theme.ink.opacity(isHovered ? 0.08 : 0))
+                    .fill(Tone.ink(isHovered ? 0.08 : 0))
             )
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
@@ -336,7 +351,7 @@ struct SidebarTopBar: View {
         TextField("", text: $draftName)
             .textFieldStyle(.plain)
             .font(PaletteFont.primary(.semibold))
-            .foregroundStyle(Theme.text(1))
+            .foregroundStyle(Tone.text(1))
             .focused($nameFocused)
             .onSubmit {
                 commitRename()
@@ -374,7 +389,7 @@ struct SidebarTopBar: View {
         entries.append(.item(title: "Rename", symbol: "pencil") {
             beginRename()
         })
-        entries.append(.item(title: "Edit Icon & Name…", symbol: "pencil.and.outline") {
+        entries.append(.item(title: "Edit Space…", symbol: "pencil.and.outline") {
             onEditSpace(current)
         })
         if !current.allFolders.isEmpty {
@@ -424,6 +439,7 @@ struct SidebarTopBar: View {
 final class SidebarSpaceMenu {
     enum Entry {
         case entry(title: String, image: NSImage?, isChecked: Bool, isEnabled: Bool, action: () -> Void)
+        case submenu(title: String, image: NSImage?, entries: [Entry])
         case separator
 
         static func item(
@@ -443,6 +459,13 @@ final class SidebarSpaceMenu {
 
     func present(_ entries: [Entry]) {
         guard let anchor else { return }
+        let menu = Self.makeMenu(entries)
+        let gap: CGFloat = 6
+        let origin = NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + gap : -gap)
+        menu.popUp(positioning: nil, at: origin, in: anchor)
+    }
+
+    private static func makeMenu(_ entries: [Entry]) -> NSMenu {
         let menu = NSMenu()
         // Our own enablement, not the responder chain's guesswork.
         menu.autoenablesItems = false
@@ -456,11 +479,14 @@ final class SidebarSpaceMenu {
                 item.state = isChecked ? .on : .off
                 item.isEnabled = isEnabled
                 menu.addItem(item)
+            case .submenu(let title, let image, let children):
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.image = image
+                item.submenu = makeMenu(children)
+                menu.addItem(item)
             }
         }
-        let gap: CGFloat = 6
-        let origin = NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + gap : -gap)
-        menu.popUp(positioning: nil, at: origin, in: anchor)
+        return menu
     }
 
     /// NSMenuItem carries a target/action pair, not a closure.
@@ -554,7 +580,7 @@ private struct SidebarModeCapsule: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.text(isSelected ? 0.95 : 0.7))
+                .foregroundStyle(Tone.text(isSelected ? 0.95 : 0.7))
                 // This glyph's ink sits half a point low; the folder's doesn't.
                 .offset(y: mode == .active ? -0.5 : 0)
                 .frame(width: SidebarChromeMetrics.modeCellWidth, height: SidebarChromeMetrics.modeCellHeight)
@@ -598,7 +624,7 @@ struct SidebarFooter: View {
             Button(action: onCreate) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.text(0.85))
+                    .foregroundStyle(Tone.text(0.85))
                     .modifier(SidebarInactiveDim(isInactive: isWindowInactive))
                     .frame(width: SidebarChromeMetrics.plusSize, height: SidebarChromeMetrics.plusSize)
                     .contentShape(Circle())
@@ -753,11 +779,14 @@ private struct SpacePill: View {
     }
 
     private func cell(for space: SidebarSpace) -> some View {
+        let spaceIndex = store.spaces.firstIndex(where: { $0.id == space.id })
         let isActive = store.activeSpaceID == space.id
         let hasAttention = space.sessions.contains { $0.status == .attention }
         return Button {
             onSelect(space.id)
         } label: {
+            // Neutral ink in the current space's tone, never the cell's own
+            // colour: dark when active, faded otherwise.
             SpaceIndicatorIcon(icon: space.icon, isActive: isActive, size: 18)
                 .frame(width: Self.cell, height: SidebarChromeMetrics.pillCellHeight)
                 .overlay {
@@ -771,9 +800,25 @@ private struct SpacePill: View {
         .help(space.name)
         .accessibilityLabel(space.name)
         .contextMenu {
+            Button("New Terminal in This Space", systemImage: "plus") {
+                store.createSession(inSpace: space.id)
+            }
+            Divider()
             Button("Edit Space…", systemImage: "pencil") {
                 onEdit(space)
             }
+            // Reordering is otherwise drag-only. moveSpace takes an
+            // insertion index in the current array: one before to go left,
+            // two after to land one to the right.
+            Button("Move Left", systemImage: "arrow.left") {
+                if let index = spaceIndex { store.moveSpace(space.id, toIndex: index - 1) }
+            }
+            .disabled((spaceIndex ?? 0) == 0)
+            Button("Move Right", systemImage: "arrow.right") {
+                if let index = spaceIndex { store.moveSpace(space.id, toIndex: index + 2) }
+            }
+            .disabled((spaceIndex ?? store.spaces.count - 1) >= store.spaces.count - 1)
+            Divider()
             Button("Delete Space", systemImage: "trash") {
                 CloseConfirmation.deleteSpace(store, space.id)
             }
@@ -839,7 +884,7 @@ private struct SpacePill: View {
                 width - Self.inset
             )
             RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor)
+                .fill(Tone.accent())
                 .frame(width: 2, height: 16)
                 .offset(x: x - 1)
                 .allowsHitTesting(false)

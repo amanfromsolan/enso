@@ -193,6 +193,84 @@ extension Array where Element == SidebarPinnedItem {
     }
 }
 
+/// A space's colour hue, in the picker's swatch order. The raw values are
+/// persisted, so append new hues at the end, never reorder.
+nonisolated enum SpaceHue: Int, Codable, CaseIterable, Sendable {
+    case blue, purple, pink, red, orange, yellow, green, teal, graphite
+
+    var name: String {
+        switch self {
+        case .blue: "Blue"
+        case .purple: "Purple"
+        case .pink: "Pink"
+        case .red: "Red"
+        case .orange: "Orange"
+        case .yellow: "Yellow"
+        case .green: "Green"
+        case .teal: "Teal"
+        case .graphite: "Graphite"
+        }
+    }
+}
+
+/// A space's colour: one hue plus a strength. Strength 0 is "no colour", and
+/// the chrome then draws exactly as it did before spaces had colours; the hue
+/// is kept so turning colour back on returns to it. 1–3 are Subtle, Medium,
+/// Strong. See SpaceTone.swift for how it becomes a theme.
+nonisolated struct SpaceColour: Codable, Hashable, Sendable {
+    var hue: SpaceHue
+    var strength: Int
+
+    static let none = SpaceColour(hue: .blue, strength: 0)
+    static let strengthNames = ["Subtle", "Medium", "Strong"]
+
+    init(hue: SpaceHue, strength: Int) {
+        self.hue = hue
+        self.strength = min(max(strength, 0), 3)
+    }
+
+    var isNone: Bool { strength == 0 }
+
+    private enum CodingKeys: String, CodingKey { case hue, strength }
+
+    /// Tolerant: an unknown hue (written by a newer build) falls back to
+    /// blue, and the strength is clamped, so a colour can never fail the
+    /// space it belongs to.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let raw: Int? = try? container.decodeIfPresent(Int.self, forKey: .hue)
+        hue = raw.flatMap(SpaceHue.init(rawValue:)) ?? .blue
+        let rawStrength: Int? = try? container.decodeIfPresent(Int.self, forKey: .strength)
+        strength = min(max(rawStrength ?? 0, 0), 3)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(hue, forKey: .hue)
+        try container.encode(strength, forKey: .strength)
+    }
+}
+
+/// The colour picker's in-flight value for one space: a continuous hue
+/// (0...8, fractional between neighbouring swatches) and strength (0...3).
+/// Transient: lives on the store, never persisted.
+nonisolated struct SpaceColourPreview: Equatable, Sendable {
+    var spaceID: UUID
+    var hue: Double
+    var strength: Double
+    /// false (the drag): rendered instantly. true: the chrome springs to it,
+    /// like a saved colour does. For the picker's snap on release, while the
+    /// value is still only a preview (the sheet saves later, or cancels).
+    var animated = false
+
+    /// The picker's snap: spring the preview to a whole colour.
+    static func settling(_ spaceID: UUID, on colour: SpaceColour) -> SpaceColourPreview {
+        SpaceColourPreview(
+            spaceID: spaceID, hue: Double(colour.hue.rawValue), strength: Double(colour.strength), animated: true
+        )
+    }
+}
+
 /// One swipeable sidebar page: its own pinned zone and ephemeral tabs.
 struct SidebarSpace: Identifiable, Hashable, Codable {
     enum Icon: Hashable, Codable {
@@ -209,6 +287,9 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
     var pinnedItems: [SidebarPinnedItem]
     var ephemeralSessions: [TerminalSession]
     var lastSelection: TerminalSession.ID?
+    /// The space's colour; `.none` (strength 0) for spaces saved before
+    /// colours existed.
+    var colour: SpaceColour
 
     init(
         id: UUID = UUID(),
@@ -216,7 +297,8 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
         icon: Icon = .dot,
         pinnedItems: [SidebarPinnedItem] = [],
         ephemeralSessions: [TerminalSession] = [],
-        lastSelection: TerminalSession.ID? = nil
+        lastSelection: TerminalSession.ID? = nil,
+        colour: SpaceColour = .none
     ) {
         self.id = id
         self.name = name
@@ -224,6 +306,7 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
         self.pinnedItems = pinnedItems
         self.ephemeralSessions = ephemeralSessions
         self.lastSelection = lastSelection
+        self.colour = colour
     }
 
     /// Two-array convenience matching the pre-interleaving model: loose tabs
@@ -305,7 +388,7 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
     // loose-tabs-first-then-folders. New saves write only the new shape.
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, pinnedItems, pinnedFolders, pinnedSessions, ephemeralSessions, lastSelection
+        case id, name, icon, pinnedItems, pinnedFolders, pinnedSessions, ephemeralSessions, lastSelection, colour
     }
 
     init(from decoder: Decoder) throws {
@@ -315,6 +398,8 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
         icon = try container.decode(Icon.self, forKey: .icon)
         ephemeralSessions = try container.decode([TerminalSession].self, forKey: .ephemeralSessions)
         lastSelection = try container.decodeIfPresent(TerminalSession.ID.self, forKey: .lastSelection)
+        // Absent in files written before space colours: no colour.
+        colour = (try? container.decodeIfPresent(SpaceColour.self, forKey: .colour)) ?? .none
         if let items = try container.decodeIfPresent([SidebarPinnedItem].self, forKey: .pinnedItems) {
             pinnedItems = items
         } else {
@@ -337,6 +422,7 @@ struct SidebarSpace: Identifiable, Hashable, Codable {
         try container.encode(pinnedSessions, forKey: .pinnedSessions)
         try container.encode(ephemeralSessions, forKey: .ephemeralSessions)
         try container.encodeIfPresent(lastSelection, forKey: .lastSelection)
+        try container.encode(colour, forKey: .colour)
     }
 }
 

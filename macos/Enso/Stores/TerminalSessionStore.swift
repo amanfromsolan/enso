@@ -4,8 +4,50 @@ import Foundation
 @MainActor
 final class TerminalSessionStore: ObservableObject {
     /// Swipeable sidebar spaces; always at least one.
-    @Published private(set) var spaces: [SidebarSpace]
-    @Published private(set) var activeSpaceID: SidebarSpace.ID
+    @Published private(set) var spaces: [SidebarSpace] {
+        didSet { refreshTone() }
+    }
+    @Published private(set) var activeSpaceID: SidebarSpace.ID {
+        didSet { refreshTone() }
+    }
+
+    /// The chrome's tone (the active space's colour), animated. See
+    /// SpaceTone.swift.
+    let toneDriver = SpaceToneDriver()
+
+    /// The colour picker's live value while it drags: rendered instead of
+    /// the space's saved colour, instantly (or springing, when the preview is
+    /// `animated`: the picker's snap on release), and never saved. Ignored
+    /// unless it names the active space. Clear it (or call
+    /// `commitSpaceColour`) when the picker goes away. See SpaceTone.swift
+    /// for the whole flow.
+    ///
+    /// Deliberately NOT @Published: it's written every frame of a pad drag,
+    /// and a publish here fires this store's objectWillChange, re-running
+    /// every view that observes the store (the root, the sidebar and each
+    /// space page, the footer and top bar, the workspace and its terminal
+    /// representables, the menu commands) 60–120 times a second. Nothing
+    /// draws from it directly: the chrome reads the tone through
+    /// `toneDriver`, which `refreshTone()` re-aims.
+    var previewColour: SpaceColourPreview? {
+        didSet { refreshTone() }
+    }
+
+    /// The space a Delete Space gesture is asking about. While it's set the
+    /// root shows the confirmation popover (TerminalRootView); confirming
+    /// deletes, anything else clears it. Set through
+    /// `CloseConfirmation.deleteSpace`, never deleted from here.
+    @Published var pendingSpaceDeletion: SidebarSpace.ID?
+
+    /// What the chrome was last told to show, to tell a space switch
+    /// (crossfade) from a colour change (spring) from a drag (instant).
+    private var toneKey: ToneKey?
+
+    private struct ToneKey: Equatable {
+        var spaceID: SidebarSpace.ID
+        var colour: SpaceColour
+        var preview: SpaceColourPreview?
+    }
 
     @Published var selection: TerminalSession.ID? {
         didSet {
@@ -194,6 +236,8 @@ final class TerminalSessionStore: ObservableObject {
             landOnPopulatedSpace()
         }
 
+        refreshTone()
+
         if persistToDisk {
             let timer = Timer(timeInterval: 30 * 60, repeats: true) { [weak self] _ in
                 Task { @MainActor in
@@ -291,13 +335,14 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     @discardableResult
-    func createSpace(name: String, icon: SidebarSpace.Icon) -> SidebarSpace.ID {
+    func createSpace(name: String, icon: SidebarSpace.Icon, colour: SpaceColour = .none) -> SidebarSpace.ID {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let space = SidebarSpace(
+        var space = SidebarSpace(
             name: trimmed.isEmpty ? "Space \(spaces.count + 1)" : trimmed,
             icon: icon,
             ephemeralSessions: [Self.makeSession()]
         )
+        space.colour = colour
         spaces.append(space)
         activateSpace(space.id)
         return space.id
@@ -319,6 +364,46 @@ final class TerminalSessionStore: ObservableObject {
             space.icon = icon
         }
         save()
+    }
+
+    /// Sets a space's saved colour (strength 0 = none). The chrome springs
+    /// to it; a preview for the same space is cleared, so this is also how
+    /// the picker commits.
+    func setSpaceColour(_ spaceID: SidebarSpace.ID, to colour: SpaceColour) {
+        withSpace(spaceID) { $0.colour = colour }
+        if previewColour?.spaceID == spaceID {
+            previewColour = nil
+        }
+        save()
+    }
+
+    /// The picker's release: save the snapped colour and drop the preview in
+    /// one go, so the chrome springs from the dragged value to the saved one.
+    func commitSpaceColour(_ spaceID: SidebarSpace.ID, _ colour: SpaceColour) {
+        setSpaceColour(spaceID, to: colour)
+    }
+
+    /// Re-aims the tone driver when the active space, its colour or the
+    /// preview changes; a no-op otherwise (it runs on every `spaces` write).
+    private func refreshTone() {
+        guard !spaces.isEmpty else { return }
+        let space = activeSpace
+        let preview = previewColour.flatMap { $0.spaceID == space.id ? $0 : nil }
+        let key = ToneKey(spaceID: space.id, colour: space.colour, preview: preview)
+        guard key != toneKey else { return }
+        let previous = toneKey
+        toneKey = key
+        let tone = preview.map { SpaceChromeTone(hue: $0.hue, strength: $0.strength) }
+            ?? SpaceChromeTone(colour: space.colour)
+        let transition: SpaceToneDriver.Transition
+        if let previous, previous.spaceID != key.spaceID {
+            transition = .crossfade
+        } else if previous == nil || (preview.map { !$0.animated } ?? false) {
+            transition = .instant
+        } else {
+            transition = .spring
+        }
+        toneDriver.show(tone, transition: transition)
     }
 
     /// Reorders a space to the given insertion index in the current array

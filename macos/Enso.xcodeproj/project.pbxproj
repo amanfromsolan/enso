@@ -10,6 +10,8 @@
 		A100000A2FD810C30001BF12 /* EnsoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000092FD810C30001BF12 /* EnsoApp.swift */; };
 		A100000C2FD810C30001BF12 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000B2FD810C30001BF12 /* ContentView.swift */; };
 		A1THEME012FD810C30001BF12 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1THEME022FD810C30001BF12 /* AppTheme.swift */; };
+		A1STONE032FD810C30001BF12 /* SpaceToneChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1STONE042FD810C30001BF12 /* SpaceToneChrome.swift */; };
+		A1STONE012FD810C30001BF12 /* SpaceTone.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1STONE022FD810C30001BF12 /* SpaceTone.swift */; };
 		A1PERFM012FD810C30001BF12 /* PerfMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PERFM022FD810C30001BF12 /* PerfMonitor.swift */; };
 		A1PERFV012FD810C30001BF12 /* PerfBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1PERFV022FD810C30001BF12 /* PerfBarView.swift */; };
 		A1SWTST012FD810C30001BF12 /* SpaceSwitchTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SWTST022FD810C30001BF12 /* SpaceSwitchTest.swift */; };
@@ -58,6 +60,8 @@
 		A1ROWBDG012FD810C30001BF12 /* RowProcessBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1ROWBDG022FD810C30001BF12 /* RowProcessBadge.swift */; };
 		A1SDBCHR012FD810C30001BF12 /* SidebarChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SDBCHR022FD810C30001BF12 /* SidebarChrome.swift */; };
 		A1WHTNEW012FD810C30001BF12 /* WhatsNewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */; };
+		A1SCPAD0012FD810C30001BF12 /* SpaceColourPad.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1SCPAD0022FD810C30001BF12 /* SpaceColourPad.swift */; };
+		A1SCPAD0032FD810C30001BF12 /* SpaceColourPadGlass.metal in Sources */ = {isa = PBXBuildFile; fileRef = A1SCPAD0042FD810C30001BF12 /* SpaceColourPadGlass.metal */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -95,6 +99,8 @@
 		A10000092FD810C30001BF12 /* EnsoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnsoApp.swift; sourceTree = "<group>"; };
 		A100000B2FD810C30001BF12 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A1THEME022FD810C30001BF12 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		A1STONE042FD810C30001BF12 /* SpaceToneChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceToneChrome.swift; sourceTree = "<group>"; };
+		A1STONE022FD810C30001BF12 /* SpaceTone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceTone.swift; sourceTree = "<group>"; };
 		A1PERFM022FD810C30001BF12 /* PerfMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfMonitor.swift; sourceTree = "<group>"; };
 		A1PERFV022FD810C30001BF12 /* PerfBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfBarView.swift; sourceTree = "<group>"; };
 		A1SWTST022FD810C30001BF12 /* SpaceSwitchTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceSwitchTest.swift; sourceTree = "<group>"; };
@@ -131,6 +137,8 @@
 		A1ROWBDG022FD810C30001BF12 /* RowProcessBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowProcessBadge.swift; sourceTree = "<group>"; };
 		A1SDBCHR022FD810C30001BF12 /* SidebarChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarChrome.swift; sourceTree = "<group>"; };
 		A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewSheet.swift; sourceTree = "<group>"; };
+		A1SCPAD0022FD810C30001BF12 /* SpaceColourPad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceColourPad.swift; sourceTree = "<group>"; };
+		A1SCPAD0042FD810C30001BF12 /* SpaceColourPadGlass.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = SpaceColourPadGlass.metal; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -232,6 +240,8 @@
 			isa = PBXGroup;
 			children = (
 				A1THEME022FD810C30001BF12 /* AppTheme.swift */,
+				A1STONE042FD810C30001BF12 /* SpaceToneChrome.swift */,
+				A1STONE022FD810C30001BF12 /* SpaceTone.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -308,6 +318,8 @@
 				A10000082FD810C30001BF12 /* TerminalWorkspaceView.swift */,
 				A1UPDCRD022FD810C30001BF12 /* UpdateCardView.swift */,
 				A1WHTNEW022FD810C30001BF12 /* WhatsNewSheet.swift */,
+				A1SCPAD0022FD810C30001BF12 /* SpaceColourPad.swift */,
+				A1SCPAD0042FD810C30001BF12 /* SpaceColourPadGlass.metal */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -476,6 +488,8 @@
 				A100000A2FD810C30001BF12 /* EnsoApp.swift in Sources */,
 				A100000C2FD810C30001BF12 /* ContentView.swift in Sources */,
 				A1THEME012FD810C30001BF12 /* AppTheme.swift in Sources */,
+				A1STONE032FD810C30001BF12 /* SpaceToneChrome.swift in Sources */,
+				A1STONE012FD810C30001BF12 /* SpaceTone.swift in Sources */,
 				A1PERFM012FD810C30001BF12 /* PerfMonitor.swift in Sources */,
 				A1PERFV012FD810C30001BF12 /* PerfBarView.swift in Sources */,
 				A1SWTST012FD810C30001BF12 /* SpaceSwitchTest.swift in Sources */,
@@ -516,6 +530,8 @@
 				A1RELNTP012FD810C30001BF12 /* ReleaseNotesParser.swift in Sources */,
 				A1UPDCRD012FD810C30001BF12 /* UpdateCardView.swift in Sources */,
 				A1WHTNEW012FD810C30001BF12 /* WhatsNewSheet.swift in Sources */,
+				A1SCPAD0012FD810C30001BF12 /* SpaceColourPad.swift in Sources */,
+				A1SCPAD0032FD810C30001BF12 /* SpaceColourPadGlass.metal in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

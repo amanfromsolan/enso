@@ -10,6 +10,9 @@ import SwiftUI
 /// Launch arguments, which override saved values for that run without saving:
 /// `-EnsoSlideDuration <seconds>`, `-EnsoSlideFade <0-100>`,
 /// `-EnsoSlideBlur <0-8>`. `-EnsoSwipeTuner YES` opens the panel at launch.
+///
+/// Also hosts the terminal card's space-tint multiplier (`TerminalTint`,
+/// default `EnsoTerminalTintScale`), applied live.
 final class SwipeTuner: NSObject {
     static let shared = SwipeTuner()
 
@@ -75,6 +78,7 @@ final class SwipeTuner: NSObject {
         setDuration(SlideTuning.defaultDuration)
         setFadePercent(SlideTuning.defaultFade * 100)
         setBlur(SlideTuning.defaultBlur)
+        TerminalTint.setScale(1)
     }
 
     /// Time for a resting spring to cover 90% of the way, from the same
@@ -93,8 +97,8 @@ final class SwipeTuner: NSObject {
 
     var valuesText: String {
         String(
-            format: "speed %.2fs (arrives in ~%d ms), fade %.0f%%, blur %.1f",
-            duration, arrivalMilliseconds, fadePercent, blur
+            format: "speed %.2fs (arrives in ~%d ms), fade %.0f%%, blur %.1f, terminal tint %.2f×",
+            duration, arrivalMilliseconds, fadePercent, blur, TerminalTint.scale
         )
     }
 
@@ -160,7 +164,7 @@ private final class FirstClickButton: NSButton {
 }
 
 private final class SwipeTunerPanelController: NSObject {
-    private static let size = NSSize(width: 340, height: 196)
+    private static let size = NSSize(width: 340, height: 228)
     private static let gap: CGFloat = 12
 
     private let tuner: SwipeTuner
@@ -169,9 +173,11 @@ private final class SwipeTunerPanelController: NSObject {
     private let durationSlider = FirstClickSlider()
     private let fadeSlider = FirstClickSlider()
     private let blurSlider = FirstClickSlider()
+    private let tintSlider = FirstClickSlider()
     private let durationValue = NSTextField(labelWithString: "")
     private let fadeValue = NSTextField(labelWithString: "")
     private let blurValue = NSTextField(labelWithString: "")
+    private let tintValue = NSTextField(labelWithString: "")
     private let arrivalLabel = NSTextField(labelWithString: "")
 
     init(tuner: SwipeTuner) {
@@ -194,6 +200,7 @@ private final class SwipeTunerPanelController: NSObject {
         configure(durationSlider, range: SwipeTuner.durationRange, action: #selector(durationChanged))
         configure(fadeSlider, range: SwipeTuner.fadeRange, action: #selector(fadeChanged))
         configure(blurSlider, range: SwipeTuner.blurRange, action: #selector(blurChanged))
+        configure(tintSlider, range: TerminalTint.scaleRange, action: #selector(tintChanged))
 
         arrivalLabel.font = .systemFont(ofSize: 11)
         arrivalLabel.textColor = NSColor(Theme.text(0.55))
@@ -210,6 +217,7 @@ private final class SwipeTunerPanelController: NSObject {
             row("Speed", durationSlider, durationValue),
             row("Fade", fadeSlider, fadeValue),
             row("Blur", blurSlider, blurValue),
+            row("Tint", tintSlider, tintValue),
             buttons,
         ])
         stack.orientation = .vertical
@@ -293,6 +301,8 @@ private final class SwipeTunerPanelController: NSObject {
         durationValue.stringValue = String(format: "%.2fs", tuner.duration)
         fadeValue.stringValue = String(format: "%.0f%%", tuner.fadePercent)
         blurValue.stringValue = String(format: "%.1f", tuner.blur)
+        tintSlider.doubleValue = TerminalTint.scale
+        tintValue.stringValue = String(format: "%.2f×", TerminalTint.scale)
         arrivalLabel.stringValue = "arrives in ~\(tuner.arrivalMilliseconds) ms"
     }
 
@@ -308,6 +318,12 @@ private final class SwipeTunerPanelController: NSObject {
 
     @objc private func blurChanged() {
         tuner.setBlur((blurSlider.doubleValue * 2).rounded() / 2)
+        refresh()
+    }
+
+    /// The terminal tint's opacity multiplier; the cards follow live.
+    @objc private func tintChanged() {
+        TerminalTint.setScale((tintSlider.doubleValue * 20).rounded() / 20)
         refresh()
     }
 

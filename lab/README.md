@@ -29,8 +29,11 @@ Sources/EnsoLab/
     MockTerminal.swift    Static fake terminal card (.empty / .filled)
     MockSidebar.swift     Fake Enso sidebar (248pt, real row styling)
     EnsoBackdrop.swift    Sidebar + terminal composed as a fake Enso window
+    SpaceColourPad.swift  Portable space-colour pad (Liquid Glass drop); no
+                          Enso/lab dependencies, meant to move into Enso as is
   Experiments/
     Exp01CommandPalette.swift   Baseline command palette
+    Exp02GlassBlob.swift        Space-colour pad: compare glass squash methods
 ```
 
 ## Adding an experiment
