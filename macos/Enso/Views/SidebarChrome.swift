@@ -785,7 +785,9 @@ private struct SpacePill: View {
         return Button {
             onSelect(space.id)
         } label: {
-            SpaceIndicatorIcon(icon: space.icon, isActive: isActive, size: 18, colour: space.colour)
+            // Neutral ink in the current space's tone, never the cell's own
+            // colour: dark when active, faded otherwise.
+            SpaceIndicatorIcon(icon: space.icon, isActive: isActive, size: 18)
                 .frame(width: Self.cell, height: SidebarChromeMetrics.pillCellHeight)
                 .overlay {
                     if hasAttention {

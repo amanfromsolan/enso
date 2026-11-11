@@ -1142,17 +1142,17 @@ private struct SpacePage: View {
     }
 
     /// Where a session sits within its group, or nil when it isn't listed:
-    /// what needs you, then what's running, then what's asleep. Asleep means
-    /// what the row shows as asleep: an explicit sleep, or an agent waiting to
-    /// resume after a relaunch.
+    /// what needs you, then what's running. Asleep tabs are never listed.
+    /// Asleep means what the row shows as asleep: an explicit sleep, or an
+    /// agent waiting to resume after a relaunch.
     private func activeRank(_ session: TerminalSession) -> Int? {
-        if session.status == .attention { return 0 }
-        if session.runningProcess != nil { return 1 }
-        if session.isSleeping { return 2 }
+        if session.isSleeping { return nil }
         if agentSessions.dormantAgent(forTab: session.id) != nil,
            GhosttySurfaceManager.shared.existingView(for: session.id) == nil {
-            return 2
+            return nil
         }
+        if session.status == .attention { return 0 }
+        if session.runningProcess != nil { return 1 }
         return nil
     }
 
@@ -2543,11 +2543,13 @@ struct SpaceIndicatorIcon: View {
     let icon: SidebarSpace.Icon
     let isActive: Bool
     var size: CGFloat = 18
-    /// The space's own colour. A coloured space's mark wears it in the pill
-    /// while another space is active, so you can tell spaces apart there.
+    /// A colour for the mark to wear while inactive. Only the space editor's
+    /// disc passes one; the pill keeps every mark neutral, in the current
+    /// space's tone.
     var colour: SpaceColour = .none
 
-    private static let inactiveOpacity: Double = 0.75
+    /// Inactive pill marks read clearly faded next to the active one.
+    private static let inactiveOpacity: Double = 0.55
 
     /// Inactive and coloured: the space's own pill-cell colour. Otherwise
     /// the active tone's ink, which is today's ink with no colour.
